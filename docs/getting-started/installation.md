@@ -23,10 +23,13 @@ The easiest way to install GitSetu is via the automated bootstrap script.
 curl -sL https://raw.githubusercontent.com/bhaskarjha-com/gitsetu/main/install.sh | bash
 ```
 
+> [!IMPORTANT]
+> **Restart your terminal** after the installation script completes. Alternatively, run `source ~/.bashrc` (or `~/.zshrc`). If you try to run the tool immediately without reloading your shell, you will likely receive a `command not found` error.
+
 ### What does the script do?
 1. Clones the GitSetu repository to `~/.local/share/gitsetu`.
 2. Creates a global symlink at `/usr/local/bin/git-setu` (or `~/.local/bin/git-setu` if running without sudo).
-3. Allows you to run the CLI as either `gitsetu` or `git setu` directly from your terminal.
+3. Allows you to run the CLI as either `gitsetu` or `git setu` directly from your terminal. *(Because the binary is named `git-setu`, Git automatically aliases it as a native Git subcommand!)*
 
 ## Upgrading
 
