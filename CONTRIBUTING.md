@@ -16,6 +16,9 @@ No build step. No dependencies to install. See the [Architecture Guide](docs/ARC
 We use a standard `Makefile` to orchestrate our test suite.
 
 ```bash
+# Install the Git pre-push hook to automatically prevent bad pushes
+make hooks
+
 # Run the entire 168-test sandbox matrix
 make test
 ```
@@ -34,6 +37,16 @@ make lint
 ```
 
 All scripts must pass ShellCheck with **zero warnings**.
+
+### Running Everything (CI Simulation)
+
+Before submitting a Pull Request, you can simulate the exact GitHub Actions CI pipeline by running:
+
+```bash
+make check
+```
+
+This command will run `make lint` followed by `make test`, ensuring your code is flawless before pushing.
 
 ## Code Style
 
