@@ -57,7 +57,12 @@ The following features and architectural hardening have been shipped and verifie
 
 ## 🚨 Strategic Paradigm Shifts (May 2026 Audit)
 
-Based on the recent brutal zero-bias paradigm audit, we are prioritizing a critical architectural phase to elevate GitSetu to flawless Enterprise Security standards:
+Based on the recent rigorous architectural simulations (documented in `docs/adr/`), we are prioritizing two critical architectural phases to elevate GitSetu to flawless Enterprise Security standards:
+
+### Phase 1: The OpenSSH `Include` Pivot (Zero-Trust Isolation)
+**Problem:** The current architecture uses inline `awk` and temporary files to mutate the user's global `~/.ssh/config` file. While the *dual-strategy* (SSH + GitConfig) is mathematically mandatory for multi-identity routing, inline mutation is a ticking time bomb that violates zero-trust principles.
+**Solution:** Migrate the architecture to leverage OpenSSH 7.3's `Include` directive. GitSetu will append `Include ~/.config/gitsetu/ssh_config` to the absolute top of the user's config file *once*, and exclusively orchestrate its aliases inside its own isolated file.
+**Difficulty:** Medium (Refactoring `lib/ssh.sh`).
 
 ### Phase 2: The Native Auto-Updater (`gitsetu update`)
 **Problem:** The `curl | bash` distribution model leaves users stranded on stale versions, preventing the rollout of critical security patches.
