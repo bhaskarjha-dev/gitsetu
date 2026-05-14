@@ -1,40 +1,74 @@
 # CLI Command Reference
 
-GitSetu provides a focused suite of commands to manage your profiles, credentials, and configuration health.
+**The complete GitSetu execution palette.**
 
-## `gitsetu setup`
-The interactive wizard used to provision new profiles.
-- Prompts for Profile Label, Name, Email, and Directory.
-- Prompts for SSH Key generation (ED25519 or FIDO2).
-- Safely injects the managed block into `~/.gitconfig` and `~/.ssh/config`.
+GitSetu exposes a highly targeted, heavily validated command palette designed exclusively to interact with Git and SSH state structures. All commands are strictly idempotent.
 
-## `gitsetu status`
-Displays a clean, tabulated overview of all registered profiles, highlighting which profile is currently active based on your current working directory.
+---
 
-## `gitsetu auth <profile>`
-Securely prompts you to enter a GitHub/GitLab Personal Access Token (PAT) for a specific profile and stores it in the OS Keychain using the `gitsetu:<profile>:hostname` namespace.
+## Provisioning & Setup
 
-## `gitsetu doctor`
-A comprehensive diagnostic tool that instantly scans your environment for "drift" or misconfigurations.
-- Verifies global `~/.gitconfig` syntax and managed blocks.
-- Verifies `~/.ssh/config` syntax.
-- Verifies SSH Agent connectivity and keys.
-- Scans local repositories for conflicting `user.email` overrides.
+### `gitsetu setup`
+The primary interactive compilation wizard. Use this command to provision entirely new workspace profiles or seamlessly update existing configuration paths.
+- Natively prompts for distinct Profile Labels, Developer Names, Emails, and Target Directories.
+- Prompts for Zero-Trust SSH Key generation (ED25519 or FIDO2 hardware tokens).
+- Safely injects atomic managed blocks directly into `~/.gitconfig` and OpenSSH configuration files.
 
-## `gitsetu prompt`
-A hyper-optimized command designed exclusively for `$PS1` or Starship shell prompt integration. It returns the active profile label in `< 2ms` without spawning unnecessary subshells.
+### `gitsetu auth <profile>`
+The secure Credential Broker interface. Use this command to securely bind HTTPS Personal Access Tokens (PATs) to specific identity contexts.
+- Securely prompts inline for your Git provider token without echoing to the terminal (`stty -echo`).
+- Encrypts and stores the token directly into the OS keychain within the `gitsetu:<profile>:hostname` namespace.
 
-## `gitsetu backup`
-Compresses your GitSetu configuration and SSH private keys into a timestamped, OpenSSL AES-256 encrypted vault.
+---
 
-## `gitsetu restore <file>`
-Decrypts a GitSetu vault and securely reconstructs your entire identity infrastructure on a new machine.
+## Diagnostics & Verification
 
-## `gitsetu update`
-Triggers the native auto-updater. It fetches the latest stable release from GitHub over HTTPS, verifies integrity, and performs an atomic binary swap.
+### `gitsetu status`
+Renders a structured, tabular layout of your entire GitSetu configuration state.
+- Lists all registered profiles, bounded paths, and linked OpenSSH aliases.
+- Dynamically highlights your **currently active profile** based on your active terminal directory context.
 
-## `gitsetu install-guard` / `gitsetu remove-guard`
-Manages the global pre-commit Identity Guard hook in `core.hooksPath` to protect against dual-state identity leaks.
+### `gitsetu doctor`
+An advanced configuration health-scanner designed to identify silent environmental drift.
+- Validates global `~/.gitconfig` syntax integrity and verifies the presence of managed identity blocks.
+- Ensures the OpenSSH `Include` directive remains valid at the top of `~/.ssh/config`.
+- Scans deep local `.git/config` files within mapped directory trees to surface overlapping or conflicting `user.email` hardcodes.
 
-## `gitsetu teardown`
-A destructive command that completely purges all GitSetu configurations, profiles, and managed blocks from your system, cleanly restoring your Git environment to its original state.
+### `gitsetu verify`
+Executes aggressive permissions and structural validation testing.
+- Checks if generated private cryptographic keys (`~/.ssh/id_*`) possess strict POSIX `600` access boundaries.
+- Verifies SSH Agent socket connection state and pre-loaded signatures.
+
+### `gitsetu prompt`
+A specialized, ultra-fast context extractor designed strictly for sub-millisecond shell `$PS1` or Starship rendering integrations.
+- Returns exactly one string (the active profile label) in `< 2ms` without spawning blocking subshells.
+
+---
+
+## Vault Operations
+
+### `gitsetu backup`
+The comprehensive export utility.
+- Aggregates configuration schemas and cryptographic keys into a single `.tar` block.
+- Enforces strict inline AES-256-CBC `-pbkdf2` encryption via native OpenSSL boundaries.
+
+### `gitsetu restore <file>`
+The bare-metal state re-construction tool.
+- Decrypts target vaults and reconstructs structural mapping blocks transparently.
+
+---
+
+## System Operations
+
+### `gitsetu update`
+Executes the native OTA (Over-The-Air) update sequence.
+- Pulls verified binary payloads exclusively via standard TLS/HTTPS domains.
+- Atomically hot-swaps the local `~/.local/share/gitsetu` executable binary.
+
+### `gitsetu install-guard` / `gitsetu remove-guard`
+Toggles the fail-closed Pre-Commit Identity interceptor bounds inside the global `core.hooksPath` configuration matrix.
+
+### `gitsetu teardown`
+**[Destructive Command]** The ultimate nuclear escape hatch.
+- Completely purges all GitSetu managed layouts, sub-files, and configuration blocks from the host system cleanly.
+- Restores the host Git environments to their pristine, pre-installation state.

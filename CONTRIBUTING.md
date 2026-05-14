@@ -1,116 +1,38 @@
-# Contributing to gitsetu
+# Contributing to GitSetu
 
-Thank you for your interest in contributing!
+**The uncompromising guidelines and structural constraints required for submitting codebase modifications.**
 
-## Development Setup
+GitSetu is deliberately engineered to act as a deeply reliable, extremely portable Zero-Dependency bootstrapping compiler. Maintaining this architectural posture requires absolute adherence to strict language boundaries and POSIX execution principles.
 
-```bash
-git clone https://github.com/bhaskarjha-com/gitsetu.git
-cd gitsetu
-```
+If you are proposing codebase updates, new diagnostic scanners, or platform integrations, please carefully review the following strict guard rails before submitting pull requests.
 
-No build step. No dependencies to install. See the [Architecture Guide](docs/ARCHITECTURE.md) for how the codebase is structured.
+---
 
-## Running Tests
+## 1. Absolute Zero-Dependency Tolerance
+GitSetu must successfully execute across legacy host systems completely offline.
+- **No Interpreted Binaries:** Do not introduce integrations that require Go runtimes, Python interpreters, Node.js packages, or Rust compilers to resolve correctly.
+- **Minimal Toolchains:** Rely strictly on `bash`, `git`, `ssh-keygen`, and core standard UNIX binaries (`grep`, `sed`, `awk`).
 
-We use a standard `Makefile` to orchestrate our test suite.
+## 2. Bash 3.2 Compatibility Constraints
+Because GitSetu must remain fully executable natively on legacy macOS endpoints, the entire codebase strictly targets **Bash 3.2**.
+- **No Associative Arrays:** You may not utilize modern Bash 4.0+ features like `declare -A` associative structures.
+- **POSIX Array Simulation:** Manage data matrices using standard indexed arrays and bounded iterators.
+- **POSIX Subshell Offsets:** Minimize expensive `$(command)` `fork()` execution boundaries where possible. Utilize rapid internal variable pattern substitutions instead (`${var//search/replace}`).
 
-```bash
-# Install the Git pre-push hook to automatically prevent bad pushes
-make hooks
+## 3. Strict Concurrency Integrity
+GitSetu executes in parallel headless CI/CD runners seamlessly. All persistent filesystem mutations **must** remain perfectly atomic.
+- **Zero Inline File Overwrites:** Never utilize blind regex replacers (e.g., `sed -i`) natively against global target configurations. This creates catastrophic mid-write destruction windows during sudden SIGTERM events.
+- **TMPDIR Swapping:** Always direct block modifications to heavily randomized temporary execution paths (`$TMPDIR/..._$$_${RANDOM}`), finalize validation, and subsequently apply them against primary targets utilizing single-cycle atomic `mv` replacements.
 
-# Run the entire 168-test sandbox matrix
-make test
-```
+## 4. The Telemetry Boundary
+We maintain a ruthless **Zero Telemetry** security posture.
+Do not introduce integrations, analytics tracking, environment scanners, or crash-reporting dependencies that execute outbound background network requests. The repository codebase must remain perfectly verifiable and completely auditable.
 
-Tests automatically run in an isolated `$HOME` in a temp directory — they never touch your real configuration.
+---
 
-## Linting
+## PR Submission Workflow
 
-```bash
-# Install ShellCheck if needed
-# Ubuntu/Debian: sudo apt install shellcheck
-# macOS: brew install shellcheck
-
-# Lint all scripts
-make lint
-```
-
-All scripts must pass ShellCheck with **zero warnings**.
-
-### Running Everything (CI Simulation)
-
-Before submitting a Pull Request, you can simulate the exact GitHub Actions CI pipeline by running:
-
-```bash
-make check
-```
-
-This command will run `make lint` followed by `make test`, ensuring your code is flawless before pushing.
-
-## Code Style
-
-### Bash 3.2 Compatibility
-
-macOS ships bash 3.2. Do **NOT** use these bash 4+ features:
-
-| ❌ Don't Use | ✅ Use Instead |
-|-------------|---------------|
-| `declare -A` (associative arrays) | Parallel indexed arrays |
-| `mapfile` / `readarray` | `while IFS= read -r` loops |
-| `${var,,}` (lowercase) | `printf '%s' "$var" \| tr '[:upper:]' '[:lower:]'` |
-| `|&` (pipe stderr) | `2>&1 \|` |
-
-> **Note:** `read -a` (read into array), `<<<` (here-strings), and `[[ ]]` (conditional expressions) **are** permitted — these are Bash 3.2 features, not Bash 4+ additions. The compatibility floor is Bash 3.2, not POSIX `sh`.
-
-### Quoting
-
-**Always** quote variables. No exceptions.
-
-```bash
-# ✅ Correct
-local path="$HOME/.ssh"
-if [[ -f "$path" ]]; then
-
-# ❌ Wrong
-local path=$HOME/.ssh
-if [[ -f $path ]]; then
-```
-
-### Functions
-
-- Use `snake_case` for function names
-- Document with a header comment: purpose, usage, return value
-- Use `local` for all variables inside functions
-
-### Output
-
-- All user-facing output goes to **stderr** (`>&2`), keeping stdout clean
-- Use the `print_*` functions from `lib/ui.sh`, not raw `echo`
-- Respect `NO_COLOR` — never hardcode escape sequences
-
-### Managed Blocks
-
-When adding content to user config files, always use managed block markers:
-
-```bash
-${GITSETU_MANAGED_START}
-# your content here
-${GITSETU_MANAGED_END}
-```
-
-## Pull Request Guidelines
-
-1. All tests must pass
-2. ShellCheck must report zero warnings
-3. Include tests for new functionality
-4. Update docs if adding features or changing behavior
-5. Follow the existing code style
-
-## Reporting Issues
-
-When reporting a bug, please include:
-- OS and version (`uname -a`)
-- Bash version (`bash --version`)
-- Git version (`git --version`)
-- The full error output
+1. Fork the target `bhaskarjha-com/gitsetu` repository.
+2. Ensure your execution branch successfully passes local diagnostic boundaries (`gitsetu doctor` and verification testing paths).
+3. If introducing logic updates impacting standard core modules, explicitly test compilation output against cross-platform environments (e.g., native macOS Terminal vs Git Bash vs WSL).
+4. Outline your proposed updates clearly within the PR description block, specifically detailing your testing environments and confirmation of Bash 3.2 adherence.

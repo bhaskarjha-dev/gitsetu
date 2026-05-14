@@ -547,7 +547,7 @@ ANTI-INFLATION RULE: Every number in the resume must have a shell command that r
 ## 10. Competitive Analysis & Product Roadmap Generation
 
 ```
-You are acting as a Lead Technical Product Manager and Principal Architect. We have built a zero-dependency, pure-bash CLI tool named **GitSetu** (currently at v1.0.0) that completely automates Git identity, SSH key management, credential brokering, and OpenSSL state encryption for multi-account developers.
+You are acting as a Lead Technical Product Manager and Principal Architect. We have built a zero-dependency, pure-bash CLI tool named **GitSetu** (currently at v1.1.0) that completely automates Git identity, SSH key management, credential brokering, and OpenSSL state encryption for multi-account developers.
 
 I want you to conduct a brutal, zero-bias audit of our current solution, compare it against the broader market, and define our technical roadmap.
 
@@ -799,7 +799,7 @@ You are not auditing scripts. You are auditing a highly concurrent, state-mutati
 ## 16. Holistic Production Readiness Go/No-Go Audit
 
 ```
-You are the Principal Systems Engineer and Head of QA. We have developed GitSetu (v1.0.0), a zero-dependency, pure-bash filesystem orchestrator for Git identity and SSH management. It features a POSIX lock reaper, an OpenSSL encrypted state vault, native OS credential brokering (macOS/Linux), FIDO2 bootstrapping, and ultra-low latency (~20ms) PS1 prompt injection. 
+You are the Principal Systems Engineer and Head of QA. We have developed GitSetu (v1.1.0), a zero-dependency, pure-bash filesystem orchestrator for Git identity and SSH management. It features a POSIX lock reaper, an OpenSSL encrypted state vault, native OS credential brokering (macOS/Linux), FIDO2 bootstrapping, and ultra-low latency (~20ms) PS1 prompt injection. 
 
 Before we push this build to the public, I need you to conduct a merciless, holistic "Go/No-Go" Production Readiness Audit. Evaluate the project across every possible technical, logical, and user-experience dimension.
 
@@ -845,7 +845,7 @@ Before we push this build to the public, I need you to conduct a merciless, holi
 
 ### Deliverable:
 Produce a `go_nogo_audit.md` artifact containing:
-1.  **Executive Summary**: Your overall ruling (GO or NO-GO) for the v1.0.0 release.
+1.  **Executive Summary**: Your overall ruling (GO or NO-GO) for the v1.1.0 release.
 2.  **Dimension Grades**: Give a letter grade (A-F) for Architecture, Security, Concurrency, Performance, Portability, DX, CI/CD, and QA.
 3.  **Critical Findings**: Any blockers or edge cases discovered.
 4.  **Final Polish Roadmap**: If there are non-blockers, what should we immediately patch post-release?
