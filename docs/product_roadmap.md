@@ -64,10 +64,10 @@ Based on the recent rigorous architectural simulations (documented in `docs/adr/
 **Solution:** Migrate the architecture to leverage OpenSSH 7.3's `Include` directive. GitSetu will append `Include ~/.config/gitsetu/ssh_config` to the absolute top of the user's config file *once*, and exclusively orchestrate its aliases inside its own isolated file.
 **Difficulty:** Medium (Refactoring `lib/ssh.sh`).
 
-### Phase 2: The Native Auto-Updater (`gitsetu update`)
+### [x] Phase 2: The Native Auto-Updater (`gitsetu update`)
 **Problem:** The `curl | bash` distribution model leaves users stranded on stale versions, preventing the rollout of critical security patches.
-**Solution:** Implement a secure, self-updating mechanism natively within the CLI. The command must securely fetch the latest raw script, verify its integrity, and replace the active binary in the user's path.
-**Difficulty:** High (Security & Cross-Platform Pathing).
+**Solution:** Implement a secure, self-updating mechanism natively within the CLI. The command leverages Git's TLS protocol and the live repository installation (`~/.local/share/gitsetu`) to securely fetch and hard reset the active binary.
+**Difficulty:** Completed.
 
 ---
 
