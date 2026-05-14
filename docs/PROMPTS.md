@@ -522,7 +522,7 @@ STEP 2 — READ CONTEXT:
 STEP 3 — CREATE ARTIFACT (resume_brief.md) with these sections:
 
 A. **Resume Bullet Points** (3-4 lines, STAR format — Situation/Task/Action/Result):
-   - Lead with measurable impact (e.g., "Engineered a 165-test, 15-module CLI...")
+   - Lead with measurable impact (e.g., "Engineered a 168-test, 15-module CLI...")
    - Highlight architecture decisions, not just features
    - Mention the constraint (zero-dependency, Bash 3.2) as a strength
 
@@ -763,7 +763,7 @@ You are not auditing scripts. You are auditing a highly concurrent, state-mutati
 
 **Mandatory Rules:**
 
-**Read every file. No script is "low-risk."** Read `gitsetu`, every file in `lib/`, every file in `tests/`, `install.sh`, `uninstall.sh`, and the `Makefile`. Skip nothing. Do not assume `helpers.sh` or the new `test_*.sh` regression suites (all 165 of them) are perfectly written.
+**Read every file. No script is "low-risk."** Read `gitsetu`, every file in `lib/`, every file in `tests/`, `install.sh`, `uninstall.sh`, and the `Makefile`. Skip nothing. Do not assume `helpers.sh` or the new `test_*.sh` regression suites (all 168 of them) are perfectly written.
 
 **Trace, don't just read.** We recently implemented a unified `GITSETU_CLEANUP_FILES` array and trapped it to `EXIT/SIGINT/SIGTERM`. Trace this lifecycle: We replaced `mktemp` with pre-registered randomized `$TMPDIR` paths to avoid TOCTOU races. What happens if `kill -9` hits exactly between string generation and `tar` execution? Does the trap inadvertently swallow exit codes (`$?`)? What happens if `mv` fails during an atomic swap but the trap still fires?
 
@@ -839,7 +839,7 @@ Before we push this build to the public, I need you to conduct a merciless, holi
 *   Is the `Makefile` strictly enforcing formatting and linting (`shellcheck`) boundaries?
 
 **8. Code Maintainability, Community, & QA**
-*   Are the 165 tests running concurrently actually catching negative edge cases, or are they fragile?
+*   Are the 168 tests running concurrently actually catching negative edge cases, or are they fragile?
 *   Are variables strictly scoped (`local`), quoted, and conventionally named across the codebase?
 *   Are `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, and GitHub Issue Templates standard-compliant for public open-source consumption?
 

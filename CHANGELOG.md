@@ -43,7 +43,7 @@ The first official public release of GitSetu — a zero-dependency, pure Bash 3.
 - **CRLF Self-Healing:** Automatic `\r` stripping for VirtualBox shared folder environments.
 
 #### Testing & CI
-- **165 automated tests** across 20 test suites covering: core logic, SSH, gitconfig, guard, credential broker, backup/restore, concurrency, teardown, validation, platform detection, and audit regressions.
+- **168 automated tests** across 20 test suites covering: core logic, SSH, gitconfig, guard, credential broker, backup/restore, concurrency, teardown, validation, platform detection, and audit regressions.
 - **Cross-platform CI:** GitHub Actions matrix (Ubuntu, macOS, Windows) with ShellCheck linting.
 - **Manual QA Playbook:** 16-section integration test checklist (`docs/MANUAL_QA.md`) for pre-release verification.
 
