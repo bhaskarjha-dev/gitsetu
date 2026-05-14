@@ -23,59 +23,79 @@ test_update_fails_if_not_git_repo() {
 }
 
 test_update_succeeds_up_to_date() {
-    mkdir -p "$GITSETU_DIR/.git"
+    # 1. Create a fake remote repository
+    local remote_dir="$HOME/fake_remote_1.git"
+    git init --bare "$remote_dir" >/dev/null 2>&1
     
-    # Create a mock git command in a bin directory and prepend to PATH
-    mkdir -p "$TEST_DIR/bin"
-    cat > "$TEST_DIR/bin/git" <<'EOF'
-#!/usr/bin/env bash
-if [[ "$1" == "fetch" ]]; then exit 0; fi
-if [[ "$1" == "rev-parse" ]]; then echo "123456"; exit 0; fi
-exec /usr/bin/git "$@"
-EOF
-    chmod +x "$TEST_DIR/bin/git"
-    export PATH="$TEST_DIR/bin:$PATH"
+    # 2. Setup the local GitSetu installation
+    rm -rf "$GITSETU_DIR"
+    mkdir -p "$GITSETU_DIR"
+    cd "$GITSETU_DIR"
+    git init >/dev/null 2>&1
+    git config user.email "test@example.com"
+    git config user.name "Test User"
+    git remote add origin "$remote_dir"
+    
+    # Create an initial commit and push to remote so origin/main exists
+    echo "test" > test.txt
+    git add test.txt
+    git commit -m "initial" >/dev/null 2>&1
+    git branch -M main
+    git push -u origin main >/dev/null 2>&1
     
     local gitsetu_script="$TEST_DIR/../gitsetu"
     
     local output
     output=$(bash "$gitsetu_script" update 2>&1 || true)
     
-    # Cleanup PATH
-    export PATH="${PATH#"$TEST_DIR"/bin:}"
-    rm -rf "${TEST_DIR:?}/bin"
+    rm -rf "$remote_dir"
     
     assert_contains "$output" "GitSetu is already up-to-date" "detects up to date" || return 1
 }
 
 test_update_applies_update() {
-    mkdir -p "$GITSETU_DIR/.git"
+    # 1. Create a fake remote repository
+    local remote_dir="$HOME/fake_remote_2.git"
+    git init --bare "$remote_dir" >/dev/null 2>&1
     
-    # Mock core.sh to simulate the version parsing logic
-    mkdir -p "$GITSETU_DIR/lib"
-    echo 'GITSETU_VERSION="1.2.3"' > "$GITSETU_DIR/lib/core.sh"
+    # 2. Setup the local GitSetu installation
+    rm -rf "$GITSETU_DIR"
+    mkdir -p "$GITSETU_DIR"
+    cd "$GITSETU_DIR"
+    git init >/dev/null 2>&1
+    git config user.email "test@example.com"
+    git config user.name "Test User"
+    git remote add origin "$remote_dir"
     
-    # Create a mock git command
-    mkdir -p "$TEST_DIR/bin"
-    cat > "$TEST_DIR/bin/git" <<'EOF'
-#!/usr/bin/env bash
-if [[ "$1" == "fetch" ]]; then exit 0; fi
-if [[ "$1" == "rev-parse" ]] && [[ "$2" == "HEAD" ]]; then echo "old_hash"; exit 0; fi
-if [[ "$1" == "rev-parse" ]] && [[ "$2" == "origin/main" ]]; then echo "new_hash"; exit 0; fi
-if [[ "$1" == "reset" ]]; then exit 0; fi
-exec /usr/bin/git "$@"
-EOF
-    chmod +x "$TEST_DIR/bin/git"
-    export PATH="$TEST_DIR/bin:$PATH"
+    # Create initial commit and push
+    echo "test" > test.txt
+    git add test.txt
+    git commit -m "initial" >/dev/null 2>&1
+    git branch -M main
+    git push -u origin main >/dev/null 2>&1
     
+    # 3. Simulate an update on the remote
+    local tmp_clone="$HOME/tmp_clone"
+    git clone "$remote_dir" "$tmp_clone" >/dev/null 2>&1
+    cd "$tmp_clone"
+    git checkout main >/dev/null 2>&1
+    git config user.email "test@example.com"
+    git config user.name "Test User"
+    
+    # Mock core.sh to simulate the version parsing logic in the NEW version
+    mkdir -p lib
+    echo 'GITSETU_VERSION="1.2.3"' > lib/core.sh
+    git add lib/core.sh
+    git commit -m "update version" >/dev/null 2>&1
+    git push origin main >/dev/null 2>&1
+    
+    # 4. Run gitsetu update in the local installation
     local gitsetu_script="$TEST_DIR/../gitsetu"
     
     local output
     output=$(bash "$gitsetu_script" update 2>&1 || true)
     
-    # Cleanup PATH
-    export PATH="${PATH#"$TEST_DIR"/bin:}"
-    rm -rf "${TEST_DIR:?}/bin"
+    rm -rf "$remote_dir" "$tmp_clone"
     
     assert_contains "$output" "Update found" "detects update" || return 1
     assert_contains "$output" "from v${GITSETU_VERSION} to v1.2.3" "reports version change" || return 1
