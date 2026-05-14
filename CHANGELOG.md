@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-05-14
+
+### Added
+- **Native Auto-Updater (`gitsetu update`):** A secure, zero-dependency self-updating mechanism that leverages Git's TLS protocol and the live repository installation (`~/.local/share/gitsetu`) to securely fetch and apply patches.
+
+### Changed
+- **Zero-Trust OpenSSH Pivot:** Migrated the entire SSH orchestration architecture from inline `awk` mutations of `~/.ssh/config` to a fully isolated `Include ~/.config/gitsetu/ssh_config` directive. This guarantees 100% idempotency and zero footprint on the user's manual SSH configuration.
+- **Teardown Command:** `gitsetu teardown` has been refactored to cleanly remove the `Include` directive.
+- **Diagnostic Tooling:** `gitsetu doctor` has been updated to assert the integrity of the new `Include` directive architecture.
+
 ## [1.0.0] - 2026-05-10
 
 The first official public release of GitSetu — a zero-dependency, pure Bash 3.2 CLI tool for automated Git multi-identity and SSH key management across Linux, macOS, and Windows.

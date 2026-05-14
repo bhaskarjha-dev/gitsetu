@@ -109,7 +109,7 @@ graph TD
 What GitSetu writes for each profile:
 1. **SSH keypair** — `~/.ssh/id_ed25519_‹label›` (unique per profile)
 2. **Scoped gitconfig** — `includeIf` block in `~/.gitconfig` for the profile directory
-3. **SSH host alias** — `Host` block in `~/.ssh/config`
+3. **SSH host alias** — Isolated `Host` block via OpenSSH `Include` directive in `~/.ssh/config`
 
 ---
 
@@ -138,6 +138,16 @@ GitSetu includes built-in tools to verify and debug your configuration:
 ```bash
 gitsetu verify             # Test SSH keys, configs, and permissions
 gitsetu doctor             # Diagnose registry, agent, and config drift
+```
+
+---
+
+## Native Auto-Updater
+
+Because GitSetu is deployed via Git (`install.sh`), it ships with a zero-dependency, native auto-updater. It leverages Git's built-in TLS security to safely fetch and apply security patches:
+
+```bash
+gitsetu update             # Update to the latest version flawlessly
 ```
 
 ---

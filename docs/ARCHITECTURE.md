@@ -53,7 +53,7 @@ GitSetu is composed of 15 library modules sourced by the main `gitsetu` script:
 | `validate.sh` | Input validation: emails, GitHub noreply, labels, path overlap detection |
 | `setup.sh` | Interactive wizard, headless `cmd_add`/`cmd_profile`, blueprint execution, POSIX lock reaper |
 | `gitconfig.sh` | `includeIf` block generation, managed block protocol, profile gitconfig, `profiles.conf` registry |
-| `ssh.sh` | SSH key generation (ED25519/FIDO2), `~/.ssh/config` host alias management |
+| `ssh.sh` | SSH key generation (ED25519/FIDO2), isolated OpenSSH `Include` directive alias management |
 | `guard.sh` | Pre-commit identity guard hook installation, hook script generation, local hook pass-through |
 | `doctor.sh` | Diagnostic checks: registry, SSH agent, managed blocks, configuration drift |
 | `verify.sh` | Infrastructure verification: SSH key existence/permissions, gitconfig integrity |
@@ -67,5 +67,5 @@ GitSetu is composed of 15 library modules sourced by the main `gitsetu` script:
 If you submit a Pull Request to GitSetu, you must adhere to the following:
 1. **Zero External Dependencies**: No Python, no Node, no `awk` beyond basic POSIX compliance.
 2. **Bash 3.2 Compatibility**: You may not use modern Bash 4+ features (like associative arrays `declare -A`) because GitSetu must run natively on outdated macOS systems.
-3. **No Network Requests**: GitSetu operates in a strict offline, zero-trust sandbox.
+3. **Zero-Trust Network Boundary**: GitSetu strictly prohibits background or telemetry network requests. The only permitted network call is the explicit, user-initiated `gitsetu update` command, which leverages Git's native TLS protocol over HTTPS.
 

@@ -16,7 +16,7 @@ No build step. No dependencies to install. See the [Architecture Guide](docs/ARC
 We use a standard `Makefile` to orchestrate our test suite.
 
 ```bash
-# Run the entire 165-test sandbox matrix
+# Run the entire 168-test sandbox matrix
 make test
 ```
 
