@@ -1,0 +1,29 @@
+name: SLSA Provenance Signing
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  sign-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write # Required for keyless signing via Sigstore
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Sign install.sh with Sigstore
+        uses: sigstore/gh-action-sigstore-python@v2.1.1
+        with:
+          inputs: install.sh
+          upload-signing-artifacts: true
+
+      - name: Upload Cryptographic Signature to Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            install.sh.sig
+            install.sh.crt
