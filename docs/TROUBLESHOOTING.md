@@ -58,10 +58,10 @@ If you see this error, you are trying to add a key to your `work` account that i
 > [!NOTE]
 > GitSetu generates host aliases (like `github-pro`) **purely for testing connectivity**. You do NOT need to use them when cloning repositories.
 
-If you are running an `ssh -T` test and get this error, check your `~/.ssh/config`:
-1. Ensure the file exists.
-2. Verify it contains the `# [gitsetu:managed:start] pro` block.
-3. If it is missing, simply run `gitsetu setup` again. GitSetu is fully idempotent and will safely repair the file.
+If you are running an `ssh -T` test and get this error, check your configuration:
+1. Ensure `~/.ssh/config` exists and contains `Include ~/.config/gitsetu/ssh_config` at the top.
+2. Verify that `~/.config/gitsetu/ssh_config` exists and contains the `Host github-pro` alias.
+3. If anything is missing, simply run `gitsetu setup` again. GitSetu is fully idempotent and will safely repair the files.
 
 ---
 

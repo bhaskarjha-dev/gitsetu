@@ -47,7 +47,8 @@ gitsetu setup
 - [ ] Key permissions are 600: `stat -c %a ~/.ssh/id_ed25519_personal` (or `stat -f %Lp` on macOS)
 - [ ] `~/.gitconfig` contains `includeIf` block: `grep -A2 'includeIf' ~/.gitconfig`
 - [ ] Profile gitconfig exists: `cat ~/.config/gitsetu/profiles/personal.gitconfig`
-- [ ] SSH config has host alias: `grep -A3 'gitsetu:managed' ~/.ssh/config`
+- [ ] SSH config has Include directive: `grep 'Include' ~/.ssh/config`
+- [ ] Isolated SSH config has host alias: `grep -A3 'Host github-personal' ~/.config/gitsetu/ssh_config`
 - [ ] Registry file exists: `cat ~/.config/gitsetu/profiles.conf`
 
 ---
@@ -243,7 +244,7 @@ gitsetu remove freelance
 
 - [ ] Profile removed from registry: `grep freelance ~/.config/gitsetu/profiles.conf` (should return nothing)
 - [ ] `includeIf` block removed from `~/.gitconfig`
-- [ ] SSH config block removed from `~/.ssh/config`
+- [ ] SSH host alias removed from `~/.config/gitsetu/ssh_config`
 - [ ] SSH keys preserved on disk: `ls ~/.ssh/id_ed25519_freelance*` (still exists)
 
 ---
@@ -259,7 +260,7 @@ gitsetu setup
 
 - [ ] No errors, no duplicates
 - [ ] `~/.gitconfig` has exactly ONE `includeIf` per profile (not duplicated)
-- [ ] `~/.ssh/config` has exactly ONE host block per profile
+- [ ] `~/.config/gitsetu/ssh_config` has exactly ONE host block per profile
 - [ ] SSH keys are NOT overwritten (prompted to skip/keep)
 
 ---
@@ -300,7 +301,7 @@ gitsetu teardown
 ```
 
 - [ ] Managed blocks removed from `~/.gitconfig`
-- [ ] Managed blocks removed from `~/.ssh/config`
+- [ ] Include directive removed from `~/.ssh/config`
 - [ ] Custom user content in both files preserved
 - [ ] SSH keys intentionally preserved
 
@@ -349,7 +350,7 @@ curl -sL https://raw.githubusercontent.com/bhaskarjha-com/gitsetu/main/uninstall
 
 After all manual tests pass:
 
-- [ ] `make test` — all 165 automated tests pass
+- [ ] `make test` — all 168 automated tests pass
 - [ ] `make lint` — ShellCheck clean
 - [ ] CHANGELOG.md updated
 - [ ] Version bumped in `gitsetu` (if applicable)

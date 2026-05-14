@@ -147,7 +147,6 @@ build_ssh_host_block() {
     prefix=$(printf '%s' "$hostname" | cut -d'.' -f1)
 
     cat <<EOF
-${GITSETU_MANAGED_START} ${label}
 Host ${prefix}-${label}
     HostName ${hostname}
     User git
@@ -159,8 +158,6 @@ EOF
     if [[ "$OSTYPE" == "darwin"* ]]; then
         echo "    UseKeychain yes"
     fi
-
-    echo "${GITSETU_MANAGED_END} ${label}"
 }
 
 # ------------------------------------------------------------------------------
