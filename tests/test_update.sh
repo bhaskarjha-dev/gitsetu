@@ -42,8 +42,8 @@ EOF
     output=$(bash "$gitsetu_script" update 2>&1 || true)
     
     # Cleanup PATH
-    export PATH="${PATH#$TEST_DIR/bin:}"
-    rm -rf "$TEST_DIR/bin"
+    export PATH="${PATH#"$TEST_DIR"/bin:}"
+    rm -rf "${TEST_DIR:?}/bin"
     
     assert_contains "$output" "GitSetu is already up-to-date" "detects up to date" || return 1
 }
@@ -74,8 +74,8 @@ EOF
     output=$(bash "$gitsetu_script" update 2>&1 || true)
     
     # Cleanup PATH
-    export PATH="${PATH#$TEST_DIR/bin:}"
-    rm -rf "$TEST_DIR/bin"
+    export PATH="${PATH#"$TEST_DIR"/bin:}"
+    rm -rf "${TEST_DIR:?}/bin"
     
     assert_contains "$output" "Update found" "detects update" || return 1
     assert_contains "$output" "from v${GITSETU_VERSION} to v1.2.3" "reports version change" || return 1
