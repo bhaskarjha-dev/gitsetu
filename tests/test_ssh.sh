@@ -82,8 +82,10 @@ test_write_ssh_config_creates_file() {
     write_ssh_config 2>/dev/null
 
     assert_file_exists "$HOME/.ssh/config" "ssh config created" &&
-    assert_file_contains "$HOME/.ssh/config" "Host github-global" "has global host" &&
-    assert_file_contains "$HOME/.ssh/config" "Host github-pro" "has pro host"
+    assert_file_contains "$HOME/.ssh/config" "Include $GITSETU_PROFILES_DIR/ssh_config" "has include directive" &&
+    assert_file_exists "$GITSETU_PROFILES_DIR/ssh_config" "isolated config created" &&
+    assert_file_contains "$GITSETU_PROFILES_DIR/ssh_config" "Host github-global" "has global host" &&
+    assert_file_contains "$GITSETU_PROFILES_DIR/ssh_config" "Host github-pro" "has pro host"
 }
 
 test_write_ssh_config_idempotent() {
@@ -94,10 +96,10 @@ test_write_ssh_config_idempotent() {
     write_ssh_config 2>/dev/null
     write_ssh_config 2>/dev/null
 
-    # Count occurrences of "Host github-pro" — should be exactly 1
+    # Count occurrences of "Include" — should be exactly 1
     local count
-    count=$(grep -c "Host github-pro" "$HOME/.ssh/config")
-    assert_equals "1" "$count" "no duplicate host blocks after re-run"
+    count=$(grep -c "Include $GITSETU_PROFILES_DIR/ssh_config" "$HOME/.ssh/config")
+    assert_equals "1" "$count" "no duplicate include directives after re-run"
 }
 
 test_write_ssh_config_preserves_user_content() {
@@ -111,7 +113,7 @@ test_write_ssh_config_preserves_user_content() {
     write_ssh_config 2>/dev/null
 
     assert_file_contains "$HOME/.ssh/config" "Host my-custom-server" "user content preserved" &&
-    assert_file_contains "$HOME/.ssh/config" "Host github-global" "managed block added"
+    assert_file_contains "$HOME/.ssh/config" "Include $GITSETU_PROFILES_DIR/ssh_config" "include directive added"
 }
 
 test_generate_key_fido2_fallback() {

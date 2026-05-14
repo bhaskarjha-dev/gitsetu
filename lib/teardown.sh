@@ -60,42 +60,68 @@ teardown_gitconfig() {
 # ------------------------------------------------------------------------------
 teardown_sshconfig() {
     local ssh_config="$HOME/.ssh/config"
+    local isolated_config="$GITSETU_PROFILES_DIR/ssh_config"
+    local include_directive="Include $isolated_config"
+
+    # 1. Delete the isolated file
+    if [[ -f "$isolated_config" ]]; then
+        if [[ "$GITSETU_DRY_RUN" -eq 1 ]]; then
+            print_info "[DRY RUN] Would delete isolated config: $isolated_config"
+        else
+            rm -f "$isolated_config"
+            print_success "Deleted isolated gitsetu SSH config: $isolated_config"
+        fi
+    fi
 
     if [[ ! -f "$ssh_config" ]]; then
         print_info "No ~/.ssh/config found, skipping."
         return 0
     fi
 
-    if ! grep -q "\[gitsetu:managed:start\]" "$ssh_config" 2>/dev/null; then
-        print_info "No gitsetu managed blocks found in ~/.ssh/config, skipping."
-        return 0
+    # 2. Legacy Migration Cleanup: Just in case they still have old blocks
+    if grep -q "\[gitsetu:managed:start\]" "$ssh_config" 2>/dev/null; then
+        if [[ "$GITSETU_DRY_RUN" -eq 1 ]]; then
+            print_info "[DRY RUN] Would remove legacy managed blocks from: $ssh_config"
+        else
+            backup_file "$ssh_config"
+            local tmp_legacy
+            tmp_legacy=$(mktemp "${ssh_config}.tmp.legacy.XXXXXX")
+            GITSETU_CLEANUP_FILES+=("$tmp_legacy")
+            awk '
+                /\[gitsetu:managed:start\]/ {skip=1; next}
+                /\[gitsetu:managed:end\]/   {skip=0; next}
+                !skip                      {print}
+            ' "$ssh_config" > "$tmp_legacy"
+            mv "$tmp_legacy" "$ssh_config"
+            print_success "Removed legacy managed blocks from: $ssh_config"
+        fi
     fi
 
-    if [[ "$GITSETU_DRY_RUN" -eq 1 ]]; then
-        print_info "[DRY RUN] Would remove managed blocks from: $ssh_config"
-        return 0
-    fi
+    # 3. Remove the Include directive safely
+    if grep -q -F "$include_directive" "$ssh_config" 2>/dev/null; then
+        if [[ "$GITSETU_DRY_RUN" -eq 1 ]]; then
+            print_info "[DRY RUN] Would remove Include directive from: $ssh_config"
+            return 0
+        fi
 
-    backup_file "$ssh_config"
+        backup_file "$ssh_config"
+        local tmp_file
+        tmp_file=$(mktemp "${ssh_config}.tmp.XXXXXX")
+        GITSETU_CLEANUP_FILES+=("$tmp_file")
 
-    local tmp_file
-    tmp_file=$(mktemp "${ssh_config}.tmp.XXXXXX")
-    GITSETU_CLEANUP_FILES+=("$tmp_file")
+        grep -v -F "$include_directive" "$ssh_config" > "$tmp_file" || true
 
-    awk '
-        /\[gitsetu:managed:start\]/ {skip=1; next}
-        /\[gitsetu:managed:end\]/   {skip=0; next}
-        !skip                      {print}
-    ' "$ssh_config" > "$tmp_file"
-
-    # If the resulting file is empty or only whitespace, delete it
-    if ! grep -q '[^[:space:]]' "$tmp_file" 2>/dev/null; then
-        rm -f "$tmp_file"
-        rm -f "$ssh_config"
-        print_success "Removed ~/.ssh/config (it was empty after cleanup)"
+        # If the resulting file is empty or only whitespace, delete it
+        if ! grep -q '[^[:space:]]' "$tmp_file" 2>/dev/null; then
+            rm -f "$tmp_file"
+            rm -f "$ssh_config"
+            print_success "Removed ~/.ssh/config (it was empty after cleanup)"
+        else
+            mv "$tmp_file" "$ssh_config"
+            print_success "Removed Include directive from: $ssh_config"
+        fi
     else
-        mv "$tmp_file" "$ssh_config"
-        print_success "Removed managed blocks from: $ssh_config"
+        print_info "No gitsetu Include directive found in ~/.ssh/config, skipping."
     fi
 }
 

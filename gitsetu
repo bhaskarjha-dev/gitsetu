@@ -357,7 +357,7 @@ cmd_teardown() {
     if [[ "$force" -eq 0 ]] && [[ "$GITSETU_DRY_RUN" -eq 0 ]]; then
         print_warning "This will remove all GitSetu configurations:"
         printf >&2 "  - Remove managed blocks from ~/.gitconfig\n"
-        printf >&2 "  - Remove managed blocks from ~/.ssh/config\n"
+        printf >&2 "  - Remove Include directive from ~/.ssh/config\n"
         printf >&2 "  - Uninstall the commit guard hook\n"
         printf >&2 "  - Delete the ~/.config/gitsetu directory\n"
         if [[ "$deep" -eq 1 ]]; then

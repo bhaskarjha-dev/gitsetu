@@ -58,7 +58,7 @@ EOF
 
     mkdir -p "$HOME/.ssh"
     cat > "$HOME/.ssh/config" <<EOF
-${GITSETU_MANAGED_START}
+Include $GITSETU_PROFILES_DIR/ssh_config
 Host test
 EOF
 

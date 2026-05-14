@@ -94,10 +94,11 @@ run_doctor() {
         printf >&2 "    ~/.gitconfig: %bWARNING (Managed blocks missing)%b\n" "$YELLOW" "$RESET"
     fi
 
-    if grep -qF "${GITSETU_MANAGED_START}" "$HOME/.ssh/config" 2>/dev/null; then
-        printf >&2 "    ~/.ssh/config: OK (Managed blocks present)\n"
+    local include_directive="Include $GITSETU_PROFILES_DIR/ssh_config"
+    if grep -qF "$include_directive" "$HOME/.ssh/config" 2>/dev/null; then
+        printf >&2 "    ~/.ssh/config: OK (Include directive present)\n"
     else
-        printf >&2 "    ~/.ssh/config: %bWARNING (Managed blocks missing)%b\n" "$YELLOW" "$RESET"
+        printf >&2 "    ~/.ssh/config: %bWARNING (Include directive missing)%b\n" "$YELLOW" "$RESET"
     fi
     
     printf >&2 "\n"

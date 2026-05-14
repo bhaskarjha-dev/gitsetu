@@ -81,11 +81,11 @@ test_teardown_removes_gitconfig_block() {
 test_teardown_removes_sshconfig_blocks() {
     setup
     
-    assert_file_contains "$HOME/.ssh/config" "[gitsetu:managed:start]"
+    assert_file_contains "$HOME/.ssh/config" "Include $GITSETU_PROFILES_DIR/ssh_config"
     
     teardown_sshconfig >/dev/null 2>&1
     
-    assert_file_not_contains "$HOME/.ssh/config" "[gitsetu:managed:start]"
+    assert_file_not_contains "$HOME/.ssh/config" "Include $GITSETU_PROFILES_DIR/ssh_config"
     assert_file_contains "$HOME/.ssh/config" "Host my-server"
 }
 

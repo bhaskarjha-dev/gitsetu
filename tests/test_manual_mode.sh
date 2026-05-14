@@ -37,8 +37,8 @@ test_manual_mode_skips_includeif() {
 
 test_manual_mode_creates_ssh_alias() {
     setup
-    assert_file_contains "${HOME}/.ssh/config" "Host github-manual"
-    assert_file_contains "${HOME}/.ssh/config" "IdentityFile ${HOME}/.ssh/id_ed25519_manual"
+    assert_file_contains "$GITSETU_PROFILES_DIR/ssh_config" "Host github-manual"
+    assert_file_contains "$GITSETU_PROFILES_DIR/ssh_config" "IdentityFile ${HOME}/.ssh/id_ed25519_manual"
 }
 
 run_test "Manual Mode skips includeIf generation" test_manual_mode_skips_includeif
