@@ -1,6 +1,7 @@
 # Backups created during testing
 *.bak
 *.tmp
+*.log
 
 # macOS
 .DS_Store
