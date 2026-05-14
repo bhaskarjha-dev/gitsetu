@@ -69,6 +69,6 @@ Executes the native OTA (Over-The-Air) update sequence.
 Toggles the fail-closed Pre-Commit Identity interceptor bounds inside the global `core.hooksPath` configuration matrix.
 
 ### `gitsetu teardown`
-**[Destructive Command]** The ultimate nuclear escape hatch.
-- Completely purges all GitSetu managed layouts, sub-files, and configuration blocks from the host system cleanly.
-- Restores the host Git environments to their pristine, pre-installation state.
+**[Destructive Command]** The ultimate uninstall and nuclear escape hatch.
+- Safely uninstalls GitSetu by completely purging all managed layout boundaries, sub-files, and configuration blocks from the host system cleanly.
+- Restores the host Git environments to their pristine, pre-installation state without deleting your private SSH keys.

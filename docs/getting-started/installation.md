@@ -37,3 +37,21 @@ gitsetu update
 ```
 
 This will safely fetch the latest release from GitHub over HTTPS, verify integrity, and atomically swap the binaries without leaving orphaned files.
+
+---
+
+## Uninstalling GitSetu
+
+Because GitSetu is deeply integrated into your `~/.gitconfig` and OpenSSH configuration files, you should **never** simply delete the executable binary. Doing so will leave broken `includeIf` and `Include` references in your global configurations.
+
+To completely and safely uninstall GitSetu, use the native teardown command:
+
+```bash
+gitsetu teardown
+```
+
+**What does teardown do?**
+1. Safely removes all GitSetu managed blocks from `~/.gitconfig` and `~/.ssh/config`.
+2. Leaves your generated SSH keys (`~/.ssh/id_*`) safely on disk so you don't lose access to GitHub.
+3. Completely deletes the `~/.config/gitsetu` application data directory.
+4. Instructs you on how to remove the final binary from your path.
