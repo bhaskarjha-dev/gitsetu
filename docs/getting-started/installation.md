@@ -28,7 +28,7 @@ curl -sL https://raw.githubusercontent.com/bhaskarjha-com/gitsetu/main/install.s
 
 ### What does the script do?
 1. Clones the GitSetu repository to `~/.local/share/gitsetu`.
-2. Creates a global symlink at `/usr/local/bin/git-setu` (or `~/.local/bin/git-setu` if running without sudo).
+2. Creates executable symlinks at `~/.local/bin/gitsetu` and `~/.local/bin/git-setu`.
 3. Allows you to run the CLI as either `gitsetu` or `git setu` directly from your terminal. *(Because the binary is named `git-setu`, Git automatically aliases it as a native Git subcommand!)*
 
 ## Upgrading
