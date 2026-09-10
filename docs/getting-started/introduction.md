@@ -14,8 +14,9 @@ If you work across multiple organizations, freelance clients, or maintain person
 |---------|-------------|-------------|
 | 🔴 **Wrong author commits** | You push a freelance project and your work email shows up in the log | Directory-scoped `includeIf` auto-switches identity |
 | 🔴 **SSH key collisions** | One SSH key for three GitHub accounts — pushes fail silently | Dedicated ED25519 keypair per profile |
-| 🔴 **Corporate firewall blocks SSH** | Port 22 blocked — PATs get mixed between accounts, 403 errors | Per-profile credential broker via OS keychain |
+| 🔴 **Corporate firewall blocks SSH** | Port 22 blocked — PATs get mixed between accounts, 403 errors | Per-profile credential broker via OS keychain & Windows Credential Manager |
 | 🔴 **Forgot to switch identity** | Commit lands with the wrong email — can't rewrite public history | Pre-commit guard blocks the commit before it happens |
+| 🔴 **Manual directory setup** | Missing workspace directory causes routing or clone errors | Auto-creates workspace directories (`mkdir -p`) on registration |
 | 🔴 **Manual global config** | Edit `~/.gitconfig` before every context switch, then forget | One-time setup, automatic forever |
 | 🔴 **Tool rot & dependency hell** | Every solution requires Node, Python, or Go. They break when runtimes update. | Pure Bash 3.2. Zero dependencies. Native auto-updater. |
 

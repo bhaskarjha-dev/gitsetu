@@ -9,6 +9,8 @@
 # Temporary test directories
 tmp/
 test_tmp/
+test_dir/
+sandbox/results/
 
 # Editor files
 *.swp
@@ -23,3 +25,10 @@ gitsetu_vault_pre_restore_*.tar.gz.enc.password
 
 # Website (separate git repo)
 gitsetu-web/
+
+# Distribution binary executables
+dist/*.exe
+
+
+# Agentic Development
+.agents/

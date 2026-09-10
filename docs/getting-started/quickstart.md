@@ -19,6 +19,7 @@ The wizard will automatically:
 1. Generate an ED25519 SSH keypair specific to this profile.
 2. Inject a Zero-Trust `Include` directive into your `~/.ssh/config`.
 3. Create a managed block in your `~/.gitconfig` using the `includeIf` conditional.
+4. Automatically create the workspace directory (`mkdir -p`) if it does not already exist.
 
 ---
 
@@ -39,12 +40,12 @@ You **must** upload your newly generated public key to your provider, otherwise 
 ### If you clone using HTTPS (`https://github.com/...`)
 If you rely on Personal Access Tokens (PATs) instead of SSH keys, you must securely bind your token to your profile so you aren't prompted for a password on every push.
 
-1. Bind your token using the Credential Broker:
+1. Provision or update credentials:
+   You can provide PATs during the interactive `gitsetu setup` wizard, register profiles with credentials via `gitsetu profile add <label> --email=<email> ...`, or pipe credentials into the broker:
    ```bash
-   gitsetu auth <profile>
+   printf "protocol=https\nhost=github.com\nusername=YOUR_USERNAME\npassword=YOUR_PAT\n" | gitsetu credential store
    ```
-   *(e.g., `gitsetu auth work`)*
-2. Paste your PAT when prompted (it will not echo to the screen). GitSetu securely encrypts it into your OS keychain.
+2. On Windows, GitSetu integrates directly with Windows Credential Manager (`credential.helper = manager` via DPAPI/GCM). On macOS and Linux, it securely delegates to the OS keychain or isolated fallback storage (`~/.config/gitsetu/.tokens` with `chmod 600`).
 
 ---
 
@@ -71,4 +72,4 @@ Author: Aditya Kumar <dev@company.com> ← correct, automatically
 ```
 
 > [!TIP]
-> **Global Fallback:** By default, GitSetu enforces `useConfigOnly = true` — commits outside a mapped directory are blocked to prevent identity leakage. Want a catch-all? Set one profile's directory to `~/` and it becomes the global fallback.
+> **Global Fallback:** By default, GitSetu enforces `useConfigOnly = true` — commits outside a mapped directory are blocked to prevent identity leakage. If you register a profile with an unmapped directory (`""`), GitSetu provisions it as your `[Global Fallback]` identity before conditional `[includeIf]` rules, ensuring standard commits succeed across unmapped paths while preserving strict directory isolation.

@@ -20,7 +20,7 @@ gitsetu backup
 The internal snapshot utility perfectly bundles the following active path domains:
 - **Master Registry Maps:** Core configuration indexing (`~/.config/gitsetu/profiles.conf`).
 - **Profile Layout Directives:** All dynamically mapped individual configuration override bounds (`~/.config/gitsetu/profiles/*.gitconfig`).
-- **Zero-Trust Host Directives:** The active OpenSSH network translation paths (`~/.config/gitsetu/ssh/*`).
+- **Zero-Trust Host Directives:** The active OpenSSH network translation paths (`~/.config/gitsetu/profiles/ssh_config`).
 - **Private Cryptographic Keys:** All actively generated native software key bounds linked exclusively to existing GitSetu profile environments (`~/.ssh/id_*`).
 
 ### OpenSSL AES-256 Cryptography
@@ -31,7 +31,7 @@ The backup routine natively leverages standard `openssl` binaries accessible on 
 > [!CAUTION]
 > **Data Loss Warning:** During the initial execution phase, GitSetu securely prompts you to declare a master encryption password string. If you forget or lose this precise passphrase, your encrypted target vault file remains mathematically irretrievable. The structural data inside the vault cannot be extracted.
 
-Upon successful completion, execution terminates cleanly yielding a highly portable encoded archive block named structurally as `gitsetu_backup_YYYYMMDD_HHMMSS.tar.gz.enc`. Store this block heavily isolated inside protected password managers, heavily constrained cloud bounds, or offline cold storage keys.
+Upon successful completion, execution terminates cleanly yielding a highly portable encoded archive block named structurally as `gitsetu_vault_YYYYMMDD_HHMMSS.tar.gz.enc`. Store this block heavily isolated inside protected password managers, heavily constrained cloud bounds, or offline cold storage keys.
 
 ---
 
@@ -42,7 +42,7 @@ After migrating your terminal execution environments to new bare-metal targets o
 Instead of calling the standard interactive setup wizard, explicitly execute the targeted payload reconstruction subcommand passing your target encrypted vault file payload:
 
 ```bash
-gitsetu restore /path/to/gitsetu_backup_YYYYMMDD_HHMMSS.tar.gz.enc
+gitsetu restore /path/to/gitsetu_vault_YYYYMMDD_HHMMSS.tar.gz.enc
 ```
 
 ### The Reconstruction Process

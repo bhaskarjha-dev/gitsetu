@@ -22,50 +22,78 @@ Our target is a flawless **100/100**. A developer using GitSetu should never hav
 
 ## Foundation: Completed in v1.0.0
 
-The following architectural hardening milestones established our enterprise baseline, backed by 165+ automated test vectors:
-- **Zero-Trust Identity Guard**: Hard pre-commit intercepts preventing dual-state leaks.
+The following architectural hardening milestones established our enterprise baseline, backed by 25 automated regression test suites (198 assertions) and a 12-phase live Windows Sandbox empirical audit:
+- **Zero-Trust Identity Guard**: Hard pre-commit intercepts preventing dual-state leaks with longest-prefix directory matching, Windows/macOS case-insensitivity, and dynamic email re-reading.
 - **Single Source of Truth (SSOT)**: Dynamic resolution via isolated `.gitconfig` files without registry polling.
+- **Native Windows PowerShell Distribution**: Shipped native `install.ps1` & `uninstall.ps1` installers, automated Command Prompt (`gitsetu.cmd`) and PowerShell (`gitsetu.ps1`) shims in `%LOCALAPPDATA%\gitsetu\bin`, and User `PATH` environment management.
+- **Package Formula Definitions**: Authored official Homebrew formula (`packaging/homebrew/gitsetu.rb`) and Windows Scoop manifest (`packaging/scoop/gitsetu.json`).
+- **Headless & Dotfiles Automation**: Scriptable, non-interactive profile provisioning via `gitsetu add` and `gitsetu profile add` backed by POSIX directory concurrency locking (`profiles.lock`).
+- **Automated Workspace Provisioning**: Auto-creates missing workspace directories (`mkdir -p`) upon profile registration, with clean unmounting and pruning on profile deletion.
+- **Multi-Profile Persistence & Re-hydration**: Preserves and re-hydrates existing profiles across multiple `gitsetu setup` runs.
+- **Safe SSH Space Quoting**: Double-quotes key paths with spaces in `core.sshCommand` and `GIT_SSH_COMMAND`.
+- **SSH Commit Signing**: Full native support for SSH-based cryptographic commit signatures (`gpg.format = ssh`, `commit.gpgsign = true`).
+- **Cross-Platform Normalization**: Native Windows drive path conversion (`pwd -W`), case-insensitive path comparisons on Windows and macOS.
 - **Unified Global Lifecycle**: Complete signal trapping (`EXIT/SIGINT/SIGTERM`) ensuring zero lock leaks.
 - **POSIX Concurrency Hardening**: Atomic `mv` operations eliminating Time-of-Check to Time-of-Use race conditions.
 - **Bash 3.2 Array Panic Prevention**: Native C-style POSIX loop structures replacing fragile subshell bounds.
 - **Path Injection Prevention**: Strict newline sanitization preventing INI boundary corruption.
-- **Encrypted State Export**: AES-256 OpenSSL vault packaging.
+- **Encrypted State Export**: AES-256 OpenSSL vault packaging (`gitsetu backup` / `gitsetu restore`).
+- **Empirical Sandbox Verification Matrix**: 25 automated regression test suites and isolated Windows Sandbox test harness (32/32 tests passing 100% green).
 
 ---
 
-## Phase 1: Distribution & Trust
+## Phase 1: Zero-Friction Onboarding & Universal Distribution
 
-**Goal:** Eliminate all adoption friction by ensuring GitSetu is seamlessly discoverable, installable, and trusted across all target platforms.
+**Goal:** Eliminate all adoption friction by ensuring GitSetu is instantly discoverable, installable, and trusted across all developer environments without requiring git clones or elevated permissions.
 
-- **Native Package Management:** Launch official channels for `Homebrew` (macOS), `apt` PPA (Linux), and the `AUR`.
-- **Authoritative Web Presence:** Overhaul `gitsetu.bhaskarjha.dev` to present enterprise-grade documentation (Active).
-- **Windows PowerShell Integration:** Ship a robust initialization wrapper supporting native PowerShell environments to expand the addressable audience beyond Git Bash constraints.
-- **Sponsorship & Governance:** Establish a formal Technical Steering Committee and define strict open-source contribution guidelines to guarantee long-term operational sustainability.
+- **Single-File Bundled Binary (`gitsetu-standalone` / `make dist`):** 
+  - Release an automated build step that inlines all `lib/*.sh` modules into a single, self-contained executable script.
+  - Allows direct download without cloning the git repository:
+    ```bash
+    curl -sL https://gitsetu.bhaskarjha.dev/bin/gitsetu -o ~/.local/bin/gitsetu && chmod +x ~/.local/bin/gitsetu
+    ```
+- **Homebrew Tap & Core Ingestion:** Launch the official `bhaskarjha-dev/homebrew-tap` repository and initiate submission to `homebrew/core` (`brew install gitsetu`).
+- **Dedicated Community Package Managers:**
+  - **Windows Scoop:** Publish `packaging/scoop/gitsetu.json` to official Scoop buckets (Main / Extras).
+  - **Microsoft Winget:** Submit the official `BhaskarJha.GitSetu` manifest to Microsoft's `winget-pkgs` repository (`winget install BhaskarJha.GitSetu`).
+  - **Arch Linux AUR:** Publish official `PKGBUILD` to `aur.archlinux.org/gitsetu.git` (`yay -S gitsetu`).
+  - **Nix / Nixpkgs Flake:** Introduce a standard `flake.nix` in the repository root for reproducible, zero-dependency NixOS execution (`nix run github:bhaskarjha-dev/gitsetu`).
+  - **npm / npx Wrapper:** Publish a thin npm binary wrapper (`npx gitsetu setup` / `npm i -g gitsetu`) for JavaScript and fullstack web developers.
+- **GitHub CLI Extension (`gh gitsetu`):** Publish `gh extension install bhaskarjha-dev/gh-gitsetu`, allowing developers working inside GitHub CLI workflows to run `gh setu` / `gh gitsetu setup` natively.
+- **Smart Zero-Prompt Auto-Discovery (`gitsetu init --auto`):** Expand the discovery engine in `lib/discovery.sh` into an instant, non-interactive one-shot setup command that auto-detects existing Git identities, SSH keys, and workspace folders (`~/work`, `~/personal`), applying a recommended zero-trust configuration in under 1 second.
+- **Sponsorship & Governance:** Establish a formal Technical Steering Committee and define open-source contribution guidelines to guarantee long-term operational sustainability.
+
+---
 
 ## Phase 2: Parity & Ecosystem UX
 
-**Goal:** Introduce modern UX interaction paradigms and cross-tool integration points expected from premium developer workflows.
+**Goal:** Introduce modern UX interaction paradigms, visual tools, and cross-tool integration points expected from premium developer workflows.
 
-- **Fuzzy Profile Switching (`fzf`):** Implement interactive, ultra-fast `fzf`-powered runtime profile selection capabilities.
-- **Native VS Code Integration:** Publish a premier VS Code extension to surface the active identity directly within the editor status bar, halting commits visually within the GUI if identities misalign.
-- **GPG Key Auto-Wiring:** Extend the core Identity Routing Engine to automatically generate, map, and enforce `user.signingKey` and `commit.gpgsign` targets on a per-profile basis.
-- **Machine-Readable API (`--json`):** Expose all diagnostic and structural `status` queries via structured JSON payloads to empower community extensions.
+- **Web Config Visualizer & Generator:** Deploy an interactive browser-based profile designer on `gitsetu.bhaskarjha.dev` that provides live previews of generated `.gitconfig` and OpenSSH directives, outputting customized 1-line installation commands.
+- **Fuzzy Profile Switching (`fzf`):** Implement interactive, ultra-fast `fzf`-powered runtime profile selection (`gitsetu switch`).
+- **Native VS Code Extension:** Publish an official VS Code extension to surface the active profile directly within the editor status bar, halting commits visually within the GUI if identities misalign.
+- **PGP / GPG Key Auto-Wiring:** Extend commit signing capabilities beyond native SSH to automatically wire classical PGP / GPG key targets on a per-profile basis.
+- **Machine-Readable API (`--json`):** Expose all diagnostic and structural queries (`gitsetu status --json`, `gitsetu doctor --json`) via structured JSON payloads to empower community tooling and editor plugins.
+
+---
 
 ## Phase 3: The Enterprise Moat
 
 **Goal:** Build asynchronous defensive capabilities no competitor is architecturally positioned to match.
 
-- **Automated Key Rotation Engine:** Implement scheduled, automated cryptographic key replacement workflows (`gitsetu rotate --every 90d`). The engine will natively rotate underlying signatures and swap SSH configuration hooks completely transparently.
+- **Automated Key Rotation Engine:** Implement scheduled, automated cryptographic key replacement workflows (`gitsetu rotate --every 90d`). The engine will natively rotate underlying signatures and swap OpenSSH configuration hooks completely transparently.
 - **Headless CI/CD Mode:** Release a dedicated GitHub Action / GitLab CI runtime flag (`gitsetu ci-init`) that natively provisions ephemeral, tightly-scoped identity contexts on temporary CI runners, automatically tearing them down on execution exit.
 - **Pre-Push Secret Scanning:** Expand the existing Identity Guard hook structure to actively scan outbound staged diffs for accidental Personal Access Token or SSH private key injections.
 - **Append-Only Audit Log:** Establish a tamper-evident, locally written compliance log (`~/.local/share/gitsetu/audit.log`) tracking all identity switches and cryptographic generation events.
 
-## Phase 4: Vision Completion
+---
+
+## Phase 4: Vision Completion (100/100)
 
 **Goal:** Achieve total ecosystem saturation and enterprise deployment scale.
 
-- **Cross-Platform Native Wrapper:** Develop a lightweight, compiled proxy (`gitsetu-bin`) to manage the core Bash libraries, enabling native Windows execution and distribution via `winget`.
-- **JetBrains Plugin Suite:** Mirror the VS Code extension capabilities seamlessly into IntelliJ, PyCharm, and GoLand IDE ecosystems.
+- **Cross-Platform Native Wrapper:** Develop a lightweight, compiled proxy (`gitsetu-bin`) to manage the core Bash libraries, enabling native Windows execution and direct binary distribution via winget/scoop.
+- **JetBrains Plugin Suite:** Mirror the VS Code extension capabilities seamlessly into IntelliJ, PyCharm, WebStorm, and GoLand IDE ecosystems.
 - **Team-Level Cloud Synchronization:** Deploy an opt-in, highly encrypted cloud vault bridging service to allow instant machine-to-machine state provisioning (excluding private keys).
 
 ---

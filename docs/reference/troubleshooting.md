@@ -77,6 +77,26 @@ Git is highly pedantic regarding target path strings.
 
 ---
 
+## 🪟 Windows-Specific Considerations
+
+### NTFS Key Permissions (`644` vs `600`)
+Under Linux/macOS, OpenSSH strictly demands `chmod 600` for private keys. On Windows NTFS filesystems, POSIX file permissions do not natively exist and Git Bash emulates permissions as `644`. 
+- **GitSetu Behavior**: `gitsetu verify` automatically tolerates `644` on Windows (`gitbash`), preventing false-positive errors.
+- **OpenSSH on Windows**: Native Windows OpenSSH (`C:\Windows\System32\OpenSSH\ssh.exe`) relies on Windows NTFS Access Control Lists (ACLs) instead of POSIX bits.
+
+### Path Casing & Virtual Mount Points
+- **Drive Letters**: Always use forward slashes in Git configurations (e.g. `C:/Users/name/work` rather than `C:\Users\name\work`). GitSetu automatically normalizes all paths to canonical `C:/path` format.
+- **Case Sensitivity**: Windows paths are case-insensitive. GitSetu automatically injects `gitdir/i:` so directory matching works whether paths are referenced with uppercase or lowercase drive letters (`C:` vs `c:`).
+
+### Isolated Verification via Windows Sandbox
+If you want to verify GitSetu, test adding profiles, or debug configurations in total isolation from your host:
+```cmd
+.\sandbox\launch_sandbox.bat
+```
+This boots a clean, disposable Windows Sandbox container, runs the entire regression test suite (all 25 test suites), and simulates multi-profile Git commits without any risk to your host setup.
+
+---
+
 ## ☢️ The Nuclear Option: Clean State Teardown
 
 If your environment is irrecoverably corrupted by cross-platform manual file tampering, execute GitSetu's native cleanup utility.

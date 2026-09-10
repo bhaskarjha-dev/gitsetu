@@ -1,60 +1,212 @@
 # Installation
 
-GitSetu is designed to be as lightweight as possible. It runs natively on your system using pure POSIX Bash, requiring absolutely zero external dependencies like Node.js, Python, or Go.
+GitSetu is designed to be as lightweight and accessible as possible. It runs natively across macOS, Linux, and Windows with zero external runtimes (no Node.js, Python, or Go required for shell installations).
 
-## Prerequisites
+---
 
-GitSetu runs on any Unix-like system.
-- **macOS**
-- **Linux** (Ubuntu, Debian, Arch, Fedora, etc.)
-- **Windows** (via Git Bash or WSL)
+## 1. Quick Onboarding (Zero-Dependency Shell Installers)
 
-The only strict requirements are:
-- `bash` (3.2 or higher — natively installed on almost every system)
-- `git`
-- `curl` (for the installation script)
-- `ssh-keygen` (for SSH key generation, part of OpenSSH)
-
-## Install Script
-
-The easiest way to install GitSetu is via the automated bootstrap script.
-
+### macOS & Linux (POSIX Bash)
+Run in your standard terminal (Terminal, iTerm2, Alacritty, Kitty):
 ```bash
-curl -sL https://raw.githubusercontent.com/bhaskarjha-com/gitsetu/main/install.sh | bash
+curl -sL https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.sh | bash
+# Or via custom domain:
+# curl -sL https://gitsetu.bhaskarjha.dev/install | bash
 ```
 
-> [!IMPORTANT]
-> **Restart your terminal** after the installation script completes. Alternatively, run `source ~/.bashrc` (or `~/.zshrc`). If you try to run the tool immediately without reloading your shell, you will likely receive a `command not found` error.
+### Windows (Native PowerShell)
+Open **PowerShell**, **Windows Terminal**, or **Command Prompt** and run:
+```powershell
+irm https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.ps1 | iex
+# Or via custom domain:
+# irm https://gitsetu.bhaskarjha.dev/install.ps1 | iex
+```
+> [!TIP]
+> **Zero Friction on Windows:** The PowerShell installer automatically configures native `gitsetu.cmd` and `gitsetu.ps1` command shims and adds `%LOCALAPPDATA%\gitsetu\bin` directly to your Windows User `PATH`. You can run `gitsetu` or `git setu` immediately in PowerShell, Command Prompt, or VS Code without opening Git Bash!
 
-### What does the script do?
-1. Clones the GitSetu repository to `~/.local/share/gitsetu`.
-2. Creates executable symlinks at `~/.local/bin/gitsetu` and `~/.local/bin/git-setu`.
-3. Allows you to run the CLI as either `gitsetu` or `git setu` directly from your terminal. *(Because the binary is named `git-setu`, Git automatically aliases it as a native Git subcommand!)*
+### Windows (via Git Bash)
+If you prefer working exclusively inside Git Bash:
+```bash
+curl -sL https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.sh | bash
+```
+
+---
+
+## 2. Package Managers & Ecosystem Wrappers
+
+### Node.js — npm & npx
+Run instantly without global installation, or install globally across any OS:
+```bash
+# Instant one-shot setup (no installation needed)
+npx gitsetu setup --auto
+
+# Or global install
+npm install -g gitsetu
+```
+
+### Windows — Microsoft WinGet
+Install via the official Windows Package Manager:
+```powershell
+winget install BhaskarJha.GitSetu
+```
+
+### Windows — Scoop
+Install via Scoop bucket:
+```powershell
+scoop install gitsetu
+```
+
+### macOS & Linux — Homebrew
+Install via Homebrew tap:
+```bash
+brew tap bhaskarjha-dev/tap
+brew install gitsetu
+```
+
+### Arch Linux — AUR
+Install via your preferred AUR helper:
+```bash
+yay -S gitsetu
+# or
+paru -S gitsetu
+```
+
+### Nix & NixOS — Nix Flake
+Execute or install hermetically via Nix Flakes:
+```bash
+# Run directly without polluting system state
+nix run github:bhaskarjha-dev/gitsetu -- setup --auto
+
+# Or install to your user environment
+nix profile install github:bhaskarjha-dev/gitsetu
+```
+
+### GitHub CLI Extension
+Integrate directly into `gh` CLI:
+```bash
+gh extension install bhaskarjha-dev/gh-gitsetu
+gh gitsetu setup
+```
+
+---
+
+## 3. Standalone Monolith (Direct Curl)
+
+If you need a single, zero-dependency executable without cloning the repository or downloading extra folders:
+
+```bash
+mkdir -p ~/.local/bin
+curl -sL https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/dist/gitsetu -o ~/.local/bin/gitsetu
+chmod +x ~/.local/bin/gitsetu
+```
+
+---
+
+## 4. Manual Installation (From Source)
+
+If your machine is behind an air-gapped firewall:
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/bhaskarjha-dev/gitsetu.git ~/.local/share/gitsetu
+
+# 2. Symlink or copy the binary
+mkdir -p ~/.local/bin
+ln -sf ~/.local/share/gitsetu/gitsetu ~/.local/bin/gitsetu
+ln -sf ~/.local/share/gitsetu/gitsetu ~/.local/bin/git-setu
+
+# 3. Ensure ~/.local/bin is in your PATH
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+---
+
+## Post-Installation First Steps
+
+Once installed, verify that GitSetu is available:
+```bash
+gitsetu --version
+# Outputs: gitsetu v1.0.0
+```
+
+### Instant 1-Second Setup
+Bootstrap all detected identities without prompts:
+```bash
+gitsetu setup --auto
+```
+
+### Interactive Dashboard Setup
+Review and tweak your identities visually:
+```bash
+gitsetu setup
+# Or use the native Git alias:
+git setu setup
+```
+
+---
+
+## Testing in Windows Sandbox
+
+If you are on Windows and want to test GitSetu safely in an isolated, disposable virtual machine without touching your personal configuration, clone the repository and launch the sandbox harness:
+```cmd
+.\sandbox\launch_sandbox.bat
+```
+
+---
 
 ## Upgrading
 
-GitSetu includes a native, atomic auto-updater. To upgrade to the latest version, simply run:
-
+GitSetu includes an atomic self-updater:
 ```bash
 gitsetu update
 ```
 
-This will safely fetch the latest release from GitHub over HTTPS, verify integrity, and atomically swap the binaries without leaving orphaned files.
+Or upgrade through your package manager:
+```bash
+npm update -g gitsetu         # npm
+winget upgrade BhaskarJha.GitSetu # WinGet
+scoop update gitsetu          # Scoop
+brew upgrade gitsetu          # Homebrew
+yay -Syu gitsetu              # Arch AUR
+```
 
 ---
 
-## Uninstalling GitSetu
+## Complete Uninstallation
 
-Because GitSetu is deeply integrated into your `~/.gitconfig` and OpenSSH configuration files, you should **never** simply delete the executable binary. Doing so will leave broken `includeIf` and `Include` references in your global configurations.
-
-To completely and safely uninstall GitSetu, use the native teardown command:
+Because GitSetu integrates cleanly into your global `~/.gitconfig` and OpenSSH configuration files, **always run teardown first** before deleting files:
 
 ```bash
-gitsetu teardown
+gitsetu teardown --deep
 ```
 
-**What does teardown do?**
-1. Safely removes all GitSetu managed blocks from `~/.gitconfig` and `~/.ssh/config`.
-2. Leaves your generated SSH keys (`~/.ssh/id_*`) safely on disk so you don't lose access to GitHub.
-3. Completely deletes the `~/.config/gitsetu` application data directory.
-4. Instructs you on how to remove the final binary from your path.
+### Removing Binaries & Files
+
+- **macOS / Linux:**
+  ```bash
+  curl -sL https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/uninstall.sh | bash
+  ```
+- **Windows (PowerShell):**
+  ```powershell
+  irm https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/uninstall.ps1 | iex
+  ```
+- **npm:**
+  ```bash
+  npm uninstall -g gitsetu
+  ```
+- **WinGet:**
+  ```powershell
+  winget uninstall BhaskarJha.GitSetu
+  ```
+- **Homebrew:**
+  ```bash
+  brew uninstall gitsetu
+  ```
+- **Scoop:**
+  ```powershell
+  scoop uninstall gitsetu
+  ```
+- **GitHub CLI:**
+  ```bash
+  gh extension remove gh-gitsetu
+  ```

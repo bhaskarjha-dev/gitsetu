@@ -10,7 +10,7 @@ If a developer runs manual one-off override commands inside a local project fold
 
 ## Fail-Closed Intercept Flow
 
-During initial installation or execution of the `install-guard` subcommand, GitSetu maps a high-speed verification interceptor directly into your global Git configuration bounds (`core.hooksPath`).
+During initial installation or execution of the `gitsetu guard --install` subcommand, GitSetu maps a high-speed verification interceptor directly into your global Git configuration bounds (`core.hooksPath`).
 
 ```
 [ Developer executes: git commit -m "feat: core module" ]
@@ -54,11 +54,20 @@ GitSetu's intercept engine is architected to act as a **transparent pass-through
 
 ---
 
-## High-Performance Execution
+## High-Performance Execution & Invariants
 
 Because commit validation occurs inline multiple times a day, execution overhead must remain minimal. 
 
 The Identity Guard is compiled purely in native, un-subshell-dependent **Bash 3.2**. By directly scanning internal configuration parameters without spinning up sub-processes or external interpreters, total evaluation completes in **`< 2 milliseconds`**, rendering the security verification entirely invisible during normal workflows.
+
+### Longest-Prefix Match Routing
+If multiple managed profile directories nest within each other (e.g., `~/work/` and `~/work/client-project/`), the guard uses a longest-prefix match algorithm to identify the deepest matching directory boundary. Commits inside `~/work/client-project/` are strictly enforced against the client profile email rather than the parent work profile.
+
+### Case-Insensitive Directory Matching
+On Windows and macOS, filesystems are case-insensitive. The guard automatically applies case normalization to both the current repository path and the configured profile workspace paths before prefix evaluation, ensuring commits aren't erroneously blocked due to casing differences (`C:/Work` vs `c:/work`).
+
+### Dynamic Profile Email Resolution
+To eliminate configuration drift if a user manually edits `~/.config/gitsetu/profiles/<label>.gitconfig` after setup, the guard dynamically re-reads the active `user.email` from the profile's `.gitconfig` file at commit time. This ensures the guard always validates against the live configuration rather than relying on stale registry cache values.
 
 ---
 
@@ -68,8 +77,8 @@ Supervise the guard deployment natively via targeted subcommands:
 
 ```bash
 # Natively mounts the global validation boundary
-gitsetu install-guard
+gitsetu guard --install
 
 # Disables global interception cleanly
-gitsetu remove-guard
+gitsetu guard --uninstall
 ```

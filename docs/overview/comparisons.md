@@ -2,7 +2,7 @@
 
 **An authoritative, deep-dive competitive matrix evaluating multi-identity Git managers across features, architecture, safety, and developer experience.**
 
-Managing multiple directory-scoped Git identities securely is a foundational challenge. To help engineering organizations and security managers evaluate their options, this document provides an objective, side-by-side comparison of the six leading approaches to Git identity switching as of **May 2026**.
+Managing multiple directory-scoped Git identities securely is a foundational challenge. To help engineering organizations and security managers evaluate their options, this document provides an objective, side-by-side comparison of the six leading approaches to Git identity switching as of **September 2026 (v1.0.0 GA)**.
 
 ---
 
@@ -61,11 +61,10 @@ Scores reflect a balanced evaluation of feature breadth, zero-trust reliability,
 ### 🏆 Best Overall: GitSetu
 GitSetu covers the widest operational scope end-to-end. It is the only platform evaluated that seamlessly combines **automated SSH key generation**, directory-scoped multi-key routing, native OS credential brokering, fail-closed pre-commit guard enforcement, encrypted state backups, and interactive diagnostics into a single, cohesive engine. 
 
-**The Trade-off:** Maintained primarily via source scripts; zero current community package-manager presence (e.g., Homebrew/APT tracks are scheduled for Phase 1 of the [2026 Roadmap](../enterprise/product-roadmap.md)).
+**The Trade-off:** Currently distributed via automated POSIX (`install.sh`) and PowerShell (`install.ps1`) one-liners, with Homebrew and Scoop package definitions packaged in `packaging/` for Phase 1 of the [2026 Roadmap](../enterprise/product-roadmap.md).
 
-### 🪟 Best for Windows-Only Environments: `gitego`
-Provides a clean single binary implementation compiled natively for Windows architecture, tightly hooking into the native Windows Credential Store without requiring Git Bash or WSL environments. 
-**The Trade-off:** Lacks native SSH configuration orchestration, hardware FIDO2 workflows, and localized state restoration capabilities.
+### 🪟 Windows Environments
+While tools like `gitego` compile native `.exe` binaries, GitSetu provides first-class, production-grade Windows support under Git Bash with native integration across PowerShell, CMD, Windows Terminal, and VS Code. GitSetu automatically compiles canonical Windows paths (`C:/path`), configures case-insensitive `gitdir/i:` directives, binds natively to **Windows Credential Manager (GCM)** via DPAPI, and provides a host-isolated **Windows Sandbox Test Harness** (`sandbox/`) for zero-risk verification.
 
 ### 🏛️ Best for Battle-Tested Simplicity: `karn`
 With over 300+ GitHub stars and years of historical deployment stability, `karn` provides exceptionally reliable directory-to-identity switching via clean YAML definitions. 
@@ -79,6 +78,6 @@ Writing conditional `includeIf` directives and manually crafting namespaced `~/.
 
 ## Conclusion
 
-If you require seamless, automated identity security on POSIX-compliant platforms (macOS/Linux/WSL) with absolute zero runtime dependencies, **GitSetu stands alone as the category winner.** 
+If you require seamless, automated identity security across POSIX-compliant platforms (macOS, Linux, WSL) and native Windows environments with absolute zero runtime dependencies, **GitSetu stands alone as the category winner.** 
 
 If native compiled distribution targets or integrated IDE extensions represent hard operational blockers for your team, reviewing alternative Go tools or consulting our upcoming feature milestones provides clear planning direction.

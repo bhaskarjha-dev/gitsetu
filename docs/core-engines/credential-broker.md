@@ -39,26 +39,36 @@ GitSetu intercepts this systemic failure by registering itself as a proxy creden
 Inside your target `.gitconfig` bounds, GitSetu statefully compiles:
 ```ini
 [credential]
-    helper = "/path/to/gitsetu credential"
+    helper = "gitsetu credential"
 ```
 
 ### The Isolated Resolution Flow
 
 1. **Trigger Operation:** You execute `git push` over HTTPS inside a managed workspace folder.
-2. **Helper Interception:** Git streams an authentication verification payload directly to `gitsetu credential`.
+2. **Helper Interception:** Git streams an authentication verification payload directly to the configured credential helper.
 3. **Context Evaluation:** GitSetu leverages its optimized path-matching algorithm to identify the active profile context instantly.
 4. **Namespaced Query:** Instead of requesting credentials for `github.com` from the OS, GitSetu constructs an isolated, unique namespace query: `gitsetu:work:github.com`.
-5. **Target Delivery:** The OS keychain returns the exact token explicitly mapped to your `work` profile context.
+5. **Target Delivery:** The OS keychain (macOS Keychain, Linux Secret Service, or Windows Git Credential Manager) returns the exact token explicitly mapped to your `work` profile context.
 6. **Execution Success:** GitSetu passes the isolated token payload back to Git. Upstream communication succeeds flawlessly.
+
+> [!NOTE]
+> **Windows Credential Manager Integration:**
+> On Windows (Git Bash), GitSetu automatically configures `credential.helper = manager`, natively delegating to Microsoft's **Git Credential Manager (GCM)** backed by Windows DPAPI and Windows Credential Manager.
 
 ---
 
 ## Token Lifecycle Management
 
-To securely seed or update a Personal Access Token within an isolated profile scope, execute the `auth` subcommand:
+To securely seed or update a Personal Access Token within an isolated profile scope, you can:
+1. **Interactive Setup:** Enter your PAT when prompted during the interactive `gitsetu setup` wizard.
+2. **Headless Profile Registration:** Provide credentials when invoking profile commands:
+   ```bash
+   gitsetu profile add work --email=dev@company.com --dir=~/work
+   ```
+3. **Standard Git Credential Helper Interface:** Store or retrieve credentials directly via standard Git credential protocol inputs:
+   ```bash
+   printf "protocol=https\nhost=github.com\nusername=dev-corp\npassword=PAT_TOKEN\n" | gitsetu credential store
+   ```
 
-```bash
-gitsetu auth work
-```
-
-GitSetu securely prompts for your credential input inline, immediately streaming the string directly into your operating system's native encrypted secure storage layer. **Passwords and tokens are never stored in plain-text files.**
+### Encrypted Fallback Storage
+In environments where native OS keychain facilities are absent (such as headless Linux or minimal WSL containers), GitSetu securely falls back to a restricted credential vault at `~/.config/gitsetu/.tokens`. This file is strictly enforced with `chmod 600` permissions (read/write only by the current user) immediately upon creation, preventing world-readable token exposure. Passwords and tokens are never stored in plain-text global configuration files.

@@ -19,14 +19,26 @@ A step-by-step integration test checklist for verifying that every GitSetu featu
 
 > Verifies: README "Install" section
 
+### macOS & Linux (POSIX Bash)
 ```bash
-curl -sL https://raw.githubusercontent.com/bhaskarjha-com/gitsetu/main/install.sh | bash
+curl -sL https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.sh | bash
 ```
 
 - [ ] Installer completes without errors
 - [ ] `~/.local/share/gitsetu/` directory exists
 - [ ] `gitsetu` command is available: `gitsetu --help`
 - [ ] `git setu` alias works: `git setu --help`
+
+### Windows (PowerShell)
+```powershell
+irm https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.ps1 | iex
+```
+
+- [ ] Installer completes without errors
+- [ ] `%LOCALAPPDATA%\gitsetu\share` directory exists
+- [ ] `gitsetu.cmd` and `gitsetu.ps1` exist in `%LOCALAPPDATA%\gitsetu\bin`
+- [ ] `gitsetu --version` outputs `gitsetu v1.0.0` in PowerShell, CMD, and Windows Terminal
+- [ ] `git setu --version` alias works identically
 
 ---
 
@@ -48,7 +60,7 @@ gitsetu setup
 - [ ] `~/.gitconfig` contains `includeIf` block: `grep -A2 'includeIf' ~/.gitconfig`
 - [ ] Profile gitconfig exists: `cat ~/.config/gitsetu/profiles/personal.gitconfig`
 - [ ] SSH config has Include directive: `grep 'Include' ~/.ssh/config`
-- [ ] Isolated SSH config has host alias: `grep -A3 'Host github-personal' ~/.config/gitsetu/ssh_config`
+- [ ] Isolated SSH config has host alias: `grep -A3 'Host github-personal' ~/.config/gitsetu/profiles/ssh_config`
 - [ ] Registry file exists: `cat ~/.config/gitsetu/profiles.conf`
 
 ---
@@ -244,7 +256,7 @@ gitsetu remove freelance
 
 - [ ] Profile removed from registry: `grep freelance ~/.config/gitsetu/profiles.conf` (should return nothing)
 - [ ] `includeIf` block removed from `~/.gitconfig`
-- [ ] SSH host alias removed from `~/.config/gitsetu/ssh_config`
+- [ ] SSH host alias removed from `~/.config/gitsetu/profiles/ssh_config`
 - [ ] SSH keys preserved on disk: `ls ~/.ssh/id_ed25519_freelance*` (still exists)
 
 ---
@@ -260,7 +272,7 @@ gitsetu setup
 
 - [ ] No errors, no duplicates
 - [ ] `~/.gitconfig` has exactly ONE `includeIf` per profile (not duplicated)
-- [ ] `~/.config/gitsetu/ssh_config` has exactly ONE host block per profile
+- [ ] `~/.config/gitsetu/profiles/ssh_config` has exactly ONE host block per profile
 - [ ] SSH keys are NOT overwritten (prompted to skip/keep)
 
 ---
@@ -312,7 +324,7 @@ gitsetu teardown --deep
 - [ ] Local repo identity overrides also cleaned
 
 ```bash
-curl -sL https://raw.githubusercontent.com/bhaskarjha-com/gitsetu/main/uninstall.sh | bash
+curl -sL https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/uninstall.sh | bash
 ```
 
 - [ ] `~/.local/share/gitsetu/` removed
@@ -350,7 +362,8 @@ curl -sL https://raw.githubusercontent.com/bhaskarjha-com/gitsetu/main/uninstall
 
 After all manual tests pass:
 
-- [ ] `make test` — all 168 automated tests pass
+- [ ] `make test` (or `bash tests/run_all.sh`) — all 25 regression test suites pass 100% green
+- [ ] Windows Sandbox verification — `.\sandbox\launch_sandbox.bat` boots disposable VM, runs all 25 test suites and live multi-profile test scenarios
 - [ ] `make lint` — ShellCheck clean
 - [ ] CHANGELOG.md updated
 - [ ] Version bumped in `gitsetu` (if applicable)
