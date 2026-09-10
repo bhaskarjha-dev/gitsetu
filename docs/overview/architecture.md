@@ -79,7 +79,7 @@ To ensure absolute resilience under parallel builds, cross-platform environments
 - **Longest-Prefix Match Routing:** Evaluates nested directory structures deterministically, prioritizing the deepest matching directory boundary across identity routing, pre-commit guards, and prompt lookups.
 - **Multi-Profile Persistence & Re-hydration:** Re-running setup safely re-hydrates existing profiles from `profiles.conf`, allowing non-destructive iterative updates.
 - **Safe SSH Command Quoting:** Enforces escaped double-quoting around SSH key paths containing spaces in `core.sshCommand` and `GIT_SSH_COMMAND`.
-- **Windows Sandbox Test Harness:** Completely disposable, host-isolated validation container (`sandbox/`) executing all 25 regression test suites and multi-profile simulations without touching the host machine.
+- **Windows Sandbox Test Harness:** Completely disposable, host-isolated validation container (`sandbox/`) executing all 32 regression test suites and multi-profile simulations without touching the host machine.
 
 ---
 

@@ -93,7 +93,7 @@ If you want to verify GitSetu, test adding profiles, or debug configurations in 
 ```cmd
 .\sandbox\launch_sandbox.bat
 ```
-This boots a clean, disposable Windows Sandbox container, runs the entire regression test suite (all 25 test suites), and simulates multi-profile Git commits without any risk to your host setup.
+This boots a clean, disposable Windows Sandbox container, runs the entire regression test suite (all 32 test suites), and simulates multi-profile Git commits without any risk to your host setup.
 
 ---
 

@@ -362,8 +362,8 @@ curl -sL https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/uninstall
 
 After all manual tests pass:
 
-- [ ] `make test` (or `bash tests/run_all.sh`) — all 25 regression test suites pass 100% green
-- [ ] Windows Sandbox verification — `.\sandbox\launch_sandbox.bat` boots disposable VM, runs all 25 test suites and live multi-profile test scenarios
+- [ ] `make test` (or `bash tests/run_all.sh`) — all 32 regression test suites pass 100% green
+- [ ] Windows Sandbox verification — `.\sandbox\launch_sandbox.bat` boots disposable VM, runs all 32 test suites, live multi-profile scenarios, and 24-phase empirical audit (70 checks)
 - [ ] `make lint` — ShellCheck clean
 - [ ] CHANGELOG.md updated
 - [ ] Version bumped in `gitsetu` (if applicable)

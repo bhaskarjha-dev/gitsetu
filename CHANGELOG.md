@@ -46,13 +46,22 @@ The inaugural General Availability (GA) production release of GitSetu — a zero
 - **Canonical Windows Path Normalization:** Standardizes paths to `C:/path` canonical format, resolving impedance between native Win32 `git.exe` and MSYS / Git Bash.
 - **7-Field Windows Drive Compatibility:** Colon collision protection (`IFS=:`) for Windows drive letters across registry parsing, backup bundling, and CLI operations.
 - **NTFS Permission Handling:** Tolerates `644` permissions on NTFS filesystems under Git Bash without false-positive verification errors.
-- **Windows Sandbox Test Harness:** Fully automated, disposable test harness in `sandbox/` featuring `launch_sandbox.bat`, `gitsetu_test.wsb`, and `bootstrap.ps1` for host-isolated validation.
+- **Windows Sandbox Test Harness:** Fully automated, disposable test harness in `sandbox/` featuring `launch_sandbox.bat`, `gitsetu_test.wsb`, `bootstrap.ps1`, and `comprehensive_audit.sh` (24 phases, 70 empirical checks) for host-isolated zero-trust validation.
 
 #### Distribution, Quality Assurance & Tooling
-- **Multi-Platform Packaging:** Authored official Homebrew formula (`packaging/homebrew/gitsetu.rb`) and Windows Scoop manifest (`packaging/scoop/gitsetu.json`).
+- **Multi-Platform Packaging Ecosystem:** Complete distribution support across all developer platforms:
+  - **Standalone Monolith Bundle (`dist/gitsetu`):** Self-contained, single-file Bash executable built via `scripts/bundle.sh` (`make dist`).
+  - **Node.js npm/npx Package (`package.json`, `bin/gitsetu.js`):** Instant zero-install execution via `npx gitsetu setup --auto` and global installation via `npm i -g gitsetu`.
+  - **Microsoft WinGet Manifest Triad (`packaging/winget/`):** Official Microsoft Windows Package Manager manifests validated against Microsoft CLI schema.
+  - **Native Windows C# Launcher (`packaging/windows/gitsetu.cs`):** Compiled via `build_launcher.ps1` (`csc.exe`) for transparent execution.
+  - **Windows Scoop Manifest (`packaging/scoop/gitsetu.json`):** Compatible with Scoop package manager.
+  - **Homebrew Formula (`packaging/homebrew/gitsetu.rb`):** Compatible with macOS & Linux Homebrew.
+  - **Arch Linux AUR (`packaging/aur/`):** Validated `PKGBUILD` and `.SRCINFO` package specification.
+  - **Nix Flake (`flake.nix`):** Zero-dependency hermetic execution via `nix run github:bhaskarjha-dev/gitsetu`.
+  - **GitHub CLI Extension (`packaging/gh-extension/`):** Executable extension wrapper (`gh gitsetu`).
 - **Installer Regression Pipeline:** Added automated end-to-end testing for both POSIX and Windows PowerShell installer/uninstaller pipelines in `tests/test_installer.sh`.
-- **25 Comprehensive Regression Test Suites:** Full test suite covering core logic, CLI, SSH, gitconfig, guard, credential broker, backup/restore, concurrency, teardown, validation, platform detection, discovery, doctor, prompt, resilience, installer, keychain, manual mode, and Windows audit regressions.
-- **Unified Test Runner:** Added `tests/run_all.sh` providing aggregated status and colored summaries across all 25 test suites.
+- **32 Comprehensive Regression Test Suites:** Full test suite covering core logic, CLI, SSH, gitconfig, guard, credential broker, backup/restore, concurrency, teardown, validation, platform detection, discovery, doctor, prompt, resilience, installer, keychain, manual mode, bundler, npm wrapper, winget, AUR, Nix flake, GH extension, and audit regressions.
+- **Unified Test Runner:** Added `tests/run_all.sh` providing aggregated status and colored summaries across all 32 test suites.
 - **Developer Makefile:** Targets for `make test`, `make lint` (ShellCheck), `make check`, and `make hooks`.
 - **Shell Autocompletion:** TAB autocompletion for subcommands and profile labels in Bash and Zsh.
 - **Diagnostic Doctor (`gitsetu doctor`):** Multi-point diagnostic scanner for registry validity, OpenSSH include directives, SSH agent status, and local repository configuration drift.
