@@ -34,11 +34,33 @@ ${GITSETU_MANAGED_START}
     defaultBranch = main
 EOF
 
-    cat <<EOF
+    # If a global fallback profile exists (index 0 with empty dir), include it as the base identity
+    if [[ "$PROFILE_COUNT" -gt 0 ]] && [[ -z "${PROFILE_DIRS[0]}" ]]; then
+        local global_label="${PROFILE_LABELS[0]}"
+        local global_path="${GITSETU_PROFILES_DIR}/${global_label}.gitconfig"
+        global_path=$(normalize_path "$global_path")
+        local escaped_global_path="${global_path//\\/\\\\}"
+        escaped_global_path="${escaped_global_path//\"/\\\"}"
+        cat <<EOF
+
+[include]
+    path = "${escaped_global_path}"
+EOF
+    fi
+
+    if [[ "$GITSETU_OS" == "gitbash" ]]; then
+        cat <<EOF
+
+[credential]
+    helper = manager
+EOF
+    else
+        cat <<EOF
 
 [credential]
     helper = "${GITSETU_SCRIPT_DIR}/gitsetu credential"
 EOF
+    fi
 
     # Add safe.directory for each non-default profile (solves VirtualBox/WSL dubious ownership)
     local has_safe=0
@@ -46,6 +68,12 @@ EOF
     for (( i=0; i<PROFILE_COUNT; i++ )); do
         local dir="${PROFILE_DIRS[$i]}"
         if [[ -n "$dir" ]]; then
+            if [[ "$GITSETU_OS" == "gitbash" ]] && [[ "$dir" =~ ^/([a-zA-Z])/(.*) ]]; then
+                local drive="${BASH_REMATCH[1]}"
+                local rest="${BASH_REMATCH[2]}"
+                drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
+                dir="${drive}:/${rest}"
+            fi
             if [[ "$dir" != */ ]]; then
                 dir="${dir}/"
             fi
@@ -70,6 +98,12 @@ EOF
         local dir="${PROFILE_DIRS[$i]}"
 
         if [[ -n "$dir" ]]; then
+            if [[ "$GITSETU_OS" == "gitbash" ]] && [[ "$dir" =~ ^/([a-zA-Z])/(.*) ]]; then
+                local drive="${BASH_REMATCH[1]}"
+                local rest="${BASH_REMATCH[2]}"
+                drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
+                dir="${drive}:/${rest}"
+            fi
             # Ensure trailing slash for gitdir matching
             if [[ "$dir" != */ ]]; then
                 dir="${dir}/"
@@ -82,6 +116,7 @@ EOF
             escaped_dir="${escaped_dir//\"/\\\"}"
 
             local path="${GITSETU_PROFILES_DIR}/${label}.gitconfig"
+            path=$(normalize_path "$path")
             local escaped_path="${path//\\/\\\\}"
             escaped_path="${escaped_path//\"/\\\"}"
 
@@ -196,6 +231,18 @@ build_profile_gitconfig() {
     local sign_commits="${4:-0}"
     local key_path="${5:-$HOME/.ssh/id_ed25519_${label}}"
 
+    # Convert key_path to portable tilde notation
+    local portable_key="$key_path"
+    if [[ "$key_path" == "$HOME/.ssh/"* ]] || [[ "$key_path" =~ (\.ssh/.*)$ ]]; then
+        portable_key="~/.ssh/${key_path##*/}"
+    elif [[ "$key_path" == "$HOME/"* ]]; then
+        portable_key="~/${key_path#"$HOME"/}"
+    fi
+    local safe_ssh_key="$portable_key"
+    if [[ "$safe_ssh_key" == *" "* ]]; then
+        safe_ssh_key="\"${safe_ssh_key}\""
+    fi
+
     # NOTE: `provider` and `provider_user` are NOT parameters of this function.
     # They are accessed via Bash's dynamic scoping from the calling function
     # `write_profile_gitconfig()`, which declares them as local variables.
@@ -213,7 +260,7 @@ EOF
 
     if [[ "$sign_commits" == "1" ]]; then
         cat <<EOF
-    signingkey = ${key_path}.pub
+    signingkey = ${portable_key}.pub
 
 [gpg]
     format = ssh
@@ -226,7 +273,7 @@ EOF
     cat <<EOF
 
 [core]
-    sshCommand = ssh -i ${key_path}
+    sshCommand = ssh -i ${safe_ssh_key}
 EOF
 
     if [[ -n "${provider_user:-}" ]] && [[ -n "${provider:-}" ]]; then
@@ -319,4 +366,23 @@ EOF
 
     mv "$tmp_file" "$GITSETU_PROFILES_CONF"
     print_success "Created profile registry: $GITSETU_PROFILES_CONF"
+
+    # Clean up orphaned profile configs
+    if [[ -d "$GITSETU_PROFILES_DIR" ]]; then
+        local pfile plabel pfound j
+        for pfile in "$GITSETU_PROFILES_DIR"/*.gitconfig; do
+            [[ -f "$pfile" ]] || continue
+            plabel=$(basename "$pfile" .gitconfig)
+            pfound=0
+            for (( j=0; j<PROFILE_COUNT; j++ )); do
+                if [[ "${PROFILE_LABELS[j]}" == "$plabel" ]]; then
+                    pfound=1
+                    break
+                fi
+            done
+            if [[ "$pfound" -eq 0 ]]; then
+                rm -f "$pfile"
+            fi
+        done
+    fi
 }

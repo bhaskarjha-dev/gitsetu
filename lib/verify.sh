@@ -32,10 +32,12 @@ verify_ssh_keys() {
             continue
         fi
 
-        # Check private key permissions (should be 600)
+        # Check private key permissions (should be 600, or 644 under Git Bash NTFS emulation)
         local perms
         perms=$(stat -c '%a' "$key_path" 2>/dev/null || stat -f '%Lp' "$key_path" 2>/dev/null || echo "???")
-        if [[ "$perms" != "600" ]]; then
+        if [[ "$GITSETU_OS" == "gitbash" ]] && [[ "$perms" == "644" || "$perms" == "600" ]]; then
+            : # Normal under Windows MSYS NTFS emulation
+        elif [[ "$perms" != "600" ]]; then
             print_warning "Incorrect permissions on $key_path: $perms (should be 600)"
             issues=$((issues + 1))
         fi

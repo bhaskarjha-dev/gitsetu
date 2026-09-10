@@ -10,6 +10,9 @@
 # Called at the start of setup. Idempotent.
 # ------------------------------------------------------------------------------
 ensure_dirs() {
+    if [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
+        return 0
+    fi
     mkdir -p "$GITSETU_CONFIG_DIR" 2>/dev/null || true
     mkdir -p "$GITSETU_BACKUP_DIR" 2>/dev/null || true
     mkdir -p "$GITSETU_PROFILES_DIR" 2>/dev/null || true
@@ -80,16 +83,44 @@ _collect_ssh_key_paths() {
     local key_files=()
 
     if [[ -f "$GITSETU_PROFILES_CONF" ]]; then
-        local _label _email _dir _provider _sign _kpath _puser
-        while IFS=: read -r _label _email _dir _provider _sign _kpath _puser || [[ -n "$_label" ]]; do
-            [[ "$_label" == "#"* ]] && continue
-            [[ -z "$_label" ]] && continue
+        local raw_line
+        while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+            [[ "$raw_line" == "#"* ]] && continue
+            [[ -z "$raw_line" ]] && continue
+            
+            # Protect Windows drive letters from IFS=: splitting
+            local clean_line
+            clean_line=$(printf '%s' "$raw_line" | sed -E 's/:([a-zA-Z]):/:\1#DRIVE#/g')
+            local _label _email _dir _provider _sign _kpath _puser
+            IFS=: read -r _label _email _dir _provider _sign _kpath _puser <<< "$clean_line"
+            _dir="${_dir//#DRIVE#/:}"
+            _kpath="${_kpath//#DRIVE#/:}"
+
             _kpath="${_kpath:-$HOME/.ssh/id_ed25519_${_label}}"
-            if [[ -f "$_kpath" ]]; then
+            if [[ "$_kpath" == "~/"* ]]; then
+                _kpath="$HOME/${_kpath:2}"
+            elif [[ "$_kpath" == "~" ]]; then
+                _kpath="$HOME"
+            fi
+            local norm_kpath norm_home
+            norm_kpath=$(normalize_path "$_kpath")
+            norm_home=$(normalize_path "$HOME")
+            if [[ -f "$_kpath" ]] || [[ -f "$norm_kpath" ]]; then
                 # Convert absolute path to path relative to $HOME for tar
-                local rel="${_kpath#"$HOME"/}"
+                local rel
+                if [[ "$norm_kpath" == "$norm_home/"* ]]; then
+                    rel="${norm_kpath#"$norm_home"/}"
+                elif [[ "$_kpath" == "$HOME/"* ]]; then
+                    rel="${_kpath#"$HOME"/}"
+                elif [[ "$_kpath" =~ (\.ssh/.*)$ ]]; then
+                    rel="${BASH_REMATCH[1]}"
+                else
+                    rel="$_kpath"
+                fi
                 key_files+=("$rel")
-                [[ -f "${_kpath}.pub" ]] && key_files+=("${rel}.pub")
+                if [[ -f "${_kpath}.pub" ]] || [[ -f "${norm_kpath}.pub" ]]; then
+                    key_files+=("${rel}.pub")
+                fi
             fi
         done < "$GITSETU_PROFILES_CONF"
     fi
@@ -130,7 +161,19 @@ cmd_backup() {
 
     # Bundle: config directory + individual SSH key files from registry
     local tar_args=()
-    [[ -d "$GITSETU_CONFIG_DIR" ]] && tar_args+=(".config/gitsetu")
+    if [[ -d "$GITSETU_CONFIG_DIR" ]]; then
+        local norm_cfg norm_home rel_cfg
+        norm_cfg=$(normalize_path "$GITSETU_CONFIG_DIR")
+        norm_home=$(normalize_path "$HOME")
+        if [[ "$norm_cfg" == "$norm_home/"* ]]; then
+            rel_cfg="${norm_cfg#"$norm_home"/}"
+        elif [[ "$GITSETU_CONFIG_DIR" == "$HOME/"* ]]; then
+            rel_cfg="${GITSETU_CONFIG_DIR#"$HOME"/}"
+        else
+            rel_cfg="$GITSETU_CONFIG_DIR"
+        fi
+        tar_args+=("$rel_cfg")
+    fi
 
     local key_path
     while IFS= read -r key_path; do
@@ -168,8 +211,9 @@ cmd_backup() {
     fi
 
     local ssl_args=("-aes-256-cbc" "-salt")
-    read -r -a extra_args <<< "$(get_openssl_args)"
-    ssl_args+=("${extra_args[@]}")
+    local -a extra_ssl_args=()
+    read -r -a extra_ssl_args <<< "$(get_openssl_args)"
+    ssl_args+=("${extra_ssl_args[@]}")
 
     export GITSETU_VAULT_PASS="$password"
     if openssl enc "${ssl_args[@]}" -in "$temp_tar" -out "$out_file" -pass env:GITSETU_VAULT_PASS 2>/dev/null; then
@@ -207,8 +251,9 @@ cmd_restore() {
     fi
 
     local ssl_args=("-d" "-aes-256-cbc" "-salt")
-    read -r -a extra_args <<< "$(get_openssl_args)"
-    ssl_args+=("${extra_args[@]}")
+    local -a extra_ssl_args=()
+    read -r -a extra_ssl_args <<< "$(get_openssl_args)"
+    ssl_args+=("${extra_ssl_args[@]}")
 
     local temp_tar="${TMPDIR:-/tmp}/gitsetu_vault_$$_${RANDOM}.tar.gz"
     GITSETU_CLEANUP_FILES+=("$temp_tar")

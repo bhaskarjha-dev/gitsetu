@@ -11,6 +11,10 @@ run_doctor() {
 
     # 1. Determine active profile based on PWD
     local current_dir="$PWD"
+    if [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]]; then
+        current_dir=$(pwd -W 2>/dev/null || echo "$current_dir")
+    fi
+    current_dir="$(normalize_path "$current_dir")"
     local active_profile="global"
     local active_dir="[Global Fallback]"
     
@@ -18,7 +22,13 @@ run_doctor() {
     # Iterate backwards so more specific (later) profiles win
     for (( i=PROFILE_COUNT-1; i>=1; i-- )); do
         local dir="${PROFILE_DIRS[$i]}"
-        if [[ -n "$dir" ]] && [[ "$current_dir" == "$dir"* ]]; then
+        local check_pwd="$current_dir"
+        local check_dir="$dir"
+        if [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]]; then
+            check_pwd=$(printf '%s' "$check_pwd" | tr '[:upper:]' '[:lower:]')
+            check_dir=$(printf '%s' "$check_dir" | tr '[:upper:]' '[:lower:]')
+        fi
+        if [[ -n "$dir" ]] && { [[ "$check_pwd/" == "$check_dir/"* ]] || [[ "$check_pwd" == "$check_dir" ]]; }; then
             active_profile="${PROFILE_LABELS[$i]}"
             active_dir="$dir"
             break
@@ -94,8 +104,8 @@ run_doctor() {
         printf >&2 "    ~/.gitconfig: %bWARNING (Managed blocks missing)%b\n" "$YELLOW" "$RESET"
     fi
 
-    local include_directive="Include $GITSETU_PROFILES_DIR/ssh_config"
-    if grep -qF "$include_directive" "$HOME/.ssh/config" 2>/dev/null; then
+    local include_directive="Include ~/.config/gitsetu/profiles/ssh_config"
+    if grep -qF "$include_directive" "$HOME/.ssh/config" 2>/dev/null || grep -qF "Include $GITSETU_PROFILES_DIR/ssh_config" "$HOME/.ssh/config" 2>/dev/null; then
         printf >&2 "    ~/.ssh/config: OK (Include directive present)\n"
     else
         printf >&2 "    ~/.ssh/config: %bWARNING (Include directive missing)%b\n" "$YELLOW" "$RESET"

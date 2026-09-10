@@ -62,13 +62,33 @@ fi
 # Get the current git directory (absolute path)
 current_dir=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
-# Normalize Windows paths (C:/ -> /c/) to match gitsetu registry format
-if [[ "$current_dir" =~ ^([a-zA-Z]):/(.*) ]]; then
-    drive="${BASH_REMATCH[1]}"
-    rest="${BASH_REMATCH[2]}"
-    drive=$(printf "%s" "$drive" | tr "[:upper:]" "[:lower:]")
-    current_dir="/${drive}/${rest}"
+# Detect case-insensitivity (Windows / macOS)
+is_case_insensitive=0
+case "${OSTYPE:-}" in
+    msys*|mingw*|cygwin*|darwin*)
+        is_case_insensitive=1
+        ;;
+    *)
+        u=$(uname -s 2>/dev/null || true)
+        case "$u" in
+            MSYS*|MINGW*|CYGWIN*|Darwin*)
+                is_case_insensitive=1
+                ;;
+        esac
+        ;;
+esac
+
+# Normalize current directory
+current_norm="${current_dir//\\//}"
+if [[ "$current_norm" =~ ^/([a-zA-Z])/(.*) ]]; then
+    c_letter=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
+    current_norm="${c_letter}:/${BASH_REMATCH[2]}"
+elif [[ "$current_norm" =~ ^([a-zA-Z]):/(.*) ]]; then
+    c_letter=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
+    current_norm="${c_letter}:/${BASH_REMATCH[2]}"
 fi
+current_slash="${current_norm%/}/"
+
 # Get the configured email for this repo
 actual_email=$(git config user.email 2>/dev/null || true)
 
@@ -77,32 +97,56 @@ if [[ -z "$actual_email" ]]; then
     exit 0
 fi
 
-# Search profiles.conf for a matching directory
+# Search profiles.conf for a matching directory (longest prefix match wins)
 expected_email=""
 expected_label=""
+max_len=0
 
-while IFS=: read -r label email dir provider _rest || [[ -n "$label" ]]; do
+raw_line=""
+while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
     # Skip comments and empty lines
-    [[ "$label" == "#"* ]] && continue
-    [[ -z "$label" ]] && continue
+    [[ "$raw_line" == "#"* ]] && continue
+    [[ -z "$raw_line" ]] && continue
+    
+    clean_line=$(printf '%s' "$raw_line" | sed -E 's/:([a-zA-Z]):/:\1#DRIVE#/g')
+    IFS=: read -r label email dir provider _rest <<< "$clean_line"
+    dir="${dir//#DRIVE#/:}"
     
     # Skip manual mode profiles (no directory)
     [[ -z "$dir" ]] && continue
 
-    # Normalize: ensure trailing slash for prefix matching
-    dir_slash="${dir%/}/"
+    # Normalize Windows drive letters and slashes
+    dir_norm="${dir//\\//}"
+    if [[ "$dir_norm" =~ ^/([a-zA-Z])/(.*) ]]; then
+        d_letter=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
+        dir_norm="${d_letter}:/${BASH_REMATCH[2]}"
+    elif [[ "$dir_norm" =~ ^([a-zA-Z]):/(.*) ]]; then
+        d_letter=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
+        dir_norm="${d_letter}:/${BASH_REMATCH[2]}"
+    fi
+    dir_slash="${dir_norm%/}/"
+
+    check_current="$current_slash"
+    check_target="$dir_slash"
+    if [[ "$is_case_insensitive" -eq 1 ]]; then
+        check_current=$(printf '%s' "$check_current" | tr '[:upper:]' '[:lower:]')
+        check_target=$(printf '%s' "$check_target" | tr '[:upper:]' '[:lower:]')
+    fi
 
     # Check if current dir is under this profile's directory
-    if [[ "${current_dir}/" == "${dir_slash}"* ]]; then
-        expected_label="$label"
-        # Extract email from the local profile.gitconfig to avoid dual-state desync
-        expected_email=$(git config -f "$GITSETU_CONF_DIR/profiles/${label}.gitconfig" user.email 2>/dev/null || true)
-        
-        # If the local config doesn't exist or doesn't have an email, fallback to the registry one (legacy)
-        if [[ -z "$expected_email" && -n "$email" ]]; then
-            expected_email="$email"
+    if [[ "$check_current" == "$check_target"* ]]; then
+        dir_len=${#dir_slash}
+        if [[ $dir_len -gt $max_len ]]; then
+            max_len=$dir_len
+            expected_label="$label"
+            # Extract email from the local profile.gitconfig to avoid dual-state desync
+            expected_email=$(git config -f "$GITSETU_CONF_DIR/profiles/${label}.gitconfig" user.email 2>/dev/null || true)
+            
+            # If the local config doesn't exist or doesn't have an email, fallback to the registry one (legacy)
+            if [[ -z "$expected_email" && -n "$email" ]]; then
+                expected_email="$email"
+            fi
         fi
-        # Don't break — last match wins (most specific path)
     fi
 done < "$GITSETU_CONF"
 
@@ -145,7 +189,9 @@ exit 0
 HOOK_SCRIPT
 
     chmod +x "$hook_path"
-    git config --global core.hooksPath "$GITSETU_HOOKS_DIR"
+    local hooks_dir
+    hooks_dir=$(normalize_path "$GITSETU_HOOKS_DIR")
+    git config --global core.hooksPath "$hooks_dir"
 
     print_success "Guard hook installed: $hook_path"
     print_info "All repos will now check identity before commits."

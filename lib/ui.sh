@@ -144,6 +144,8 @@ ask() {
         REPLY="$default"
     else
         read -r REPLY </dev/tty || true
+        # Trim leading and trailing whitespace
+        REPLY=$(printf '%s' "$REPLY" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
         if [[ -z "$REPLY" ]] && [[ -n "$default" ]]; then
             REPLY="$default"
         fi
@@ -168,6 +170,8 @@ ask_password() {
     # Re-enable echo
     stty echo 2>/dev/null || true
     printf >&2 '\n'
+    # Trim leading and trailing whitespace
+    REPLY=$(printf '%s' "$REPLY" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 }
 
 # Ask and loop until non-empty response. Result in $REPLY.
@@ -184,6 +188,8 @@ ask_required() {
     while [[ -z "$REPLY" ]]; do
         printf >&2 '  %b[?]%b %s %b(required)%b: ' "$CYAN" "$RESET" "$prompt" "$DIM" "$RESET"
         read -r REPLY </dev/tty || true
+        # Trim leading and trailing whitespace
+        REPLY=$(printf '%s' "$REPLY" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
         if [[ -z "$REPLY" ]]; then
             print_warning "This field is required."

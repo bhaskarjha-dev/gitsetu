@@ -20,6 +20,14 @@ discover_global_git_identity() {
         DISCOVERED_GLOBAL_EMAIL=$(git config --global user.email 2>/dev/null || true)
     fi
 
+    # 1b. Fallback directly to $HOME/.gitconfig if present
+    if [[ -z "$DISCOVERED_GLOBAL_NAME" ]] && [[ -f "$HOME/.gitconfig" ]]; then
+        DISCOVERED_GLOBAL_NAME=$(git config --file "$HOME/.gitconfig" user.name 2>/dev/null || true)
+    fi
+    if [[ -z "$DISCOVERED_GLOBAL_EMAIL" ]] && [[ -f "$HOME/.gitconfig" ]]; then
+        DISCOVERED_GLOBAL_EMAIL=$(git config --file "$HOME/.gitconfig" user.email 2>/dev/null || true)
+    fi
+
     # 2. If name/email are empty, check if global.gitconfig exists (GitSetu fallback)
     if [[ -z "$DISCOVERED_GLOBAL_NAME" ]] && [[ -f "$HOME/.config/gitsetu/profiles/global.gitconfig" ]]; then
         DISCOVERED_GLOBAL_NAME=$(git config --file "$HOME/.config/gitsetu/profiles/global.gitconfig" user.name 2>/dev/null || true)
@@ -180,32 +188,47 @@ generate_initial_blueprint() {
     
     PROFILE_COUNT=1
 
-    # Try to discover a 'work' profile if the directory exists
-    local work_dir
-    work_dir=$(discover_workspace_dir "work")
-    if [[ -n "$work_dir" ]]; then
-        # shellcheck disable=SC2034
-        PROFILE_LABELS[1]="work"
-        # shellcheck disable=SC2034
-        PROFILE_NAMES[1]="${DISCOVERED_GLOBAL_NAME:-}"
-        # shellcheck disable=SC2034
-        PROFILE_EMAILS[1]="" # User must fill this in
-        # shellcheck disable=SC2034
-        PROFILE_DIRS[1]="$work_dir"
-        # shellcheck disable=SC2034
-        PROFILE_PROVIDERS[1]="github.com"
-        # shellcheck disable=SC2034
-        PROFILE_SIGNS[1]="0"
+    # Try to discover candidate profiles (work, personal, oss) if directory or key exists
+    local candidate
+    for candidate in "work" "personal" "oss"; do
+        local cand_dir
+        cand_dir=$(discover_workspace_dir "$candidate")
+        local cand_key
+        cand_key=$(discover_ssh_key_for_label "$candidate")
         
-        local work_key
-        work_key=$(discover_ssh_key_for_label "work")
-        # shellcheck disable=SC2034
-        PROFILE_KEYS[1]="${work_key:-$HOME/.ssh/id_ed25519_work}"
-        # shellcheck disable=SC2034
-        PROFILE_USERS[1]=""
-        # shellcheck disable=SC2034
-        PROFILE_PATS[1]=""
-        
-        PROFILE_COUNT=2
-    fi
+        if [[ -n "$cand_dir" ]] || [[ -n "$cand_key" ]]; then
+            local idx=$PROFILE_COUNT
+            # shellcheck disable=SC2034
+            PROFILE_LABELS[idx]="$candidate"
+            # shellcheck disable=SC2034
+            PROFILE_NAMES[idx]="${DISCOVERED_GLOBAL_NAME:-}"
+            # shellcheck disable=SC2034
+            PROFILE_EMAILS[idx]=""
+            
+            # Try to extract email from pubkey if available
+            if [[ -n "$cand_key" ]] && [[ -f "${cand_key}.pub" ]]; then
+                local ext_mail
+                ext_mail=$(awk '{print $3}' "${cand_key}.pub" | grep "@" || true)
+                if [[ -n "$ext_mail" ]]; then
+                    # shellcheck disable=SC2034
+                    PROFILE_EMAILS[idx]="$ext_mail"
+                fi
+            fi
+            
+            # shellcheck disable=SC2034
+            PROFILE_DIRS[idx]="${cand_dir:-$HOME/$candidate}"
+            # shellcheck disable=SC2034
+            PROFILE_PROVIDERS[idx]="github.com"
+            # shellcheck disable=SC2034
+            PROFILE_SIGNS[idx]="0"
+            # shellcheck disable=SC2034
+            PROFILE_KEYS[idx]="${cand_key:-$HOME/.ssh/id_ed25519_${candidate}}"
+            # shellcheck disable=SC2034
+            PROFILE_USERS[idx]=""
+            # shellcheck disable=SC2034
+            PROFILE_PATS[idx]=""
+            
+            PROFILE_COUNT=$((PROFILE_COUNT + 1))
+        fi
+    done
 }

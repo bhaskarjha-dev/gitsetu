@@ -134,7 +134,12 @@ validate_path() {
     # Recursively check if the nearest existing ancestor is writable
     local current="$path"
     while [[ "$current" != "/" && "$current" != "." ]]; do
-        current=$(dirname "$current")
+        local parent
+        parent=$(dirname "$current")
+        if [[ "$parent" == "$current" ]]; then
+            break
+        fi
+        current="$parent"
         if [[ -d "$current" ]]; then
             if [[ -w "$current" ]]; then
                 return 0

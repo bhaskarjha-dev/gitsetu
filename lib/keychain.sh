@@ -34,7 +34,7 @@ keychain_store() {
     esac
 
     # Fallback to local file if OS tools are missing or unsupported (WSL/GitBash)
-    local tokens_file="$HOME/.config/gitsetu/.tokens"
+    local tokens_file="${GITSETU_CONFIG_DIR:-$HOME/.config/gitsetu}/.tokens"
     touch "$tokens_file"
     
     # Remove existing entry
@@ -104,7 +104,7 @@ keychain_get() {
     esac
 
     # Fallback to local file
-    local tokens_file="$HOME/.config/gitsetu/.tokens"
+    local tokens_file="${GITSETU_CONFIG_DIR:-$HOME/.config/gitsetu}/.tokens"
     if [[ -f "$tokens_file" ]]; then
         local entry
         entry=$(grep "^${service_name}:" "$tokens_file" 2>/dev/null || true)
@@ -150,7 +150,7 @@ keychain_erase() {
     esac
 
     # Fallback to local file
-    local tokens_file="$HOME/.config/gitsetu/.tokens"
+    local tokens_file="${GITSETU_CONFIG_DIR:-$HOME/.config/gitsetu}/.tokens"
     if [[ -f "$tokens_file" ]]; then
         local tmp_file="${TMPDIR:-/tmp}/gitsetu_tokens_$$_${RANDOM}"
         GITSETU_CLEANUP_FILES+=("$tmp_file")

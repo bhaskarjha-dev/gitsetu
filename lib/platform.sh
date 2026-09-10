@@ -96,9 +96,31 @@ normalize_path() {
     # Backslash → forward slash (Git Bash on Windows)
     path="${path//\\//}"
 
-    # Remove trailing slash (unless it's just "/")
+    # On Windows / Git Bash, convert /c/path to C:/path for Git/OpenSSH compatibility
+    [[ -z "${GITSETU_OS:-}" ]] && detect_os
+    if [[ "$GITSETU_OS" == "gitbash" ]]; then
+        if [[ "$path" =~ ^/([a-zA-Z])/(.*) ]]; then
+            local drive="${BASH_REMATCH[1]}"
+            local rest="${BASH_REMATCH[2]}"
+            drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
+            path="${drive}:/${rest}"
+        elif [[ "$path" =~ ^/([a-zA-Z])$ ]]; then
+            local drive="${BASH_REMATCH[1]}"
+            drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
+            path="${drive}:"
+        elif [[ "$path" =~ ^([a-zA-Z]):/(.*) ]]; then
+            local drive="${BASH_REMATCH[1]}"
+            local rest="${BASH_REMATCH[2]}"
+            drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
+            path="${drive}:/${rest}"
+        fi
+    fi
+
+    # Remove trailing slash (unless it's just "/" or "C:/")
     if [[ "${#path}" -gt 1 ]]; then
-        path="${path%/}"
+        if [[ ! "$path" =~ ^[a-zA-Z]:/$ ]]; then
+            path="${path%/}"
+        fi
     fi
 
     # Collapse double slashes (tr -s avoids bash escaping ambiguity on Git Bash)

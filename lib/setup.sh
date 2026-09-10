@@ -178,6 +178,30 @@ prompt_security() {
 }
 
 # ------------------------------------------------------------------------------
+# ensure_workspace_dirs — Create profile workspace directories if missing
+# ------------------------------------------------------------------------------
+ensure_workspace_dirs() {
+    local i
+    for (( i=0; i<PROFILE_COUNT; i++ )); do
+        local dir="${PROFILE_DIRS[i]}"
+        local label="${PROFILE_LABELS[i]}"
+        if [[ -n "$dir" && "$dir" != "$HOME" ]]; then
+            if [[ ! -d "$dir" ]]; then
+                if [[ "$GITSETU_DRY_RUN" -eq 1 ]]; then
+                    print_info "[DRY RUN] Would create workspace directory: $dir"
+                else
+                    if mkdir -p "$dir" 2>/dev/null; then
+                        print_success "Created workspace directory for '$label': $dir"
+                    else
+                        print_warning "Could not create workspace directory: $dir"
+                    fi
+                fi
+            fi
+        fi
+    done
+}
+
+# ------------------------------------------------------------------------------
 # execute_blueprint
 # ------------------------------------------------------------------------------
 execute_blueprint() {
@@ -185,6 +209,7 @@ execute_blueprint() {
     print_section "Executing Setup Blueprint"
     
     ensure_dirs
+    ensure_workspace_dirs
 
     # 1. Generate SSH keys
     print_section "Generating SSH Keys"
@@ -260,11 +285,61 @@ execute_blueprint() {
 }
 
 # ------------------------------------------------------------------------------
+# auto_setup_runner — Zero-prompt autonomous onboarding pipeline
+# ------------------------------------------------------------------------------
+auto_setup_runner() {
+    load_profiles
+    if [[ "$PROFILE_COUNT" -eq 0 ]]; then
+        generate_initial_blueprint
+    fi
+
+    local default_name="${PROFILE_NAMES[0]:-}"
+    local default_email="${PROFILE_EMAILS[0]:-}"
+
+    if [[ -z "$default_email" ]]; then
+        print_error "Auto-discovery could not detect a global Git email in ~/.gitconfig or ~/.ssh/."
+        print_error "Please configure your email first via: git config --global user.email you@example.com"
+        print_error "Or run interactive setup: gitsetu setup"
+        return 1
+    fi
+
+    local i
+    for (( i=0; i<PROFILE_COUNT; i++ )); do
+        if [[ -z "${PROFILE_NAMES[i]}" ]]; then
+            PROFILE_NAMES[i]="${default_name:-GitSetu User}"
+        fi
+        if [[ -z "${PROFILE_EMAILS[i]}" ]]; then
+            PROFILE_EMAILS[i]="$default_email"
+        fi
+    done
+
+    print_section "Zero-Prompt Auto-Discovery Blueprint"
+    printf >&2 "  Discovered and configured %b%d%b profile(s):\n\n" "$BOLD" "$PROFILE_COUNT" "$RESET"
+
+    for (( i=0; i<PROFILE_COUNT; i++ )); do
+        local label="${PROFILE_LABELS[i]}"
+        local name="${PROFILE_NAMES[i]}"
+        local email="${PROFILE_EMAILS[i]}"
+        local dir="${PROFILE_DIRS[i]:-[Global Fallback]}"
+        local key="${PROFILE_KEYS[i]}"
+
+        printf >&2 "  %b[%s]%b %s <%s>\n" "$BOLD" "$label" "$RESET" "$name" "$email"
+        printf >&2 "     Dir: %s\n" "$dir"
+        printf >&2 "     Key: %s\n\n" "$key"
+    done
+
+    execute_blueprint
+}
+
+# ------------------------------------------------------------------------------
 # interactive_setup_wizard
 # ------------------------------------------------------------------------------
 interactive_setup_wizard() {
     # Bootstrap initial state if empty
-    generate_initial_blueprint
+    load_profiles
+    if [[ "$PROFILE_COUNT" -eq 0 ]]; then
+        generate_initial_blueprint
+    fi
 
     while true; do
         render_blueprint_dashboard
@@ -356,6 +431,7 @@ cmd_add() {
         exit 1
     fi
 
+    label=$(to_lower "$label")
     # Pass it to the underlying profile router
     cmd_profile add "$label" --name="$name" --email="$email" --dir="$dir"
 }
@@ -374,6 +450,7 @@ cmd_profile() {
         print_error "Usage: gitsetu profile add|remove <label> [flags...]"
         exit 1
     fi
+    label=$(to_lower "$label")
 
     # Acquire POSIX directory lock for headless read-modify-write safety
     local lock_dir="${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu/profiles.lock"
@@ -423,7 +500,6 @@ cmd_profile() {
     # Lock acquired. Write PID and register for cleanup.
     echo $$ > "$lock_dir/pid"
     GITSETU_CLEANUP_DIRS+=("$lock_dir")
-    GITSETU_CLEANUP_FILES+=("$lock_dir/pid")
 
     load_profiles
     if [[ "$PROFILE_COUNT" -eq 0 ]]; then
@@ -515,6 +591,8 @@ cmd_profile() {
                 print_error "Cannot remove the global/default profile."
                 exit 1
             fi
+
+            rm -f "$GITSETU_PROFILES_DIR/${label}.gitconfig"
 
             # Use safe array removal to preserve empty strings
             remove_profile_at_index "$idx"

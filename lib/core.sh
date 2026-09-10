@@ -11,7 +11,7 @@
 # Version
 # ------------------------------------------------------------------------------
 
-GITSETU_VERSION="1.1.0"
+GITSETU_VERSION="1.0.0"
 
 # ------------------------------------------------------------------------------
 # Directory layout (XDG-compliant)
@@ -78,10 +78,19 @@ load_profiles() {
     if [[ ! -f "$GITSETU_PROFILES_CONF" ]]; then
         return 0
     fi
-    local label email dir provider sign_commits key_path provider_user
-    while IFS=: read -r label email dir provider sign_commits key_path provider_user || [[ -n "$label" ]]; do
-        [[ "$label" == "#"* ]] && continue
-        [[ -z "$label" ]] && continue
+    local raw_line
+    while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+        [[ "$raw_line" == "#"* ]] && continue
+        [[ -z "$raw_line" ]] && continue
+        
+        # Protect Windows drive letters from IFS=: splitting
+        local clean_line
+        clean_line=$(printf '%s' "$raw_line" | sed -E 's/:([a-zA-Z]):/:\1#DRIVE#/g')
+        local label email dir provider sign_commits key_path provider_user
+        IFS=: read -r label email dir provider sign_commits key_path provider_user <<< "$clean_line"
+        dir="${dir//#DRIVE#/:}"
+        key_path="${key_path//#DRIVE#/:}"
+
         PROFILE_LABELS+=("$label")
         PROFILE_DIRS+=("$dir")
         PROFILE_PROVIDERS+=("${provider:-github.com}")

@@ -10,7 +10,7 @@
 #        ./gitsetu guard --install | --uninstall
 #        ./gitsetu --help | --version
 #
-# https://github.com/bhaskarjha-com/gitsetu
+# https://github.com/bhaskarjha-dev/gitsetu
 # MIT License — Bhaskar Jha
 
 # --- CRLF self-healing for VirtualBox shared folders ---
@@ -78,17 +78,61 @@ cmd_prompt() {
 
     # Normalize PWD like we do for dirs
     local current_pwd="${PWD%/}"
+    if [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]]; then
+        current_pwd=$(pwd -W 2>/dev/null || echo "$current_pwd")
+    fi
+    current_pwd="${current_pwd//\\//}"
+    if [[ "$current_pwd" =~ ^/([a-zA-Z])/(.*) ]]; then
+        local drive="${BASH_REMATCH[1]}"
+        local rest="${BASH_REMATCH[2]}"
+        drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
+        current_pwd="${drive}:/${rest}"
+    elif [[ "$current_pwd" =~ ^([a-zA-Z]):/(.*) ]]; then
+        local drive="${BASH_REMATCH[1]}"
+        local rest="${BASH_REMATCH[2]}"
+        drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
+        current_pwd="${drive}:/${rest}"
+    fi
     
     local matched_profile=""
     local max_len=0
 
     # Prefix match without subshells
-    # shellcheck disable=SC2034  # sign_commits parsed for field alignment
-    while IFS=: read -r label email dir provider sign_commits key_path _unused || [[ -n "$label" ]]; do
+    local f1 _f2 f3 f4 _f5 _f6 _f7 _f8 _f9
+    while IFS=: read -r f1 _f2 f3 f4 _f5 _f6 _f7 _f8 _f9 || [[ -n "$f1" ]]; do
+        [[ "$f1" == "#"* ]] && continue
+        [[ -z "$f1" ]] && continue
+
+        local label="$f1"
+        local dir="$f3"
+        if [[ "${#f3}" -eq 1 ]] && [[ "$f4" == /* ]]; then
+            dir="${f3}:${f4}"
+        fi
+
         [[ -z "$dir" ]] && continue
+
+        dir="${dir//\\//}"
+        if [[ "$dir" =~ ^/([a-zA-Z])/(.*) ]]; then
+            local d_drive="${BASH_REMATCH[1]}"
+            local d_rest="${BASH_REMATCH[2]}"
+            d_drive=$(printf '%s' "$d_drive" | tr '[:lower:]' '[:upper:]')
+            dir="${d_drive}:/${d_rest}"
+        elif [[ "$dir" =~ ^([a-zA-Z]):/(.*) ]]; then
+            local d_drive="${BASH_REMATCH[1]}"
+            local d_rest="${BASH_REMATCH[2]}"
+            d_drive=$(printf '%s' "$d_drive" | tr '[:lower:]' '[:upper:]')
+            dir="${d_drive}:/${d_rest}"
+        fi
+
+        local check_pwd="$current_pwd"
+        local check_dir="$dir"
+        if [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]]; then
+            check_pwd=$(printf '%s' "$check_pwd" | tr '[:upper:]' '[:lower:]')
+            check_dir=$(printf '%s' "$check_dir" | tr '[:upper:]' '[:lower:]')
+        fi
         
         # Check if PWD starts with the profile dir
-        if [[ "$current_pwd/" == "$dir/"* ]] || [[ "$current_pwd" == "$dir" ]]; then
+        if [[ "$check_pwd/" == "$check_dir/"* ]] || [[ "$check_pwd" == "$check_dir" ]]; then
             # Longest match wins
             local dir_len=${#dir}
             if [[ "$dir_len" -gt "$max_len" ]]; then
@@ -149,6 +193,9 @@ GITSETU_CLEANUP_FILES=()
 GITSETU_CLEANUP_DIRS=()
 
 gitsetu_global_cleanup() {
+    # Restore terminal cursor visibility and echo if interrupted
+    printf '\033[?25h' >&2 2>/dev/null || true
+    stty echo 2>/dev/null || true
     # Clean up CRLF self-healing temp file (created before exec)
     rm -f "${TMPDIR:-/tmp}/.gitsetu_crlf_$$" 2>/dev/null || true
     local f d
@@ -163,6 +210,9 @@ gitsetu_global_cleanup() {
                 if [[ "$lock_owner" != "$$" ]]; then
                     continue # We do not own this lock. Do not delete it.
                 fi
+                rm -f "$d/pid" 2>/dev/null || true
+            else
+                continue # Lock has no pid file; we do not own it. Do not delete it.
             fi
         fi
         rmdir "$d" 2>/dev/null || true
@@ -170,6 +220,7 @@ gitsetu_global_cleanup() {
 }
 
 cleanup() {
+    printf '\033[?25h' >&2 2>/dev/null || true
     stty echo 2>/dev/null || true  # Restore terminal echo if interrupted during password entry
     printf >&2 '\n'
     print_warning "Interrupted. No changes were made (or partial changes were backed up)."
@@ -187,7 +238,8 @@ show_help() {
 ${BOLD}gitsetu${RESET} v${GITSETU_VERSION} — One command. All identities. Every machine.
 
 ${BOLD}USAGE${RESET}
-    gitsetu setup [--dry-run]        Interactive setup wizard
+    gitsetu setup [--auto] [--dry-run]  Interactive wizard or zero-prompt discovery
+    gitsetu init [--auto] [--dry-run]   Alias for setup
     gitsetu add <label> <name> <email> <dir>
                                      Add a profile (non-interactive)
     gitsetu remove <label>           Remove a profile
@@ -208,7 +260,10 @@ ${BOLD}USAGE${RESET}
     gitsetu --version, -v            Show version
 
 ${BOLD}EXAMPLES${RESET}
-    ${DIM}# First-time setup:${RESET}
+    ${DIM}# Instant zero-prompt onboarding:${RESET}
+    gitsetu setup --auto
+
+    ${DIM}# First-time interactive setup:${RESET}
     gitsetu setup
 
     ${DIM}# Add a profile non-interactively:${RESET}
@@ -224,7 +279,7 @@ ${BOLD}EXAMPLES${RESET}
     gitsetu guard --install
 
 ${BOLD}MORE INFO${RESET}
-    https://github.com/bhaskarjha-com/gitsetu
+    https://github.com/bhaskarjha-dev/gitsetu
 EOF
 }
 
@@ -278,9 +333,16 @@ cmd_status() {
         print_section "Configured Profiles"
 
         # shellcheck disable=SC2034  # sign_commits parsed for field alignment
-        while IFS=: read -r label email dir provider sign_commits key_path _unused || [[ -n "$label" ]]; do
-            [[ "$label" == "#"* ]] && continue
-            [[ -z "$label" ]] && continue
+        local raw_line
+        while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+            [[ "$raw_line" == "#"* ]] && continue
+            [[ -z "$raw_line" ]] && continue
+            local clean_line
+            clean_line=$(printf '%s' "$raw_line" | sed -E 's/:([a-zA-Z]):/:\1#DRIVE#/g')
+            local label email dir provider sign_commits key_path _unused
+            IFS=: read -r label email dir provider sign_commits key_path _unused <<< "$clean_line"
+            dir="${dir//#DRIVE#/:}"
+            key_path="${key_path//#DRIVE#/:}"
             
             local dir_disp="${dir:-[Manual Mode]}"
             local prov_disp="${provider:-github.com}"
@@ -327,7 +389,7 @@ cmd_update() {
     if [[ ! -d "$GITSETU_DIR/.git" ]]; then
         print_error "GitSetu was not installed via Git. Cannot auto-update."
         print_info "If you installed via a raw script, please re-install using the official installer:"
-        print_info "  curl -sL https://raw.githubusercontent.com/bhaskarjha-com/gitsetu/main/install.sh | bash"
+        print_info "  curl -sL https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.sh | bash"
         return 1
     fi
 
@@ -432,6 +494,7 @@ cmd_teardown() {
 # cmd_setup — Interactive Blueprint Dashboard / Headless setup
 # ------------------------------------------------------------------------------
 cmd_setup() {
+    local auto_mode="${1:-0}"
     detect_os
     print_header
 
@@ -454,11 +517,19 @@ cmd_setup() {
         print_warning "Home directory appears to be on a shared folder."
         print_info "SSH keys will be stored on the native filesystem at ~/.ssh"
     fi
+
+    # Fast-path for autonomous zero-prompt discovery mode
+    if [[ "$auto_mode" -eq 1 ]]; then
+        export GITSETU_AUTO_MODE=1
+        auto_setup_runner
+        return $?
+    fi
     
     # Check if TTY
     if [[ ! -t 1 ]]; then
-        print_error "Headless setup via args is not yet fully implemented in this block."
-        print_error "Use 'gitsetu profile add' for headless mode."
+        print_error "Interactive setup requires an interactive terminal (TTY)."
+        print_error "For automated non-interactive setup, run: gitsetu setup --auto"
+        print_error "For headless profile scripting, use: gitsetu profile add <label> --email=..."
         return 1
     fi
 
@@ -473,6 +544,7 @@ cmd_run() {
     detect_os
     local profile="$1"
     shift
+    profile=$(to_lower "$profile")
     
     if [[ -z "$profile" ]]; then
         print_error "Usage: gitsetu run <profile> -- <command>"
@@ -495,7 +567,16 @@ cmd_run() {
     local found=0
     local found_key_path=""
     # shellcheck disable=SC2034  # sign_commits parsed for field alignment
-    while IFS=: read -r label email dir provider sign_commits key_path _unused || [[ -n "$label" ]]; do
+    local raw_line
+    while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+        [[ "$raw_line" == "#"* ]] && continue
+        [[ -z "$raw_line" ]] && continue
+        local clean_line
+        clean_line=$(printf '%s' "$raw_line" | sed -E 's/:([a-zA-Z]):/:\1#DRIVE#/g')
+        local label email dir provider sign_commits key_path _unused
+        IFS=: read -r label email dir provider sign_commits key_path _unused <<< "$clean_line"
+        key_path="${key_path//#DRIVE#/:}"
+
         if [[ "$label" == "$profile" ]]; then
             found=1
             found_key_path="${key_path:-$HOME/.ssh/id_ed25519_${label}}"
@@ -524,7 +605,7 @@ cmd_run() {
     export GIT_AUTHOR_EMAIL="$email"
     export GIT_COMMITTER_NAME="$name"
     export GIT_COMMITTER_EMAIL="$email"
-    export GIT_SSH_COMMAND="ssh -i ${found_key_path}"
+    export GIT_SSH_COMMAND="ssh -i \"${found_key_path}\""
     
     # exec replaces this process — EXIT trap will never fire.
     # Flush any registered temp files before handoff.
@@ -538,6 +619,7 @@ cmd_run() {
 cmd_remove() {
     detect_os
     local profile="$1"
+    profile=$(to_lower "$profile")
     
     if [[ -z "$profile" ]]; then
         print_error "Usage: gitsetu remove <profile>"
@@ -553,7 +635,16 @@ cmd_remove() {
     local found=0
     local found_key_path=""
     # shellcheck disable=SC2034  # sign_commits parsed for field alignment; key_path is the target
-    while IFS=: read -r label email dir provider sign_commits key_path _unused || [[ -n "$label" ]]; do
+    local raw_line
+    while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+        [[ "$raw_line" == "#"* ]] && continue
+        [[ -z "$raw_line" ]] && continue
+        local clean_line
+        clean_line=$(printf '%s' "$raw_line" | sed -E 's/:([a-zA-Z]):/:\1#DRIVE#/g')
+        local label _email _dir _provider _sign_commits key_path _unused
+        IFS=: read -r label _email _dir _provider _sign_commits key_path _unused <<< "$clean_line"
+        key_path="${key_path//#DRIVE#/:}"
+
         if [[ "$label" == "$profile" ]]; then
             found=1
             found_key_path="${key_path:-$HOME/.ssh/id_ed25519_${label}}"
@@ -707,22 +798,27 @@ main() {
     shift
 
     case "$cmd" in
-        setup)
+        setup|init)
             # Parse setup flags
+            local auto_mode=0
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --dry-run)
                         GITSETU_DRY_RUN=1
                         shift
                         ;;
+                    --auto|-y|--yes)
+                        auto_mode=1
+                        shift
+                        ;;
                     *)
                         print_error "Unknown flag: $1"
-                        printf >&2 'Usage: gitsetu setup [--dry-run]\n'
+                        printf >&2 'Usage: gitsetu setup [--auto] [--dry-run]\n'
                         return 1
                         ;;
                 esac
             done
-            cmd_setup
+            cmd_setup "$auto_mode"
             ;;
         add)
             cmd_add "$@"

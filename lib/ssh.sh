@@ -43,6 +43,11 @@ generate_ssh_key() {
             return 0
         fi
 
+        if [[ "${GITSETU_AUTO_MODE:-0}" -eq 1 ]]; then
+            print_info "Auto-mode: keeping existing key for '$label'"
+            return 0
+        fi
+
         ask_choice "What to do with existing key?" "skip (keep current)" "rename old key" "overwrite"
 
         case "$REPLY" in
@@ -75,17 +80,16 @@ generate_ssh_key() {
 
     # Check if FIDO2 hardware key was requested based on filename convention
     local key_type="ed25519"
-    local extra_args=""
+    local -a fido_args=()
     if [[ "$key_path" == *"_sk_"* ]]; then
         key_type="ed25519-sk"
-        extra_args="-O resident -O verify-required"
+        fido_args=(-O resident -O verify-required)
         print_info "Hardware Security Key detected. Please TOUCH YOUR YUBIKEY when prompted."
     fi
 
     if [[ "${GITSETU_USE_PASSPHRASE:-0}" -eq 1 ]] || [[ "$key_type" == "ed25519-sk" ]]; then
         # Prompt user for passphrase or FIDO2 touch interactively
-        # shellcheck disable=SC2086
-        ssh-keygen -t "$key_type" $extra_args -C "$email" -f "$key_path"
+        ssh-keygen -t "$key_type" "${fido_args[@]}" -C "$email" -f "$key_path"
         local status=$?
         
         # FIDO2 Fallback Mechanism
@@ -94,7 +98,7 @@ generate_ssh_key() {
             print_info "Falling back to standard ed25519 software key generation..."
             
             key_type="ed25519"
-            extra_args=""
+            fido_args=()
             if [[ "${GITSETU_USE_PASSPHRASE:-0}" -eq 1 ]]; then
                 ssh-keygen -t "$key_type" -C "$email" -f "$key_path"
                 status=$?
@@ -105,8 +109,7 @@ generate_ssh_key() {
         fi
     else
         # Password-less key (background with spinner)
-        # shellcheck disable=SC2086
-        ssh-keygen -t "$key_type" $extra_args -C "$email" -f "$key_path" -N "" -q >/dev/null 2>&1 &
+        ssh-keygen -t "$key_type" "${fido_args[@]}" -C "$email" -f "$key_path" -N "" -q >/dev/null 2>&1 &
         local pid=$!
         local spin='-\|/'
         local i=0
@@ -142,6 +145,14 @@ build_ssh_host_block() {
     local hostname="${2:-github.com}"
     local key_path="${3:-$HOME/.ssh/id_ed25519_${label}}"
     
+    # Use portable home relative path if key is inside ~/.ssh or $HOME
+    local portable_key="$key_path"
+    if [[ "$key_path" == "$HOME/.ssh/"* ]] || [[ "$key_path" =~ (\.ssh/.*)$ ]]; then
+        portable_key="~/.ssh/${key_path##*/}"
+    elif [[ "$key_path" == "$HOME/"* ]]; then
+        portable_key="~/${key_path#"$HOME"/}"
+    fi
+
     # Extract the main part of the domain (e.g., gitlab.com -> gitlab) for the alias prefix
     local prefix
     prefix=$(printf '%s' "$hostname" | cut -d'.' -f1)
@@ -150,7 +161,7 @@ build_ssh_host_block() {
 Host ${prefix}-${label}
     HostName ${hostname}
     User git
-    IdentityFile ${key_path}
+    IdentityFile ${portable_key}
     IdentitiesOnly yes
     AddKeysToAgent yes
 EOF
@@ -164,8 +175,8 @@ EOF
 # write_ssh_config — Update ~/.ssh/config with gitsetu-managed host blocks
 #
 # Strategy (Phase 1 Pivot):
-#   1. Write all host aliases to an isolated file (~/.config/gitsetu/ssh_config)
-#   2. Ensure 'Include ~/.config/gitsetu/ssh_config' is the FIRST line of ~/.ssh/config
+#   1. Write all host aliases to an isolated file (~/.config/gitsetu/profiles/ssh_config)
+#   2. Ensure 'Include ~/.config/gitsetu/profiles/ssh_config' is the FIRST line of ~/.ssh/config
 #   3. Remove any legacy inline managed blocks from ~/.ssh/config
 #
 # This achieves 100% Zero-Trust isolation while respecting OpenSSH's "first-match wins" rule.
@@ -174,7 +185,13 @@ EOF
 write_ssh_config() {
     local ssh_config="$HOME/.ssh/config"
     local isolated_config="$GITSETU_PROFILES_DIR/ssh_config"
-    local include_directive="Include $isolated_config"
+    local include_path="$isolated_config"
+    if [[ "$isolated_config" == "$HOME/"* ]]; then
+        include_path="~/${isolated_config#"$HOME"/}"
+    elif [[ "$isolated_config" =~ (\.config/.*)$ ]]; then
+        include_path="~/${BASH_REMATCH[1]}"
+    fi
+    local include_directive="Include ${include_path}"
 
     # Create ~/.ssh if needed
     if [[ ! -d "$HOME/.ssh" ]]; then
@@ -250,7 +267,7 @@ write_ssh_config() {
             echo "$include_directive" > "$tmp_prepend"
             
             # Then append the rest of the file, stripping out any old instances of our Include directive
-            grep -v -F "$include_directive" "$ssh_config" >> "$tmp_prepend" || true
+            grep -v -F "$include_directive" "$ssh_config" | grep -v -F "Include $isolated_config" >> "$tmp_prepend" || true
             
             # Safely swap
             backup_file "$ssh_config"

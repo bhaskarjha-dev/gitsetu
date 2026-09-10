@@ -61,7 +61,15 @@ teardown_gitconfig() {
 teardown_sshconfig() {
     local ssh_config="$HOME/.ssh/config"
     local isolated_config="$GITSETU_PROFILES_DIR/ssh_config"
-    local include_directive="Include $isolated_config"
+    local include_path="$isolated_config"
+    if [[ "$isolated_config" == "$HOME/"* ]]; then
+        include_path="~/${isolated_config#"$HOME"/}"
+    elif [[ "$isolated_config" =~ (\.config/.*)$ ]]; then
+        include_path="~/${BASH_REMATCH[1]}"
+    fi
+    local include_directive="Include ${include_path}"
+    local legacy_directive="Include $isolated_config"
+    local default_directive="Include ~/.config/gitsetu/profiles/ssh_config"
 
     # 1. Delete the isolated file
     if [[ -f "$isolated_config" ]]; then
@@ -98,7 +106,7 @@ teardown_sshconfig() {
     fi
 
     # 3. Remove the Include directive safely
-    if grep -q -F "$include_directive" "$ssh_config" 2>/dev/null; then
+    if grep -q -F "$include_directive" "$ssh_config" 2>/dev/null || grep -q -F "$legacy_directive" "$ssh_config" 2>/dev/null || grep -q -F "$default_directive" "$ssh_config" 2>/dev/null; then
         if [[ "$GITSETU_DRY_RUN" -eq 1 ]]; then
             print_info "[DRY RUN] Would remove Include directive from: $ssh_config"
             return 0
@@ -109,7 +117,7 @@ teardown_sshconfig() {
         tmp_file=$(mktemp "${ssh_config}.tmp.XXXXXX")
         GITSETU_CLEANUP_FILES+=("$tmp_file")
 
-        grep -v -F "$include_directive" "$ssh_config" > "$tmp_file" || true
+        grep -v -F "$include_directive" "$ssh_config" | grep -v -F "$legacy_directive" | grep -v -F "$default_directive" > "$tmp_file" || true
 
         # If the resulting file is empty or only whitespace, delete it
         if ! grep -q '[^[:space:]]' "$tmp_file" 2>/dev/null; then
@@ -262,7 +270,7 @@ teardown_all() {
     teardown_sshconfig
     
     # 3.5 Deep cleanup (if requested)
-    if [[ "$deep" -eq 1 ]]; then
+    if [[ "$deep" == "1" ]]; then
         teardown_deep
     fi
     
