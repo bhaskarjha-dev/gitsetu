@@ -1,0 +1,4842 @@
+#!/usr/bin/env bash
+# gitsetu — One command. All identities. Every machine.
+#
+# A zero-dependency CLI tool for automated Git multi-identity
+# and SSH key setup. Clone, run, done.
+#
+# Usage: ./gitsetu setup [--dry-run]
+#        ./gitsetu status
+#        ./gitsetu verify
+#        ./gitsetu guard --install | --uninstall
+#        ./gitsetu --help | --version
+#
+# https://github.com/bhaskarjha-dev/gitsetu
+# MIT License — Bhaskar Jha
+
+# --- CRLF self-healing for VirtualBox shared folders ---
+# vboxsf injects \r into all files. Unconditionally re-exec through tr on first run.
+# tr -d '\r' is a no-op on clean files, so this is safe everywhere.
+# Exception: "credential" reads stdin (Git credential protocol) and "prompt" is
+# latency-sensitive — both must skip re-exec.
+# Uses a temp file instead of process substitution <(...) because bash 3.2
+# (macOS default) has unreliable fd handling with exec + process substitution.
+if ! command -v tr >/dev/null 2>&1; then echo "Error: 'tr' command is required but not found." >&2; exit 1; fi
+if [[ "${GITSETU_CRLF_CLEAN:-}" != "1" ]] && [[ "${1:-}" != "credential" ]] && [[ "${1:-}" != "prompt" ]]; then
+    export GITSETU_CRLF_CLEAN=1
+    export GITSETU_ORIG_SCRIPT="${BASH_SOURCE[0]:-$0}"
+    _crlf_tmp="${TMPDIR:-/tmp}/.gitsetu_crlf_$$"
+    tr -d '\r' < "${BASH_SOURCE[0]:-$0}" > "$_crlf_tmp"
+    exec bash "$_crlf_tmp" "$@"
+fi
+
+set -euo pipefail
+
+# ------------------------------------------------------------------------------
+# Resolve script directory (handles symlinks, $0 fallback, vboxsf CRLF re-exec)
+# ------------------------------------------------------------------------------
+resolve_script_dir() {
+    # When re-executed for CRLF cleaning, BASH_SOURCE is /dev/fd/N.
+    # Use GITSETU_ORIG_SCRIPT (set before re-exec) to find the real script.
+    # Strip \r because the env var was set from a CRLF-contaminated line.
+    local source
+    source=$(printf '%s' "${GITSETU_ORIG_SCRIPT:-${BASH_SOURCE[0]:-$0}}" | tr -d '\r')
+
+    # If source is empty or just a basename, try $0
+    if [[ -z "$source" ]] || [[ "$source" == "bash" ]]; then
+        source="$0"
+    fi
+
+    # If still relative, make it absolute (handles Unix / and Windows C:/ or C:\)
+    if [[ "$source" != /* ]] && [[ "$source" != [a-zA-Z]:/* ]] && [[ "$source" != [a-zA-Z]:\\* ]]; then
+        source="$(pwd)/$source"
+    fi
+
+    # Resolve symlinks
+    while [[ -L "$source" ]]; do
+        local link_dir
+        link_dir=$(cd -P "$(dirname "$source")" 2>/dev/null && pwd)
+        source=$(readlink "$source")
+        if [[ "$source" != /* ]]; then
+            source="$link_dir/$source"
+        fi
+    done
+
+    local dir
+    dir=$(cd -P "$(dirname "$source")" 2>/dev/null && pwd)
+    printf '%s' "$dir"
+}
+
+GITSETU_SCRIPT_DIR=$(resolve_script_dir | tr -d '\r')
+
+# ------------------------------------------------------------------------------
+# cmd_prompt — Zero-latency profile detection for PS1 integration
+# ------------------------------------------------------------------------------
+cmd_prompt() {
+    if [[ ! -f "$GITSETU_PROFILES_CONF" ]]; then
+        return 0
+    fi
+
+    # Normalize PWD like we do for dirs
+    local current_pwd="${PWD%/}"
+    if [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]]; then
+        current_pwd=$(pwd -W 2>/dev/null || echo "$current_pwd")
+    fi
+    current_pwd="${current_pwd//\\//}"
+    if [[ "$current_pwd" =~ ^/([a-zA-Z])/(.*) ]]; then
+        local drive="${BASH_REMATCH[1]}"
+        local rest="${BASH_REMATCH[2]}"
+        drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
+        current_pwd="${drive}:/${rest}"
+    elif [[ "$current_pwd" =~ ^([a-zA-Z]):/(.*) ]]; then
+        local drive="${BASH_REMATCH[1]}"
+        local rest="${BASH_REMATCH[2]}"
+        drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
+        current_pwd="${drive}:/${rest}"
+    fi
+    
+    local matched_profile=""
+    local max_len=0
+
+    # Prefix match without subshells
+    local f1 _f2 f3 f4 _f5 _f6 _f7 _f8 _f9
+    while IFS=: read -r f1 _f2 f3 f4 _f5 _f6 _f7 _f8 _f9 || [[ -n "$f1" ]]; do
+        [[ "$f1" == "#"* ]] && continue
+        [[ -z "$f1" ]] && continue
+
+        local label="$f1"
+        local dir="$f3"
+        if [[ "${#f3}" -eq 1 ]] && [[ "$f4" == /* ]]; then
+            dir="${f3}:${f4}"
+        fi
+
+        [[ -z "$dir" ]] && continue
+
+        dir="${dir//\\//}"
+        if [[ "$dir" =~ ^/([a-zA-Z])/(.*) ]]; then
+            local d_drive="${BASH_REMATCH[1]}"
+            local d_rest="${BASH_REMATCH[2]}"
+            d_drive=$(printf '%s' "$d_drive" | tr '[:lower:]' '[:upper:]')
+            dir="${d_drive}:/${d_rest}"
+        elif [[ "$dir" =~ ^([a-zA-Z]):/(.*) ]]; then
+            local d_drive="${BASH_REMATCH[1]}"
+            local d_rest="${BASH_REMATCH[2]}"
+            d_drive=$(printf '%s' "$d_drive" | tr '[:lower:]' '[:upper:]')
+            dir="${d_drive}:/${d_rest}"
+        fi
+
+        local check_pwd="$current_pwd"
+        local check_dir="$dir"
+        if [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]]; then
+            check_pwd=$(printf '%s' "$check_pwd" | tr '[:upper:]' '[:lower:]')
+            check_dir=$(printf '%s' "$check_dir" | tr '[:upper:]' '[:lower:]')
+        fi
+        
+        # Check if PWD starts with the profile dir
+        if [[ "$check_pwd/" == "$check_dir/"* ]] || [[ "$check_pwd" == "$check_dir" ]]; then
+            # Longest match wins
+            local dir_len=${#dir}
+            if [[ "$dir_len" -gt "$max_len" ]]; then
+                max_len=$dir_len
+                matched_profile="$label"
+            fi
+        fi
+    done < "$GITSETU_PROFILES_CONF"
+
+    if [[ -n "$matched_profile" ]]; then
+        echo "$matched_profile"
+    fi
+}
+
+# Fast-path for prompt to avoid 14 subshell forks (95ms latency penalty)
+if [[ "${1:-}" == "prompt" ]]; then
+    if [[ -z "${GITSETU_PROFILES_CONF:-}" ]]; then
+        GITSETU_PROFILES_CONF="${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu/profiles.conf"
+    fi
+    shift
+    cmd_prompt "$@"
+    exit $?
+fi
+
+# ------------------------------------------------------------------------------
+
+# ==============================================================================
+# GitSetu Standalone Monolith Bundle
+# Version: 1.0.0
+# Zero-dependency, single-file distribution for direct curl execution.
+# https://github.com/bhaskarjha-dev/gitsetu
+# ==============================================================================
+export GITSETU_STANDALONE=1
+
+# ------------------------------------------------------------------------------
+# Inlined Module: lib/core.sh
+# ------------------------------------------------------------------------------
+# shellcheck disable=SC2034  # All variables here are used by modules that source this file
+# lib/core.sh — Constants, version, and global state for gitsetu
+#
+# This file is sourced by the main gitsetu script.
+# All variables defined here are available to all other modules.
+#
+# Bash 3.2 compatible: no associative arrays, no mapfile, no ${var,,}
+
+# ------------------------------------------------------------------------------
+# Version
+# ------------------------------------------------------------------------------
+
+GITSETU_VERSION="1.0.0"
+
+# ------------------------------------------------------------------------------
+# Directory layout (XDG-compliant)
+# ------------------------------------------------------------------------------
+
+GITSETU_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu"
+GITSETU_BACKUP_DIR="$GITSETU_CONFIG_DIR/backups"
+GITSETU_PROFILES_DIR="$GITSETU_CONFIG_DIR/profiles"
+GITSETU_HOOKS_DIR="$GITSETU_CONFIG_DIR/hooks"
+GITSETU_PROFILES_CONF="$GITSETU_CONFIG_DIR/profiles.conf"
+
+# ------------------------------------------------------------------------------
+# Managed block markers
+# Used to identify sections in config files that gitsetu owns.
+# Everything between START and END markers is replaced on re-run (idempotent).
+# Content outside these markers is never touched.
+# ------------------------------------------------------------------------------
+
+GITSETU_MARKER_PREFIX="# [gitsetu:managed"
+GITSETU_MANAGED_START="# [gitsetu:managed:start]"
+GITSETU_MANAGED_END="# [gitsetu:managed:end]"
+
+# ------------------------------------------------------------------------------
+# Profile state (collected during wizard)
+#
+# Bash 3.2 compat: using parallel indexed arrays instead of associative arrays.
+# Index 0 is always the default/global profile.
+# ------------------------------------------------------------------------------
+
+PROFILE_LABELS=()
+PROFILE_NAMES=()
+PROFILE_EMAILS=()
+PROFILE_DIRS=()
+PROFILE_PROVIDERS=()
+PROFILE_SIGNS=()
+PROFILE_KEYS=()
+PROFILE_USERS=()
+PROFILE_PATS=()
+PROFILE_COUNT=0
+
+# ------------------------------------------------------------------------------
+# Runtime state
+# ------------------------------------------------------------------------------
+
+GITSETU_OS=""           # Set by detect_os(): linux, macos, wsl, gitbash, unknown
+GITSETU_DRY_RUN=0      # Set to 1 by --dry-run flag
+GITSETU_USE_PASSPHRASE=0 # Set to 1 to prompt for SSH passphrases
+
+# ------------------------------------------------------------------------------
+# load_profiles — Reads registry into arrays
+# ------------------------------------------------------------------------------
+load_profiles() {
+    PROFILE_COUNT=0
+    PROFILE_LABELS=()
+    PROFILE_NAMES=()
+    PROFILE_EMAILS=()
+    PROFILE_DIRS=()
+    PROFILE_PROVIDERS=()
+    PROFILE_SIGNS=()
+    PROFILE_KEYS=()
+    PROFILE_USERS=()
+    PROFILE_PATS=()
+    
+    if [[ ! -f "$GITSETU_PROFILES_CONF" ]]; then
+        return 0
+    fi
+    local raw_line
+    while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+        [[ "$raw_line" == "#"* ]] && continue
+        [[ -z "$raw_line" ]] && continue
+        
+        # Protect Windows drive letters from IFS=: splitting
+        local clean_line
+        clean_line=$(printf '%s' "$raw_line" | sed -E 's/:([a-zA-Z]):/:\1#DRIVE#/g')
+        local label email dir provider sign_commits key_path provider_user
+        IFS=: read -r label email dir provider sign_commits key_path provider_user <<< "$clean_line"
+        dir="${dir//#DRIVE#/:}"
+        key_path="${key_path//#DRIVE#/:}"
+
+        PROFILE_LABELS+=("$label")
+        PROFILE_DIRS+=("$dir")
+        PROFILE_PROVIDERS+=("${provider:-github.com}")
+        PROFILE_SIGNS+=("${sign_commits:-0}")
+        PROFILE_KEYS+=("${key_path:-$HOME/.ssh/id_ed25519_${label}}")
+        PROFILE_USERS+=("$provider_user")
+        PROFILE_PATS+=("")
+        
+        # Load name and email from profile config
+        local profile_path="$GITSETU_PROFILES_DIR/${label}.gitconfig"
+        local loaded_name=""
+        local loaded_email=""
+        
+        if [[ -f "$profile_path" ]]; then
+            loaded_name=$(git config -f "$profile_path" user.name 2>/dev/null || echo "")
+            loaded_email=$(git config -f "$profile_path" user.email 2>/dev/null || echo "")
+        fi
+        
+        if [[ -z "$loaded_name" ]]; then
+            loaded_name=$(git config --global user.name 2>/dev/null || echo "")
+        fi
+        PROFILE_NAMES+=("$loaded_name")
+        
+        # If email was provided in profiles.conf (legacy fallback) and wasn't found in .gitconfig, use it
+        if [[ -z "$loaded_email" && -n "$email" ]]; then
+            loaded_email="$email"
+        fi
+        PROFILE_EMAILS+=("$loaded_email")
+        
+        PROFILE_COUNT=$((PROFILE_COUNT + 1))
+    done < "$GITSETU_PROFILES_CONF"
+}
+GITSETU_SCRIPT_DIR="${GITSETU_SCRIPT_DIR:-}"   # Preserve value set by main script
+
+# ------------------------------------------------------------------------------
+# Helper: lowercase a string (bash 3.2 compatible)
+# Usage: result=$(to_lower "FooBar")
+# ------------------------------------------------------------------------------
+to_lower() {
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+# ------------------------------------------------------------------------------
+# Helper: check if a value exists in an indexed array
+# Usage: array_contains "needle" "${haystack[@]}"
+# Returns: 0 if found, 1 if not
+# ------------------------------------------------------------------------------
+array_contains() {
+    local needle="$1"
+    shift
+    local item
+    for item in "$@"; do
+        if [[ "$item" == "$needle" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# ------------------------------------------------------------------------------
+# Helper: safely remove a profile by index (Bash 3.2 array slice drops empty strings)
+# Usage: remove_profile_at_index <idx>
+# ------------------------------------------------------------------------------
+remove_profile_at_index() {
+    local target_idx="$1"
+    
+    if [[ "$target_idx" -lt 0 ]] || [[ "$target_idx" -ge "$PROFILE_COUNT" ]]; then
+        return 1
+    fi
+    
+    local new_labels=()
+    local new_names=()
+    local new_emails=()
+    local new_dirs=()
+    local new_providers=()
+    local new_signs=()
+    local new_keys=()
+    local new_users=()
+    local new_pats=()
+    
+    local i
+    for (( i=0; i<PROFILE_COUNT; i++ )); do
+        if [[ "$i" -ne "$target_idx" ]]; then
+            new_labels+=("${PROFILE_LABELS[$i]}")
+            new_names+=("${PROFILE_NAMES[$i]}")
+            new_emails+=("${PROFILE_EMAILS[$i]}")
+            new_dirs+=("${PROFILE_DIRS[$i]}")
+            new_providers+=("${PROFILE_PROVIDERS[$i]}")
+            new_signs+=("${PROFILE_SIGNS[$i]}")
+            new_keys+=("${PROFILE_KEYS[$i]}")
+            new_users+=("${PROFILE_USERS[$i]:-}")
+            new_pats+=("${PROFILE_PATS[$i]:-}")
+        fi
+    done
+    
+    PROFILE_LABELS=(${new_labels[@]+"${new_labels[@]}"})
+    PROFILE_NAMES=(${new_names[@]+"${new_names[@]}"})
+    PROFILE_EMAILS=(${new_emails[@]+"${new_emails[@]}"})
+    PROFILE_DIRS=(${new_dirs[@]+"${new_dirs[@]}"})
+    PROFILE_PROVIDERS=(${new_providers[@]+"${new_providers[@]}"})
+    PROFILE_SIGNS=(${new_signs[@]+"${new_signs[@]}"})
+    PROFILE_KEYS=(${new_keys[@]+"${new_keys[@]}"})
+    PROFILE_USERS=(${new_users[@]+"${new_users[@]}"})
+    PROFILE_PATS=(${new_pats[@]+"${new_pats[@]}"})
+    
+    PROFILE_COUNT=$((PROFILE_COUNT - 1))
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# Inlined Module: lib/platform.sh
+# ------------------------------------------------------------------------------
+# lib/platform.sh — OS detection, path normalization, and prerequisite checks
+#
+# Bash 3.2 compatible.
+
+# ------------------------------------------------------------------------------
+# detect_os — Determines the current operating system/environment
+#
+# Sets GITSETU_OS to one of: linux, macos, wsl, gitbash, unknown
+#
+# Detection order matters:
+#   1. WSL first (reports as "linux" in $OSTYPE but has /proc/version marker)
+#   2. Git Bash on Windows (MSYS/MINGW in $OSTYPE)
+#   3. macOS (darwin in $OSTYPE)
+#   4. Native Linux (linux-gnu in $OSTYPE)
+#   5. Fallback to uname -s
+# ------------------------------------------------------------------------------
+detect_os() {
+    # Allow tests/callers to override detection by pre-setting GITSETU_OS.
+    # This is critical for CI: macOS `security` commands hang in headless environments.
+    # Check env var first, then fall back to marker file (env vars don't propagate
+    # through pipelines in background subshells on macOS bash 3.2).
+    if [[ -n "${GITSETU_OS:-}" ]]; then
+        return 0
+    fi
+    local _os_file="${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu/.test_os"
+    if [[ -f "$_os_file" ]]; then
+        GITSETU_OS=$(cat "$_os_file" 2>/dev/null)
+        if [[ -n "$GITSETU_OS" ]]; then
+            return 0
+        fi
+    fi
+
+    # Check WSL first — it masquerades as Linux
+    if [[ -f /proc/version ]]; then
+        local proc_version
+        proc_version=$(cat /proc/version 2>/dev/null || true)
+        case "$proc_version" in
+            *[Mm]icrosoft*|*WSL*)
+                GITSETU_OS="wsl"
+                return 0
+                ;;
+        esac
+    fi
+
+    # Check OSTYPE (fastest, available in bash)
+    case "${OSTYPE:-}" in
+        darwin*)
+            GITSETU_OS="macos"
+            return 0
+            ;;
+        msys*|mingw*|cygwin*)
+            GITSETU_OS="gitbash"
+            return 0
+            ;;
+        linux-gnu*|linux*)
+            GITSETU_OS="linux"
+            return 0
+            ;;
+    esac
+
+    # Fallback to uname
+    local uname_out
+    uname_out=$(uname -s 2>/dev/null || true)
+    case "$uname_out" in
+        Darwin)   GITSETU_OS="macos" ;;
+        Linux)    GITSETU_OS="linux" ;;
+        MINGW*|MSYS*|CYGWIN*)
+                  GITSETU_OS="gitbash" ;;
+        *)        GITSETU_OS="unknown" ;;
+    esac
+}
+
+# ------------------------------------------------------------------------------
+# normalize_path — Normalize a filesystem path
+#
+# Handles:
+#   - Tilde expansion (~/ → $HOME/)
+#   - Backslash → forward slash (Windows)
+#   - Removes trailing slash (we add it explicitly where needed)
+#   - Resolves to absolute path if relative
+#
+# Usage: normalized=$(normalize_path "/some//path/")
+# ------------------------------------------------------------------------------
+normalize_path() {
+    local path="$1"
+
+    # Expand tilde (SC2088: intentional literal comparison, not expansion)
+    # shellcheck disable=SC2088
+    if [[ "$path" == "~/"* ]]; then
+        path="$HOME/${path:2}"
+    elif [[ "$path" == "~" ]]; then
+        path="$HOME"
+    fi
+
+    # Backslash → forward slash (Git Bash on Windows)
+    path="${path//\\//}"
+
+    # On Windows / Git Bash, convert /c/path to C:/path for Git/OpenSSH compatibility
+    [[ -z "${GITSETU_OS:-}" ]] && detect_os
+    if [[ "$GITSETU_OS" == "gitbash" ]]; then
+        if [[ "$path" =~ ^/([a-zA-Z])/(.*) ]]; then
+            local drive="${BASH_REMATCH[1]}"
+            local rest="${BASH_REMATCH[2]}"
+            drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
+            path="${drive}:/${rest}"
+        elif [[ "$path" =~ ^/([a-zA-Z])$ ]]; then
+            local drive="${BASH_REMATCH[1]}"
+            drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
+            path="${drive}:"
+        elif [[ "$path" =~ ^([a-zA-Z]):/(.*) ]]; then
+            local drive="${BASH_REMATCH[1]}"
+            local rest="${BASH_REMATCH[2]}"
+            drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
+            path="${drive}:/${rest}"
+        fi
+    fi
+
+    # Remove trailing slash (unless it's just "/" or "C:/")
+    if [[ "${#path}" -gt 1 ]]; then
+        if [[ ! "$path" =~ ^[a-zA-Z]:/$ ]]; then
+            path="${path%/}"
+        fi
+    fi
+
+    # Collapse double slashes (tr -s avoids bash escaping ambiguity on Git Bash)
+    path=$(printf '%s' "$path" | tr -s '/')
+
+    printf '%s' "$path"
+}
+
+# ------------------------------------------------------------------------------
+# get_gitdir_keyword — Returns the correct includeIf keyword for the OS
+#
+# Windows/Git Bash uses case-insensitive matching: gitdir/i:
+# Everything else uses case-sensitive: gitdir:
+# ------------------------------------------------------------------------------
+get_gitdir_keyword() {
+    case "$GITSETU_OS" in
+        gitbash) printf 'gitdir/i:' ;;
+        *)       printf 'gitdir:' ;;
+    esac
+}
+
+# ------------------------------------------------------------------------------
+# is_shared_mount — Detects if a path is on a VirtualBox/VMware shared folder
+#
+# These mounts have permission issues (everything is 0777) that prevent
+# SSH keys from having the required 0600 permissions.
+#
+# Returns: 0 if shared mount, 1 if not
+# ------------------------------------------------------------------------------
+is_shared_mount() {
+    local path="$1"
+
+    # Check mount table for vboxsf (VirtualBox) or vmhgfs-fuse (VMware)
+    if command -v mount >/dev/null 2>&1; then
+        local mount_output
+        mount_output=$(mount 2>/dev/null) || true
+
+        # Check if any vboxsf/vmhgfs mount contains this path
+        if printf '%s' "$mount_output" | grep -E "vboxsf|vmhgfs-fuse" | grep -q "${path%/}"; then
+            return 0
+        fi
+
+        # Broader check: is the path under any vboxsf mount point?
+        local mount_point
+        mount_point=$(printf '%s' "$mount_output" | grep -E "vboxsf|vmhgfs-fuse" | awk '{print $3}' | head -n1)
+        if [[ -n "$mount_point" ]] && [[ "$path" == "$mount_point"* ]]; then
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+# ------------------------------------------------------------------------------
+# check_prerequisites — Verify required tools are available
+#
+# Checks for: bash version, git, ssh-keygen
+# Prints helpful install instructions on failure.
+#
+# Returns: 0 if all OK, exits 1 on failure
+# ------------------------------------------------------------------------------
+check_prerequisites() {
+    local errors=0
+
+    # Check bash version (need 3.2+)
+    local bash_major="${BASH_VERSINFO[0]:-0}"
+    local bash_minor="${BASH_VERSINFO[1]:-0}"
+    if [[ "$bash_major" -lt 3 ]] || { [[ "$bash_major" -eq 3 ]] && [[ "$bash_minor" -lt 2 ]]; }; then
+        print_error "Bash 3.2+ is required (found ${BASH_VERSION:-unknown})"
+        errors=$((errors + 1))
+    fi
+
+    # Check git
+    if ! command -v git >/dev/null 2>&1; then
+        print_error "git is not installed"
+        case "$GITSETU_OS" in
+            linux|wsl) print_info "  Install: sudo apt install git" ;;
+            macos)     print_info "  Install: xcode-select --install  OR  brew install git" ;;
+            gitbash)   print_info "  Install: download from https://git-scm.com/downloads" ;;
+        esac
+        errors=$((errors + 1))
+    fi
+
+    # Check ssh-keygen
+    if ! command -v ssh-keygen >/dev/null 2>&1; then
+        print_error "ssh-keygen is not installed"
+        case "$GITSETU_OS" in
+            linux|wsl) print_info "  Install: sudo apt install openssh-client" ;;
+            macos)     print_info "  Should be pre-installed. Try: xcode-select --install" ;;
+            gitbash)   print_info "  Should be included with Git for Windows" ;;
+        esac
+        errors=$((errors + 1))
+    fi
+
+    if [[ "$errors" -gt 0 ]]; then
+        print_error "Prerequisites check failed ($errors error(s)). Please install the missing tools."
+        return 1
+    fi
+
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# get_ssh_agent_advice — Returns platform-specific ssh-agent setup instructions
+# ------------------------------------------------------------------------------
+get_ssh_agent_advice() {
+    case "$GITSETU_OS" in
+        macos)
+            cat >&2 <<'EOF'
+  macOS: Add to ~/.ssh/config:
+    Host *
+        AddKeysToAgent yes
+        UseKeychain yes
+
+  Then run: ssh-add --apple-use-keychain ~/.ssh/id_ed25519_<label>
+EOF
+            ;;
+        linux)
+            cat >&2 <<'EOF'
+  Linux: Start ssh-agent and add your key:
+    eval "$(ssh-agent -s)"
+    ssh-add ~/.ssh/id_ed25519_<label>
+
+  To auto-start, add the eval line to your ~/.bashrc or ~/.profile
+EOF
+            ;;
+        wsl)
+            cat >&2 <<'EOF'
+  WSL: Start ssh-agent in your shell:
+    eval "$(ssh-agent -s)"
+    ssh-add ~/.ssh/id_ed25519_<label>
+
+  Add to ~/.bashrc for persistence. Note: WSL does not share the
+  Windows ssh-agent. Keys must be added in the WSL session.
+EOF
+            ;;
+        gitbash)
+            cat >&2 <<'EOF'
+  Git Bash: The ssh-agent should auto-start. If not, run:
+    eval "$(ssh-agent -s)"
+    ssh-add ~/.ssh/id_ed25519_<label>
+
+  Or enable the Windows OpenSSH Agent service:
+    Get-Service ssh-agent | Set-Service -StartupType Automatic
+    Start-Service ssh-agent
+EOF
+            ;;
+        *)
+            cat >&2 <<'EOF'
+  Start the SSH agent and add your key:
+    eval "$(ssh-agent -s)"
+    ssh-add ~/.ssh/id_ed25519_<label>
+EOF
+            ;;
+    esac
+}
+
+# ------------------------------------------------------------------------------
+# copy_to_clipboard — Opportunistically copies text to the system clipboard
+# ------------------------------------------------------------------------------
+copy_to_clipboard() {
+    local text="$1"
+    
+    if command -v pbcopy >/dev/null 2>&1; then
+        printf "%s" "$text" | pbcopy
+        return 0
+    elif command -v clip.exe >/dev/null 2>&1; then
+        printf "%s" "$text" | clip.exe
+        return 0
+    elif command -v xclip >/dev/null 2>&1; then
+        printf "%s" "$text" | xclip -selection clipboard
+        return 0
+    elif command -v xsel >/dev/null 2>&1; then
+        printf "%s" "$text" | xsel --clipboard --input
+        return 0
+    fi
+    
+    return 1
+}
+
+# ------------------------------------------------------------------------------
+# Inlined Module: lib/ui.sh
+# ------------------------------------------------------------------------------
+# lib/ui.sh — Terminal formatting, colors, symbols, and interactive prompts
+#
+# Respects NO_COLOR (https://no-color.org/) and non-TTY environments.
+# Bash 3.2 compatible: no ${var,,}, uses printf for output.
+
+# ------------------------------------------------------------------------------
+# Color setup
+# Disabled automatically if NO_COLOR is set or stderr is not a terminal.
+# We check stderr (-t 2) because all gitsetu output goes to >&2.
+# ------------------------------------------------------------------------------
+setup_colors() {
+    if [[ -z "${NO_COLOR:-}" ]] && [[ -t 2 ]]; then
+        RED='\033[0;31m'
+        GREEN='\033[0;32m'
+        YELLOW='\033[0;33m'
+        BLUE='\033[0;34m'
+        CYAN='\033[0;36m'
+        DIM='\033[2m'
+        BOLD='\033[1m'
+        RESET='\033[0m'
+    else
+        RED=''
+        GREEN=''
+        YELLOW=''
+        BLUE=''
+        CYAN=''
+        DIM=''
+        BOLD=''
+        RESET=''
+    fi
+}
+
+# Initialize colors on source
+setup_colors
+
+# ------------------------------------------------------------------------------
+# Unicode symbols (with ASCII fallback for terminals that don't support UTF-8)
+# ------------------------------------------------------------------------------
+SYM_CHECK="✓"
+SYM_CROSS="✗"
+SYM_WARN="⚠"
+SYM_INFO="i"
+SYM_ARROW="→"
+# shellcheck disable=SC2034  # Available for future subcommands
+SYM_BULLET="•"
+
+# ------------------------------------------------------------------------------
+# Output functions
+# All output goes to stderr to keep stdout clean for piping/scripting.
+# ------------------------------------------------------------------------------
+
+# Print the startup header with version
+print_header() {
+    printf >&2 '\n'
+    printf >&2 '  %b╔══════════════════════════════════════╗%b\n' "$BOLD" "$RESET"
+    printf >&2 '  %b║%b  %bgitsetu%b v%s%b                       ║%b\n' "$BOLD" "$RESET" "$CYAN$BOLD" "$RESET" "$GITSETU_VERSION" "$BOLD" "$RESET"
+    printf >&2 '  %b║  One command. All identities.       ║%b\n' "$BOLD" "$RESET"
+    printf >&2 '  %b╚══════════════════════════════════════╝%b\n' "$BOLD" "$RESET"
+    printf >&2 '\n'
+}
+
+# Section divider: ─── Title ───
+print_section() {
+    local title="$1"
+    printf >&2 '\n  %b─── %s ───%b\n\n' "$BOLD" "$title" "$RESET"
+}
+
+# Step indicator: → message
+print_step() {
+    printf >&2 '  %b%s%b %s\n' "$CYAN" "$SYM_ARROW" "$RESET" "$1"
+}
+
+# Success: ✔ message (green)
+print_success() {
+    printf >&2 '  %b%s%b %s\n' "$GREEN" "$SYM_CHECK" "$RESET" "$1"
+}
+
+# Warning: ⚠ message (yellow)
+print_warning() {
+    printf >&2 '  %b%s%b %s\n' "$YELLOW" "$SYM_WARN" "$RESET" "$1"
+}
+
+# Error: ✖ message (red)
+print_error() {
+    printf >&2 '  %b%s%b %s\n' "$RED" "$SYM_CROSS" "$RESET" "$1"
+}
+
+# Info: ℹ message (blue)
+print_info() {
+    printf >&2 '  %b%s%b %s\n' "$BLUE" "$SYM_INFO" "$RESET" "$1"
+}
+
+# Print a public key in a formatted box for easy copying
+# Usage: print_key_box "pro" "user@email.com" "/path/to/key.pub"
+print_key_box() {
+    local label="$1"
+    local email="$2"
+    local pubkey_path="$3"
+
+    if [[ ! -f "$pubkey_path" ]]; then
+        print_error "Key file not found: $pubkey_path"
+        return 1
+    fi
+
+    local key_content
+    key_content=$(cat "$pubkey_path")
+
+    printf >&2 '\n'
+    printf >&2 '  %b┌─ %s (%s) ─────────────────────┐%b\n' "$BOLD" "$label" "$email" "$RESET"
+    printf >&2 '  %b│%b %s\n' "$DIM" "$RESET" "$key_content"
+    printf >&2 '  %b└──────────────────────────────────────────┘%b\n' "$DIM" "$RESET"
+    
+    # Opportunistic Clipboard
+    if copy_to_clipboard "$key_content"; then
+        printf >&2 '  %b%s%b %bCOPIED TO CLIPBOARD!%b Add it here: %bhttps://github.com/settings/ssh/new%b\n' "$GREEN" "✓" "$RESET" "$BOLD" "$RESET" "$CYAN" "$RESET"
+    else
+        printf >&2 '  %b%s%b Copy and add at: %bhttps://github.com/settings/ssh/new%b\n' "$BLUE" "$SYM_INFO" "$RESET" "$BOLD" "$RESET"
+    fi
+    printf >&2 '\n'
+}
+
+# ------------------------------------------------------------------------------
+# Prompt functions
+#
+# All prompts read from /dev/tty to work correctly even when stdin is piped.
+# All use `read -r` (no backslash interpretation) for safety.
+# Bash 3.2 compatible.
+# ------------------------------------------------------------------------------
+
+# Ask with optional default. Result in $REPLY.
+# Usage: ask "Your name" "Bhaskar Jha"
+ask() {
+    local prompt="$1"
+    local default="${2:-}"
+
+    if [[ -n "$default" ]]; then
+        printf >&2 '  %b[?]%b %s %b[%s]%b: ' "$CYAN" "$RESET" "$prompt" "$DIM" "$default" "$RESET"
+    else
+        printf >&2 '  %b[?]%b %s: ' "$CYAN" "$RESET" "$prompt"
+    fi
+
+    if [[ -n "${CI:-}" ]] || [[ ! -t 0 ]]; then
+        REPLY="$default"
+    else
+        read -r REPLY </dev/tty || true
+        # Trim leading and trailing whitespace
+        REPLY=$(printf '%s' "$REPLY" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+        if [[ -z "$REPLY" ]] && [[ -n "$default" ]]; then
+            REPLY="$default"
+        fi
+    fi
+}
+
+# Ask for a password/token without echoing to the screen. Result in $REPLY.
+# Usage: ask_password "Enter PAT token"
+ask_password() {
+    local prompt="$1"
+    REPLY=""
+    
+    printf >&2 '  %b[?]%b %s: ' "$CYAN" "$RESET" "$prompt"
+    
+    if [[ -n "${CI:-}" ]] || [[ ! -t 0 ]]; then
+        return 0
+    fi
+    
+    # Disable echo
+    stty -echo 2>/dev/null || true
+    read -r REPLY </dev/tty || true
+    # Re-enable echo
+    stty echo 2>/dev/null || true
+    printf >&2 '\n'
+    # Trim leading and trailing whitespace
+    REPLY=$(printf '%s' "$REPLY" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+}
+
+# Ask and loop until non-empty response. Result in $REPLY.
+# Usage: ask_required "Your email"
+ask_required() {
+    local prompt="$1"
+    REPLY=""
+
+    if [[ -n "${CI:-}" ]] || [[ ! -t 0 ]]; then
+        print_error "Interactive prompt failed in CI/non-TTY environment: $prompt"
+        exit 1
+    fi
+
+    while [[ -z "$REPLY" ]]; do
+        printf >&2 '  %b[?]%b %s %b(required)%b: ' "$CYAN" "$RESET" "$prompt" "$DIM" "$RESET"
+        read -r REPLY </dev/tty || true
+        # Trim leading and trailing whitespace
+        REPLY=$(printf '%s' "$REPLY" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+
+        if [[ -z "$REPLY" ]]; then
+            print_warning "This field is required."
+        fi
+    done
+}
+
+# Yes/no confirmation. Returns 0 for yes, 1 for no.
+# Usage: if confirm "Continue?" "y"; then ...
+confirm() {
+    local prompt="$1"
+    local default="${2:-y}"  # "y" or "n"
+
+    local hint
+    if [[ "$default" == "y" ]]; then
+        hint="Y/n"
+    else
+        hint="y/N"
+    fi
+
+    printf >&2 '  %b[?]%b %s %b[%s]%b: ' "$CYAN" "$RESET" "$prompt" "$DIM" "$hint" "$RESET"
+    
+    if [[ -n "${CI:-}" ]] || [[ ! -t 0 ]]; then
+        REPLY="$default"
+    else
+        read -r REPLY </dev/tty || true
+    fi
+
+    # Empty reply → use default
+    if [[ -z "$REPLY" ]]; then
+        REPLY="$default"
+    fi
+
+    # Normalize to lowercase (bash 3.2 compatible)
+    REPLY=$(printf '%s' "$REPLY" | tr '[:upper:]' '[:lower:]')
+
+    case "$REPLY" in
+        y|yes) return 0 ;;
+        *)     return 1 ;;
+    esac
+}
+
+# Choose from a list of options. Result in $REPLY (the chosen value).
+# Usage: ask_choice "What to do" "skip" "overwrite" "rename"
+ask_choice() {
+    local prompt="$1"
+    shift
+    local options=("$@")
+    local count=${#options[@]}
+    local valid=0
+
+    printf >&2 '  %b[?]%b %s:\n' "$CYAN" "$RESET" "$prompt"
+
+    local i
+    for (( i=0; i<count; i++ )); do
+        printf >&2 '    %b%d)%b %s\n' "$CYAN" "$((i + 1))" "$RESET" "${options[$i]}"
+    done
+
+    if [[ -n "${CI:-}" ]] || [[ ! -t 0 ]]; then
+        print_error "Interactive prompt failed in CI/non-TTY environment: $prompt"
+        exit 1
+    fi
+
+    while [[ "$valid" -eq 0 ]]; do
+        printf >&2 '  Choice %b(1-%d)%b: ' "$DIM" "$count" "$RESET"
+        read -r REPLY </dev/tty || true
+
+        if [[ "$REPLY" =~ ^[0-9]+$ ]] && [[ "$REPLY" -ge 1 ]] && [[ "$REPLY" -le "$count" ]]; then
+            REPLY="${options[$((REPLY - 1))]}"
+            valid=1
+        else
+            print_warning "Please enter a number between 1 and $count."
+        fi
+    done
+}
+
+# ------------------------------------------------------------------------------
+# Inlined Module: lib/validate.sh
+# ------------------------------------------------------------------------------
+# lib/validate.sh — Input validation functions
+#
+# All validators return 0 for valid, 1 for invalid.
+# Bash 3.2 compatible.
+
+# ------------------------------------------------------------------------------
+# validate_email — Basic email format check
+#
+# Checks: contains @, has text before @, has a dot after @.
+# This is NOT a full RFC 5322 check — just catches obvious typos.
+#
+# Usage: if validate_email "user@example.com"; then ...
+# ------------------------------------------------------------------------------
+validate_email() {
+    local email="$1"
+
+    # Must not be empty
+    if [[ -z "$email" ]]; then
+        return 1
+    fi
+
+    # Must contain @
+    if [[ "$email" != *"@"* ]]; then
+        return 1
+    fi
+
+    # Must have text before @
+    local local_part="${email%%@*}"
+    if [[ -z "$local_part" ]]; then
+        return 1
+    fi
+
+    # Must have a dot in the domain part
+    local domain_part="${email#*@}"
+    if [[ "$domain_part" != *.* ]]; then
+        return 1
+    fi
+
+    # Domain part must not be empty after the dot
+    local tld="${domain_part##*.}"
+    if [[ -z "$tld" ]]; then
+        return 1
+    fi
+
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# validate_github_noreply_email — Check if email matches GitHub's strict mask
+#
+# Rules:
+#   - Format: ID+username@users.noreply.github.com
+#
+# Usage: if validate_github_noreply_email "123+name@users.noreply.github.com"; then ...
+# ------------------------------------------------------------------------------
+validate_github_noreply_email() {
+    local email="$1"
+    
+    if [[ -z "$email" ]]; then
+        return 1
+    fi
+
+    local github_regex="^[0-9]+\+[a-zA-Z0-9_-]+@users\.noreply\.github\.com$"
+    if [[ ! "$email" =~ $github_regex ]]; then
+        return 1
+    fi
+
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# validate_label — Profile label validation
+#
+# Rules:
+#   - Lowercase alphanumeric and hyphens only
+#   - Must start with a letter
+#   - 1-20 characters
+#   - No spaces
+#
+# Usage: if validate_label "work-client"; then ...
+# ------------------------------------------------------------------------------
+validate_label() {
+    local label="$1"
+
+    # Must not be empty
+    if [[ -z "$label" ]]; then
+        return 1
+    fi
+
+    # Length check (1-20)
+    if [[ "${#label}" -gt 20 ]]; then
+        return 1
+    fi
+
+    # Must match pattern: starts with letter, then alphanumeric or hyphen
+    # Bash 3.2 compatible regex
+    if ! printf '%s' "$label" | grep -qE '^[a-z][a-z0-9-]*$'; then
+        return 1
+    fi
+
+    # Must not end with hyphen
+    if [[ "$label" == *"-" ]]; then
+        return 1
+    fi
+
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# validate_path — Directory path validation
+#
+# Checks: path exists, OR parent directory exists and is writable.
+# Expands tilde via normalize_path before checking.
+#
+# Usage: if validate_path "~/dev/work"; then ...
+# ------------------------------------------------------------------------------
+validate_path() {
+    local path="$1"
+
+    # Must not be empty
+    if [[ -z "$path" ]]; then
+        return 1
+    fi
+
+    # Normalize (expand tilde, etc.)
+    path=$(normalize_path "$path")
+
+    # If directory exists, valid
+    if [[ -d "$path" ]]; then
+        return 0
+    fi
+
+    # Recursively check if the nearest existing ancestor is writable
+    local current="$path"
+    while [[ "$current" != "/" && "$current" != "." ]]; do
+        local parent
+        parent=$(dirname "$current")
+        if [[ "$parent" == "$current" ]]; then
+            break
+        fi
+        current="$parent"
+        if [[ -d "$current" ]]; then
+            if [[ -w "$current" ]]; then
+                return 0
+            else
+                return 1
+            fi
+        fi
+    done
+
+    return 1
+}
+
+# ------------------------------------------------------------------------------
+# validate_no_overlap — Check that a new path doesn't overlap with existing ones
+#
+# "Overlap" means one path is a parent of another:
+#   /a/b overlaps with /a/b/c (parent of)
+#   /a/b/c overlaps with /a/b (child of)
+#   /a/b does NOT overlap with /a/x
+#
+# Usage: validate_no_overlap "/new/path" "${PROFILE_DIRS[@]}"
+# Returns: 0 if no overlap, 1 if overlap detected
+# ------------------------------------------------------------------------------
+validate_no_overlap() {
+    local new_path="$1"
+    shift
+    local existing_paths=("$@")
+
+    # Empty paths don't overlap
+    if [[ -z "$new_path" ]]; then
+        return 0
+    fi
+
+    # Normalize and ensure trailing slash for comparison
+    new_path=$(normalize_path "$new_path")
+    local new_with_slash="${new_path}/"
+
+    local existing
+    for existing in "${existing_paths[@]}"; do
+        if [[ -z "$existing" ]]; then
+            continue
+        fi
+
+        existing=$(normalize_path "$existing")
+        local existing_with_slash="${existing}/"
+
+        # Check if new is parent of existing
+        if [[ "$existing_with_slash" == "$new_with_slash"* ]]; then
+            return 1
+        fi
+
+        # Check if new is child of existing
+        if [[ "$new_with_slash" == "$existing_with_slash"* ]]; then
+            return 1
+        fi
+    done
+
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# validate_key_name — SSH key filename validation
+#
+# Allowed: a-z, A-Z, 0-9, underscore, hyphen
+# No spaces, no dots, no special characters.
+#
+# Usage: if validate_key_name "id_ed25519_work"; then ...
+# ------------------------------------------------------------------------------
+validate_key_name() {
+    local name="$1"
+
+    if [[ -z "$name" ]]; then
+        return 1
+    fi
+
+    if ! printf '%s' "$name" | grep -qE '^[a-zA-Z0-9_-]+$'; then
+        return 1
+    fi
+
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# Inlined Module: lib/backup.sh
+# ------------------------------------------------------------------------------
+# lib/backup.sh — Timestamped backup and restore of configuration files
+#
+# Ensures no data is ever lost during gitsetu setup.
+# Bash 3.2 compatible.
+
+# ------------------------------------------------------------------------------
+# ensure_dirs — Create all required gitsetu directories
+#
+# Called at the start of setup. Idempotent.
+# ------------------------------------------------------------------------------
+ensure_dirs() {
+    if [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
+        return 0
+    fi
+    mkdir -p "$GITSETU_CONFIG_DIR" 2>/dev/null || true
+    mkdir -p "$GITSETU_BACKUP_DIR" 2>/dev/null || true
+    mkdir -p "$GITSETU_PROFILES_DIR" 2>/dev/null || true
+    mkdir -p "$GITSETU_HOOKS_DIR" 2>/dev/null || true
+}
+
+# ------------------------------------------------------------------------------
+# backup_file — Create a timestamped backup of a file
+#
+# Copies the file to $GITSETU_BACKUP_DIR/<basename>.<ISO-timestamp>.bak
+# Preserves permissions with cp -p.
+#
+# Usage: backup_file "$HOME/.gitconfig"
+# Returns: 0 on success, 1 if source doesn't exist
+# ------------------------------------------------------------------------------
+backup_file() {
+    local source_path="$1"
+
+    if [[ ! -f "$source_path" ]]; then
+        return 1
+    fi
+
+    ensure_dirs
+
+    local basename
+    basename=$(basename "$source_path")
+
+    local timestamp
+    timestamp=$(date +%Y%m%dT%H%M%S)
+
+    local backup_path="$GITSETU_BACKUP_DIR/${basename}.${timestamp}.bak"
+
+    # Avoid overwriting if backup from same second exists (unlikely but safe)
+    local counter=1
+    while [[ -f "$backup_path" ]]; do
+        backup_path="$GITSETU_BACKUP_DIR/${basename}.${timestamp}.${counter}.bak"
+        counter=$((counter + 1))
+    done
+
+    if cp -p "$source_path" "$backup_path" 2>/dev/null; then
+        print_info "Backed up: $source_path → $backup_path"
+        return 0
+    else
+        print_error "Failed to backup: $source_path"
+        return 1
+    fi
+}
+
+
+# ------------------------------------------------------------------------------
+# get_openssl_args — Cross-platform OpenSSL probing
+# ------------------------------------------------------------------------------
+get_openssl_args() {
+    if openssl enc -help 2>&1 | grep -q -- "-pbkdf2"; then
+        echo "-pbkdf2 -iter 100000"
+    else
+        echo "-md sha256"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# _collect_ssh_key_paths — Enumerate SSH key files managed by GitSetu
+#
+# Scans profiles.conf for key paths and collects those that exist on disk.
+# Outputs paths relative to $HOME (for tar bundling), one per line.
+# ------------------------------------------------------------------------------
+_collect_ssh_key_paths() {
+    local key_files=()
+
+    if [[ -f "$GITSETU_PROFILES_CONF" ]]; then
+        local raw_line
+        while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+            [[ "$raw_line" == "#"* ]] && continue
+            [[ -z "$raw_line" ]] && continue
+            
+            # Protect Windows drive letters from IFS=: splitting
+            local clean_line
+            clean_line=$(printf '%s' "$raw_line" | sed -E 's/:([a-zA-Z]):/:\1#DRIVE#/g')
+            local _label _email _dir _provider _sign _kpath _puser
+            IFS=: read -r _label _email _dir _provider _sign _kpath _puser <<< "$clean_line"
+            _dir="${_dir//#DRIVE#/:}"
+            _kpath="${_kpath//#DRIVE#/:}"
+
+            _kpath="${_kpath:-$HOME/.ssh/id_ed25519_${_label}}"
+            if [[ "$_kpath" == "~/"* ]]; then
+                _kpath="$HOME/${_kpath:2}"
+            elif [[ "$_kpath" == "~" ]]; then
+                _kpath="$HOME"
+            fi
+            local norm_kpath norm_home
+            norm_kpath=$(normalize_path "$_kpath")
+            norm_home=$(normalize_path "$HOME")
+            if [[ -f "$_kpath" ]] || [[ -f "$norm_kpath" ]]; then
+                # Convert absolute path to path relative to $HOME for tar
+                local rel
+                if [[ "$norm_kpath" == "$norm_home/"* ]]; then
+                    rel="${norm_kpath#"$norm_home"/}"
+                elif [[ "$_kpath" == "$HOME/"* ]]; then
+                    rel="${_kpath#"$HOME"/}"
+                elif [[ "$_kpath" =~ (\.ssh/.*)$ ]]; then
+                    rel="${BASH_REMATCH[1]}"
+                else
+                    rel="$_kpath"
+                fi
+                key_files+=("$rel")
+                if [[ -f "${_kpath}.pub" ]] || [[ -f "${norm_kpath}.pub" ]]; then
+                    key_files+=("${rel}.pub")
+                fi
+            fi
+        done < "$GITSETU_PROFILES_CONF"
+    fi
+
+    local kf
+    for kf in ${key_files[@]+"${key_files[@]}"}; do
+        printf '%s\n' "$kf"
+    done
+}
+
+# ------------------------------------------------------------------------------
+# cmd_backup — Full State Encrypted Backup
+# ------------------------------------------------------------------------------
+cmd_backup() {
+    local out_file="${1:-}"
+
+    # Check if there is any GitSetu state to backup
+    local has_state=0
+    [[ -d "$GITSETU_CONFIG_DIR" ]] && has_state=1
+    if [[ "$has_state" -eq 0 ]] && [[ -f "$GITSETU_PROFILES_CONF" ]]; then
+        has_state=1
+    fi
+    if [[ "$has_state" -eq 0 ]]; then
+        print_error "No GitSetu state found to backup."
+        return 1
+    fi
+
+    local timestamp
+    timestamp=$(date +%Y%m%d_%H%M%S)
+
+    if [[ -z "$out_file" ]]; then
+        out_file="gitsetu_vault_${timestamp}.tar.gz.enc"
+    fi
+
+    # Tar the state safely
+    local temp_tar="${TMPDIR:-/tmp}/gitsetu_vault_$$_${RANDOM}.tar.gz"
+    GITSETU_CLEANUP_FILES+=("$temp_tar")
+
+    # Bundle: config directory + individual SSH key files from registry
+    local tar_args=()
+    if [[ -d "$GITSETU_CONFIG_DIR" ]]; then
+        local norm_cfg norm_home rel_cfg
+        norm_cfg=$(normalize_path "$GITSETU_CONFIG_DIR")
+        norm_home=$(normalize_path "$HOME")
+        if [[ "$norm_cfg" == "$norm_home/"* ]]; then
+            rel_cfg="${norm_cfg#"$norm_home"/}"
+        elif [[ "$GITSETU_CONFIG_DIR" == "$HOME/"* ]]; then
+            rel_cfg="${GITSETU_CONFIG_DIR#"$HOME"/}"
+        else
+            rel_cfg="$GITSETU_CONFIG_DIR"
+        fi
+        tar_args+=("$rel_cfg")
+    fi
+
+    local key_path
+    while IFS= read -r key_path; do
+        [[ -n "$key_path" ]] && tar_args+=("$key_path")
+    done < <(_collect_ssh_key_paths)
+
+    if [[ ${#tar_args[@]} -eq 0 ]]; then
+        print_error "No state files found to backup."
+        rm -f "$temp_tar"
+        return 1
+    fi
+
+    if ! tar -czf "$temp_tar" -C "$HOME" "${tar_args[@]}" 2>/dev/null; then
+        print_error "Failed to compress state directories."
+        rm -f "$temp_tar"
+        return 1
+    fi
+
+    printf >&2 "  %bLocking Vault%b\n" "$BOLD" "$RESET"
+
+    local password
+    if [[ -n "${GITSETU_TEST_VAULT_PASS:-}" ]]; then
+        password="$GITSETU_TEST_VAULT_PASS"
+    else
+        ask_password "Enter a strong password to encrypt the vault: "
+        password="$REPLY"
+        ask_password "Confirm password: "
+        local confirm="$REPLY"
+
+        if [[ "$password" != "$confirm" ]]; then
+            print_error "Passwords do not match. Backup aborted."
+            rm -f "$temp_tar"
+            return 1
+        fi
+    fi
+
+    local ssl_args=("-aes-256-cbc" "-salt")
+    local -a extra_ssl_args=()
+    read -r -a extra_ssl_args <<< "$(get_openssl_args)"
+    ssl_args+=("${extra_ssl_args[@]}")
+
+    export GITSETU_VAULT_PASS="$password"
+    if openssl enc "${ssl_args[@]}" -in "$temp_tar" -out "$out_file" -pass env:GITSETU_VAULT_PASS 2>/dev/null; then
+        print_success "Vault created successfully: $out_file"
+    else
+        print_error "Encryption failed."
+        unset GITSETU_VAULT_PASS
+        rm -f "$temp_tar"
+        return 1
+    fi
+
+    unset GITSETU_VAULT_PASS
+    rm -f "$temp_tar"
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# cmd_restore — Import and regenerate state from an encrypted vault
+# ------------------------------------------------------------------------------
+cmd_restore() {
+    local in_file="$1"
+
+    if [[ -z "$in_file" ]] || [[ ! -f "$in_file" ]]; then
+        print_error "Vault file not found: $in_file"
+        return 1
+    fi
+
+    printf >&2 "  %bUnlocking Vault%b\n" "$BOLD" "$RESET"
+    local password
+    if [[ -n "${GITSETU_TEST_VAULT_PASS:-}" ]]; then
+        password="$GITSETU_TEST_VAULT_PASS"
+    else
+        ask_password "Enter vault password: "
+        password="$REPLY"
+    fi
+
+    local ssl_args=("-d" "-aes-256-cbc" "-salt")
+    local -a extra_ssl_args=()
+    read -r -a extra_ssl_args <<< "$(get_openssl_args)"
+    ssl_args+=("${extra_ssl_args[@]}")
+
+    local temp_tar="${TMPDIR:-/tmp}/gitsetu_vault_$$_${RANDOM}.tar.gz"
+    GITSETU_CLEANUP_FILES+=("$temp_tar")
+
+    export GITSETU_VAULT_PASS="$password"
+    if ! openssl enc "${ssl_args[@]}" -in "$in_file" -out "$temp_tar" -pass env:GITSETU_VAULT_PASS 2>/dev/null; then
+        print_error "Decryption failed. Incorrect password or corrupted vault."
+        unset GITSETU_VAULT_PASS
+        rm -f "$temp_tar"
+        return 1
+    fi
+    unset GITSETU_VAULT_PASS
+
+    # Pre-Flight Safety Net
+    if [[ -d "$GITSETU_CONFIG_DIR" ]]; then
+        print_warning "Active state detected. Creating pre-restore safety backup..."
+        local safety_pass
+        safety_pass=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c 32)
+        local safety_file
+        safety_file="gitsetu_vault_pre_restore_$(date +%Y%m%d_%H%M%S).tar.gz.enc"
+        export GITSETU_TEST_VAULT_PASS="$safety_pass"
+        cmd_backup "$safety_file" >/dev/null 2>&1 || return 1
+        unset GITSETU_TEST_VAULT_PASS
+        # Store password adjacent to vault so user can recover if needed
+        printf '%s\n' "$safety_pass" > "${safety_file}.password"
+        chmod 600 "${safety_file}.password"
+        print_info "Safety vault: $safety_file (password in ${safety_file}.password)"
+        
+        # Teardown current global configs to avoid duplicate block drift
+        if type teardown_all >/dev/null 2>&1; then
+            teardown_all >/dev/null 2>&1 || true
+        fi
+        rm -rf "$GITSETU_CONFIG_DIR"
+    fi
+
+    mkdir -p "$HOME/.config" "$HOME/.ssh"
+    if ! tar -xzf "$temp_tar" -C "$HOME" 2>/dev/null; then
+        print_error "Failed to extract vault."
+        rm -f "$temp_tar"
+        return 1
+    fi
+
+    rm -f "$temp_tar"
+    print_success "State successfully extracted."
+
+    # Regenerate global Git and SSH state from the restored profiles
+    print_info "Regenerating global hooks and configurations..."
+    if type write_global_gitconfig >/dev/null 2>&1; then
+        # Load profile data from the restored registry + gitconfig files
+        load_profiles
+
+        write_global_gitconfig
+
+        # Reinstall identity guard hook
+        if type install_guard >/dev/null 2>&1; then
+            install_guard >/dev/null 2>&1 || true
+        fi
+
+        # Regenerate per-profile gitconfigs (name/email sourced from restored .gitconfig files)
+        local i
+        for (( i=0; i<PROFILE_COUNT; i++ )); do
+            write_profile_gitconfig "${PROFILE_LABELS[$i]}" "${PROFILE_NAMES[$i]}" \
+                "${PROFILE_EMAILS[$i]}" "${PROFILE_SIGNS[$i]}" "${PROFILE_KEYS[$i]}" \
+                "${PROFILE_PROVIDERS[$i]}" "${PROFILE_USERS[$i]:-}"
+        done
+
+        # Regenerate SSH config (one call writes all host blocks)
+        write_ssh_config
+    fi
+
+    print_success "Restore complete. Your identity is active."
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# Inlined Module: lib/ssh.sh
+# ------------------------------------------------------------------------------
+# lib/ssh.sh — SSH key generation and ~/.ssh/config management
+#
+# Generates Ed25519 keys per profile and creates host alias blocks
+# in ~/.ssh/config for the clone workflow.
+# Bash 3.2 compatible.
+
+# ------------------------------------------------------------------------------
+# generate_ssh_key — Generate an Ed25519 SSH key pair for a profile
+#
+# Creates: $HOME/.ssh/id_ed25519_<label> (private) and .pub (public)
+# If key exists: prompts user to skip, rename old, or overwrite.
+#
+# Usage: generate_ssh_key "pro" "user@example.com"
+# Returns: 0 on success/skip, 1 on failure
+# ------------------------------------------------------------------------------
+generate_ssh_key() {
+    local label="$1"
+    local email="$2"
+    local key_path="${3:-$HOME/.ssh/id_ed25519_${label}}"
+
+    # Warn if ~/.ssh is on a shared mount
+    if is_shared_mount "$HOME/.ssh" 2>/dev/null; then
+        # shellcheck disable=SC2088  # Tilde is in a display string, not a path
+        print_warning "~/.ssh appears to be on a shared folder (VirtualBox/VMware)."
+        print_warning "SSH keys require strict permissions (600) which shared folders cannot enforce."
+        print_info "Consider storing keys on the native filesystem instead."
+    fi
+
+    # Create ~/.ssh if it doesn't exist
+    if [[ ! -d "$HOME/.ssh" ]]; then
+        mkdir -p "$HOME/.ssh"
+        print_step "Created ~/.ssh directory"
+    fi
+    chmod 700 "$HOME/.ssh"
+
+    # Check if key already exists
+    if [[ -f "$key_path" ]]; then
+        print_warning "SSH key already exists: $key_path"
+
+        if [[ "$GITSETU_DRY_RUN" -eq 1 ]]; then
+            print_info "[DRY RUN] Would prompt for action on existing key"
+            return 0
+        fi
+
+        if [[ "${GITSETU_AUTO_MODE:-0}" -eq 1 ]]; then
+            print_info "Auto-mode: keeping existing key for '$label'"
+            return 0
+        fi
+
+        ask_choice "What to do with existing key?" "skip (keep current)" "rename old key" "overwrite"
+
+        case "$REPLY" in
+            "skip (keep current)")
+                print_info "Keeping existing key for '$label'"
+                return 0
+                ;;
+            "rename old key")
+                local timestamp
+                timestamp=$(date +%Y%m%dT%H%M%S)
+                mv "$key_path" "${key_path}.old.${timestamp}"
+                mv "${key_path}.pub" "${key_path}.pub.old.${timestamp}" 2>/dev/null || true
+                print_info "Renamed old key to ${key_path}.old.${timestamp}"
+                ;;
+            "overwrite")
+                print_info "Overwriting existing key for '$label'"
+                ;;
+        esac
+    fi
+
+    # Dry run: just show what would happen
+    if [[ "$GITSETU_DRY_RUN" -eq 1 ]]; then
+        print_info "[DRY RUN] Would generate: $key_path"
+        print_info "[DRY RUN] ssh-keygen -t ed25519 -C \"$email\" -f \"$key_path\" -N \"\""
+        return 0
+    fi
+
+    # Generate the key
+    print_step "Generating SSH key for '$label'..."
+
+    # Check if FIDO2 hardware key was requested based on filename convention
+    local key_type="ed25519"
+    local -a fido_args=()
+    if [[ "$key_path" == *"_sk_"* ]]; then
+        key_type="ed25519-sk"
+        fido_args=(-O resident -O verify-required)
+        print_info "Hardware Security Key detected. Please TOUCH YOUR YUBIKEY when prompted."
+    fi
+
+    if [[ "${GITSETU_USE_PASSPHRASE:-0}" -eq 1 ]] || [[ "$key_type" == "ed25519-sk" ]]; then
+        # Prompt user for passphrase or FIDO2 touch interactively
+        ssh-keygen -t "$key_type" "${fido_args[@]}" -C "$email" -f "$key_path"
+        local status=$?
+        
+        # FIDO2 Fallback Mechanism
+        if [[ "$status" -ne 0 ]] && [[ "$key_type" == "ed25519-sk" ]]; then
+            print_warning "Hardware Security Key enrollment failed (missing device or libfido2 unsupported)."
+            print_info "Falling back to standard ed25519 software key generation..."
+            
+            key_type="ed25519"
+            fido_args=()
+            if [[ "${GITSETU_USE_PASSPHRASE:-0}" -eq 1 ]]; then
+                ssh-keygen -t "$key_type" -C "$email" -f "$key_path"
+                status=$?
+            else
+                ssh-keygen -t "$key_type" -C "$email" -f "$key_path" -N "" -q
+                status=$?
+            fi
+        fi
+    else
+        # Password-less key (background with spinner)
+        ssh-keygen -t "$key_type" "${fido_args[@]}" -C "$email" -f "$key_path" -N "" -q >/dev/null 2>&1 &
+        local pid=$!
+        local spin='-\|/'
+        local i=0
+        while kill -0 $pid 2>/dev/null; do
+            i=$(( (i+1) %4 ))
+            printf "\r  ${BOLD}Generating...${RESET} %s " "${spin:$i:1}" >&2
+            sleep 0.1
+        done
+        wait $pid
+        local status=$?
+        printf "\r\033[K" >&2 # Clear the spinner line
+    fi
+
+    if [[ "$status" -eq 0 ]]; then
+        chmod 600 "$key_path"
+        chmod 644 "${key_path}.pub"
+        print_success "Created: $key_path"
+        return 0
+    else
+        print_error "Failed to generate SSH key for '$label'"
+        return 1
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# build_ssh_host_block — Generate a single Host block for ~/.ssh/config
+#
+# Usage: block=$(build_ssh_host_block "pro" "github.com")
+# Output: formatted Host block with managed markers
+# ------------------------------------------------------------------------------
+build_ssh_host_block() {
+    local label="$1"
+    local hostname="${2:-github.com}"
+    local key_path="${3:-$HOME/.ssh/id_ed25519_${label}}"
+    
+    # Use portable home relative path if key is inside ~/.ssh or $HOME
+    local portable_key="$key_path"
+    if [[ "$key_path" == "$HOME/.ssh/"* ]] || [[ "$key_path" =~ (\.ssh/.*)$ ]]; then
+        portable_key="~/.ssh/${key_path##*/}"
+    elif [[ "$key_path" == "$HOME/"* ]]; then
+        portable_key="~/${key_path#"$HOME"/}"
+    fi
+
+    # Extract the main part of the domain (e.g., gitlab.com -> gitlab) for the alias prefix
+    local prefix
+    prefix=$(printf '%s' "$hostname" | cut -d'.' -f1)
+
+    cat <<EOF
+Host ${prefix}-${label}
+    HostName ${hostname}
+    User git
+    IdentityFile ${portable_key}
+    IdentitiesOnly yes
+    AddKeysToAgent yes
+EOF
+
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        echo "    UseKeychain yes"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# write_ssh_config — Update ~/.ssh/config with gitsetu-managed host blocks
+#
+# Strategy (Phase 1 Pivot):
+#   1. Write all host aliases to an isolated file (~/.config/gitsetu/profiles/ssh_config)
+#   2. Ensure 'Include ~/.config/gitsetu/profiles/ssh_config' is the FIRST line of ~/.ssh/config
+#   3. Remove any legacy inline managed blocks from ~/.ssh/config
+#
+# This achieves 100% Zero-Trust isolation while respecting OpenSSH's "first-match wins" rule.
+# Usage: write_ssh_config
+# ------------------------------------------------------------------------------
+write_ssh_config() {
+    local ssh_config="$HOME/.ssh/config"
+    local isolated_config="$GITSETU_PROFILES_DIR/ssh_config"
+    local include_path="$isolated_config"
+    if [[ "$isolated_config" == "$HOME/"* ]]; then
+        include_path="~/${isolated_config#"$HOME"/}"
+    elif [[ "$isolated_config" =~ (\.config/.*)$ ]]; then
+        include_path="~/${BASH_REMATCH[1]}"
+    fi
+    local include_directive="Include ${include_path}"
+
+    # Create ~/.ssh if needed
+    if [[ ! -d "$HOME/.ssh" ]]; then
+        mkdir -p "$HOME/.ssh"
+    fi
+    chmod 700 "$HOME/.ssh" 2>/dev/null || true
+
+    # Create isolated profiles directory if needed
+    if [[ ! -d "$GITSETU_PROFILES_DIR" ]]; then
+        mkdir -p "$GITSETU_PROFILES_DIR"
+    fi
+
+    # Dry run
+    if [[ "$GITSETU_DRY_RUN" -eq 1 ]]; then
+        print_info "[DRY RUN] Would prepend to: $ssh_config"
+        print_info "          $include_directive"
+        print_info "[DRY RUN] Would write host aliases to: $isolated_config"
+        return 0
+    fi
+
+    # 1. Legacy Migration: Remove any old inline managed blocks
+    if [[ -f "$ssh_config" ]] && grep -q "\[gitsetu:managed:start\]" "$ssh_config" 2>/dev/null; then
+        local tmp_legacy
+        tmp_legacy=$(mktemp "${ssh_config}.tmp.legacy.XXXXXX")
+        GITSETU_CLEANUP_FILES+=("$tmp_legacy")
+
+        awk '
+            BEGIN { in_block=0 }
+            /\[gitsetu:managed:start\]/ { in_block=1; next }
+            in_block && /\[gitsetu:managed:end\]/ { in_block=0; next }
+            in_block { next }
+            !in_block { print }
+        ' "$ssh_config" > "$tmp_legacy"
+        
+        backup_file "$ssh_config"
+        mv "$tmp_legacy" "$ssh_config"
+        print_info "Migrated legacy inline blocks from ~/.ssh/config"
+    fi
+
+    # 2. Write the isolated GitSetu ssh_config
+    # We overwrite it completely every time, achieving 100% idempotency
+    echo "# Generated by gitsetu v${GITSETU_VERSION} on $(date +%Y-%m-%d)" > "$isolated_config"
+    echo "# Do not edit this file directly. It is overwritten by gitsetu." >> "$isolated_config"
+    
+    local i
+    for (( i=0; i<PROFILE_COUNT; i++ )); do
+        local label="${PROFILE_LABELS[$i]}"
+        local provider="${PROFILE_PROVIDERS[$i]:-github.com}"
+        local key_path="${PROFILE_KEYS[$i]:-$HOME/.ssh/id_ed25519_${label}}"
+        printf '\n' >> "$isolated_config"
+        build_ssh_host_block "$label" "$provider" "$key_path" >> "$isolated_config"
+    done
+    chmod 600 "$isolated_config"
+
+    # 3. Ensure the Include directive is at the absolute top of the global ~/.ssh/config
+    if [[ ! -f "$ssh_config" ]]; then
+        # File doesn't exist, simply create it with the Include line
+        echo "$include_directive" > "$ssh_config"
+        chmod 600 "$ssh_config"
+        print_success "Created: $ssh_config (with isolated Include directive)"
+    else
+        # File exists. Check if the exact Include line is already the very first line.
+        local first_line
+        first_line=$(head -n 1 "$ssh_config" 2>/dev/null || true)
+        
+        if [[ "$first_line" != "$include_directive" ]]; then
+            # We must prepend it. First, remove any stray instances of our Include anywhere else in the file.
+            local tmp_prepend
+            tmp_prepend=$(mktemp "${ssh_config}.tmp.prepend.XXXXXX")
+            GITSETU_CLEANUP_FILES+=("$tmp_prepend")
+            
+            # Print the Include line first
+            echo "$include_directive" > "$tmp_prepend"
+            
+            # Then append the rest of the file, stripping out any old instances of our Include directive
+            grep -v -F "$include_directive" "$ssh_config" | grep -v -F "Include $isolated_config" >> "$tmp_prepend" || true
+            
+            # Safely swap
+            backup_file "$ssh_config"
+            mv "$tmp_prepend" "$ssh_config"
+            chmod 600 "$ssh_config"
+            print_success "Prepended isolated Include directive to: $ssh_config"
+        else
+            print_success "Verified isolated Include directive in: $ssh_config"
+        fi
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# display_public_keys — Show all public keys with copy instructions
+#
+# Displays each key in a formatted box with the GitHub settings URL.
+# Usage: display_public_keys
+# ------------------------------------------------------------------------------
+display_public_keys() {
+    print_section "Public Keys — Add These to GitHub/GitLab"
+
+    local i
+    for (( i=0; i<PROFILE_COUNT; i++ )); do
+        local label="${PROFILE_LABELS[$i]}"
+        local email="${PROFILE_EMAILS[$i]}"
+        local pubkey="${PROFILE_KEYS[$i]:-$HOME/.ssh/id_ed25519_${label}}.pub"
+
+        if [[ -f "$pubkey" ]]; then
+            print_key_box "$label" "$email" "$pubkey"
+        else
+            print_warning "Key not found for '$label': $pubkey"
+        fi
+    done
+
+    print_section "The Magical Clone"
+    printf >&2 "  %bYou no longer need special host aliases to clone!%b\n\n" "$BOLD" "$RESET"
+    printf >&2 "  Simply %bcd%b into your profile's directory and run:\n" "$CYAN" "$RESET"
+    printf >&2 "    git clone git@github.com:username/repo.git\n\n"
+    printf >&2 "  %bGitSetu will automatically intercept and use the correct SSH key!%b\n" "$BOLD" "$RESET"
+}
+
+# ------------------------------------------------------------------------------
+# Inlined Module: lib/gitconfig.sh
+# ------------------------------------------------------------------------------
+# lib/gitconfig.sh — Git configuration generation (global + per-profile)
+#
+# Manages ~/.gitconfig (global) and ~/.config/gitsetu/profiles/<label>.gitconfig
+# Uses managed block markers for idempotent updates.
+# Bash 3.2 compatible.
+
+# ------------------------------------------------------------------------------
+# build_global_gitconfig_block — Generate the managed block for ~/.gitconfig
+#
+# Includes:
+#   - Default [user] section (name, email)
+#   - Default [core] sshCommand
+#   - [init] defaultBranch = main
+#   - [includeIf] entries for each non-default profile
+#
+# Usage: block=$(build_global_gitconfig_block)
+# ------------------------------------------------------------------------------
+build_global_gitconfig_block() {
+    local gitdir_kw
+    gitdir_kw=$(get_gitdir_keyword)
+
+    # Start with header and default user
+    cat <<EOF
+${GITSETU_MANAGED_START}
+# Generated by gitsetu v${GITSETU_VERSION} on $(date +%Y-%m-%d)
+# Do not edit between managed markers — gitsetu will overwrite on re-run.
+# Everything outside these markers is preserved.
+
+[user]
+    useConfigOnly = true
+
+[init]
+    defaultBranch = main
+EOF
+
+    # If a global fallback profile exists (index 0 with empty dir), include it as the base identity
+    if [[ "$PROFILE_COUNT" -gt 0 ]] && [[ -z "${PROFILE_DIRS[0]}" ]]; then
+        local global_label="${PROFILE_LABELS[0]}"
+        local global_path="${GITSETU_PROFILES_DIR}/${global_label}.gitconfig"
+        global_path=$(normalize_path "$global_path")
+        local escaped_global_path="${global_path//\\/\\\\}"
+        escaped_global_path="${escaped_global_path//\"/\\\"}"
+        cat <<EOF
+
+[include]
+    path = "${escaped_global_path}"
+EOF
+    fi
+
+    if [[ "$GITSETU_OS" == "gitbash" ]]; then
+        cat <<EOF
+
+[credential]
+    helper = manager
+EOF
+    else
+        cat <<EOF
+
+[credential]
+    helper = "${GITSETU_SCRIPT_DIR}/gitsetu credential"
+EOF
+    fi
+
+    # Add safe.directory for each non-default profile (solves VirtualBox/WSL dubious ownership)
+    local has_safe=0
+    local i
+    for (( i=0; i<PROFILE_COUNT; i++ )); do
+        local dir="${PROFILE_DIRS[$i]}"
+        if [[ -n "$dir" ]]; then
+            if [[ "$GITSETU_OS" == "gitbash" ]] && [[ "$dir" =~ ^/([a-zA-Z])/(.*) ]]; then
+                local drive="${BASH_REMATCH[1]}"
+                local rest="${BASH_REMATCH[2]}"
+                drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
+                dir="${drive}:/${rest}"
+            fi
+            if [[ "$dir" != */ ]]; then
+                dir="${dir}/"
+            fi
+            
+            if [[ "$has_safe" -eq 0 ]]; then
+                printf '\n[safe]\n'
+                has_safe=1
+            fi
+            # Sanitize newlines to prevent Git INI format corruption
+            dir="${dir//$'\n'/}"
+            
+            local escaped_safe_dir="${dir//\\/\\\\}"
+            escaped_safe_dir="${escaped_safe_dir//\"/\\\"}"
+            printf '    directory = "%s*"\n' "$escaped_safe_dir"
+        fi
+    done
+
+    # Add includeIf for each non-default profile
+    local i
+    for (( i=0; i<PROFILE_COUNT; i++ )); do
+        local label="${PROFILE_LABELS[$i]}"
+        local dir="${PROFILE_DIRS[$i]}"
+
+        if [[ -n "$dir" ]]; then
+            if [[ "$GITSETU_OS" == "gitbash" ]] && [[ "$dir" =~ ^/([a-zA-Z])/(.*) ]]; then
+                local drive="${BASH_REMATCH[1]}"
+                local rest="${BASH_REMATCH[2]}"
+                drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
+                dir="${drive}:/${rest}"
+            fi
+            # Ensure trailing slash for gitdir matching
+            if [[ "$dir" != */ ]]; then
+                dir="${dir}/"
+            fi
+            
+            # Sanitize newlines to prevent Git INI format corruption
+            dir="${dir//$'\n'/}"
+            
+            local escaped_dir="${dir//\\/\\\\}"
+            escaped_dir="${escaped_dir//\"/\\\"}"
+
+            local path="${GITSETU_PROFILES_DIR}/${label}.gitconfig"
+            path=$(normalize_path "$path")
+            local escaped_path="${path//\\/\\\\}"
+            escaped_path="${escaped_path//\"/\\\"}"
+
+            cat <<EOF
+
+[includeIf "${gitdir_kw}${escaped_dir}"]
+    path = "${escaped_path}"
+EOF
+        fi
+    done
+
+    # Close managed block
+    printf '%s\n' "${GITSETU_MANAGED_END}"
+}
+
+# ------------------------------------------------------------------------------
+# write_global_gitconfig — Write/update ~/.gitconfig
+#
+# Strategy:
+#   - If ~/.gitconfig exists with non-managed content: PRESERVE it,
+#     only replace the managed block
+#   - If ~/.gitconfig exists with managed block: replace managed block
+#   - If no ~/.gitconfig: create fresh with only the managed block
+#
+# Usage: write_global_gitconfig
+# ------------------------------------------------------------------------------
+write_global_gitconfig() {
+    local gitconfig="$HOME/.gitconfig"
+    local managed_block
+    managed_block=$(build_global_gitconfig_block)
+
+    # Dry run
+    if [[ "$GITSETU_DRY_RUN" -eq 1 ]]; then
+        print_info "[DRY RUN] Would update: $gitconfig"
+        print_info "[DRY RUN] Managed block contents:"
+        local line
+        while IFS= read -r line; do
+            printf >&2 '    %s\n' "$line"
+        done < <(printf '%s\n' "$managed_block")
+        return 0
+    fi
+
+    # Backup existing
+    if [[ -f "$gitconfig" ]]; then
+        backup_file "$gitconfig"
+    fi
+
+    if [[ -f "$gitconfig" ]] && grep -q "\[gitsetu:managed:start\]" "$gitconfig" 2>/dev/null; then
+        # File exists WITH managed block → replace it
+        local tmp_file
+        tmp_file=$(mktemp "${gitconfig}.tmp.XXXXXX")
+        GITSETU_CLEANUP_FILES+=("$tmp_file")
+        export MANAGED_BLOCK="$managed_block"
+        awk '
+            BEGIN { in_block=0; buffer=""; written=0 }
+            /\[gitsetu:managed:start\]/ {
+                if (!written) {
+                    in_block=1
+                    buffer = $0 "\n"
+                    next
+                }
+            }
+            in_block {
+                buffer = buffer $0 "\n"
+                if (/\[gitsetu:managed:end\]/) {
+                    print ENVIRON["MANAGED_BLOCK"]
+                    in_block=0
+                    written=1
+                    buffer=""
+                }
+                next
+            }
+            !in_block { print }
+            END {
+                if (in_block) {
+                    printf "%s", buffer
+                }
+                if (!written) {
+                    print "\n" ENVIRON["MANAGED_BLOCK"]
+                }
+            }
+        ' "$gitconfig" > "$tmp_file"
+
+        mv "$tmp_file" "$gitconfig"
+        unset MANAGED_BLOCK
+        print_success "Updated managed block in: $gitconfig"
+
+    elif [[ -f "$gitconfig" ]]; then
+        # File exists WITHOUT managed block → append
+        printf '\n%s\n' "$managed_block" >> "$gitconfig"
+        print_success "Appended managed block to: $gitconfig"
+
+    else
+        # No file → create fresh
+        printf '%s\n' "$managed_block" > "$gitconfig"
+        print_success "Created: $gitconfig"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# build_profile_gitconfig — Generate a per-profile gitconfig
+#
+# Contains [user] and [core] sshCommand specific to this profile.
+# This file is referenced by includeIf in the global gitconfig.
+#
+# Usage: content=$(build_profile_gitconfig "pro" "Bhaskar Jha" "bhaskar@email.com")
+# ------------------------------------------------------------------------------
+build_profile_gitconfig() {
+    local label="$1"
+    local name="$2"
+    local email="$3"
+    local sign_commits="${4:-0}"
+    local key_path="${5:-$HOME/.ssh/id_ed25519_${label}}"
+
+    # Convert key_path to portable tilde notation
+    local portable_key="$key_path"
+    if [[ "$key_path" == "$HOME/.ssh/"* ]] || [[ "$key_path" =~ (\.ssh/.*)$ ]]; then
+        portable_key="~/.ssh/${key_path##*/}"
+    elif [[ "$key_path" == "$HOME/"* ]]; then
+        portable_key="~/${key_path#"$HOME"/}"
+    fi
+    local safe_ssh_key="$portable_key"
+    if [[ "$safe_ssh_key" == *" "* ]]; then
+        safe_ssh_key="\"${safe_ssh_key}\""
+    fi
+
+    # NOTE: `provider` and `provider_user` are NOT parameters of this function.
+    # They are accessed via Bash's dynamic scoping from the calling function
+    # `write_profile_gitconfig()`, which declares them as local variables.
+    # This is intentional to keep the parameter list manageable.
+
+    cat <<EOF
+${GITSETU_MANAGED_START} Profile: ${label}
+# Generated by gitsetu v${GITSETU_VERSION} on $(date +%Y-%m-%d)
+# This config is auto-included when working in the '${label}' directory.
+
+[user]
+    name = ${name}
+    email = ${email}
+EOF
+
+    if [[ "$sign_commits" == "1" ]]; then
+        cat <<EOF
+    signingkey = ${portable_key}.pub
+
+[gpg]
+    format = ssh
+
+[commit]
+    gpgsign = true
+EOF
+    fi
+
+    cat <<EOF
+
+[core]
+    sshCommand = ssh -i ${safe_ssh_key}
+EOF
+
+    if [[ -n "${provider_user:-}" ]] && [[ -n "${provider:-}" ]]; then
+        cat <<EOF
+
+[credential "https://${provider}"]
+    username = ${provider_user}
+EOF
+    fi
+
+    cat <<EOF
+${GITSETU_MANAGED_END} Profile: ${label}
+EOF
+}
+
+# ------------------------------------------------------------------------------
+# write_profile_gitconfig — Write a per-profile gitconfig file
+#
+# Creates: ~/.config/gitsetu/profiles/<label>.gitconfig
+#
+# Usage: write_profile_gitconfig "pro" "Bhaskar Jha" "bhaskar@email.com"
+# ------------------------------------------------------------------------------
+write_profile_gitconfig() {
+    local label="$1"
+    local name="$2"
+    local email="$3"
+    local sign_commits="${4:-0}"
+    local key_path="${5:-$HOME/.ssh/id_ed25519_${label}}"
+    local provider="${6:-}"
+    local provider_user="${7:-}"
+    local profile_path="$GITSETU_PROFILES_DIR/${label}.gitconfig"
+
+    local content
+    content=$(build_profile_gitconfig "$label" "$name" "$email" "$sign_commits" "$key_path")
+
+    if [[ "$GITSETU_DRY_RUN" -eq 1 ]]; then
+        print_info "[DRY RUN] Would create: $profile_path"
+        return 0
+    fi
+
+    ensure_dirs
+    printf '%s\n' "$content" > "$profile_path"
+    print_success "Created profile config: $profile_path"
+}
+
+# ------------------------------------------------------------------------------
+# write_profiles_conf — Write the profile registry file
+#
+# Format: label:email:directory (one per line)
+# Used by the guard hook to validate identities.
+#
+# Usage: write_profiles_conf
+# ------------------------------------------------------------------------------
+write_profiles_conf() {
+    if [[ "$GITSETU_DRY_RUN" -eq 1 ]]; then
+        print_info "[DRY RUN] Would create: $GITSETU_PROFILES_CONF"
+        return 0
+    fi
+
+    ensure_dirs
+
+    local tmp_file
+    tmp_file=$(mktemp "${GITSETU_PROFILES_CONF}.tmp.XXXXXX")
+    GITSETU_CLEANUP_FILES+=("$tmp_file")
+
+    # Write header
+    cat > "$tmp_file" <<EOF
+# gitsetu profile registry — generated on $(date +%Y-%m-%d)
+# Format: label:email:directory:provider:sign_commits:key_path:provider_user
+# Used by the pre-commit guard hook
+EOF
+
+    local i
+    for (( i=0; i<PROFILE_COUNT; i++ )); do
+        local label="${PROFILE_LABELS[$i]}"
+        local email="${PROFILE_EMAILS[$i]}"
+        local dir="${PROFILE_DIRS[$i]}"
+        local provider="${PROFILE_PROVIDERS[$i]:-github.com}"
+        local sign_commits="${PROFILE_SIGNS[$i]:-0}"
+        local key_path="${PROFILE_KEYS[$i]:-~/.ssh/id_ed25519_${label}}"
+        local provider_user="${PROFILE_USERS[$i]:-}"
+        
+        # We leave the email column empty in the registry to prevent dual-state desynchronization.
+        # It will be dynamically parsed from profile.gitconfig at runtime.
+        printf '%s::%s:%s:%s:%s:%s\n' "$label" "$dir" "$provider" "$sign_commits" "$key_path" "$provider_user" >> "$tmp_file"
+        
+        # Write the gitconfig (now with provider and provider_user)
+        write_profile_gitconfig "$label" "${PROFILE_NAMES[$i]}" "${PROFILE_EMAILS[$i]}" "$sign_commits" "$key_path" "$provider" "$provider_user"
+    done
+
+    mv "$tmp_file" "$GITSETU_PROFILES_CONF"
+    print_success "Created profile registry: $GITSETU_PROFILES_CONF"
+
+    # Clean up orphaned profile configs
+    if [[ -d "$GITSETU_PROFILES_DIR" ]]; then
+        local pfile plabel pfound j
+        for pfile in "$GITSETU_PROFILES_DIR"/*.gitconfig; do
+            [[ -f "$pfile" ]] || continue
+            plabel=$(basename "$pfile" .gitconfig)
+            pfound=0
+            for (( j=0; j<PROFILE_COUNT; j++ )); do
+                if [[ "${PROFILE_LABELS[j]}" == "$plabel" ]]; then
+                    pfound=1
+                    break
+                fi
+            done
+            if [[ "$pfound" -eq 0 ]]; then
+                rm -f "$pfile"
+            fi
+        done
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# Inlined Module: lib/guard.sh
+# ------------------------------------------------------------------------------
+# lib/guard.sh — Pre-commit identity guard hook
+#
+# Installs a global pre-commit hook that warns when the current
+# git user.email doesn't match the expected profile for the directory.
+# Uses core.hooksPath to apply globally (no per-repo setup needed).
+# Bash 3.2 compatible.
+
+# ------------------------------------------------------------------------------
+# install_guard — Install the pre-commit identity guard hook
+#
+# Creates hook script in $GITSETU_HOOKS_DIR/pre-commit
+# Sets git config --global core.hooksPath to point to that directory.
+#
+# Usage: install_guard
+# ------------------------------------------------------------------------------
+install_guard() {
+    local hook_path="$GITSETU_HOOKS_DIR/pre-commit"
+
+    # Check if core.hooksPath is already set to something else
+    local existing_hooks_path
+    existing_hooks_path=$(git config --global core.hooksPath 2>/dev/null || true)
+
+    if [[ -n "$existing_hooks_path" ]] && [[ "$existing_hooks_path" != "$GITSETU_HOOKS_DIR" ]]; then
+        print_warning "core.hooksPath is already set to: $existing_hooks_path"
+        if ! confirm "Override with gitsetu hooks directory?" "n"; then
+            print_info "Guard hook installation skipped."
+            return 0
+        fi
+    fi
+
+    if [[ "$GITSETU_DRY_RUN" -eq 1 ]]; then
+        print_info "[DRY RUN] Would install guard hook at: $hook_path"
+        print_info "[DRY RUN] Would set core.hooksPath = $GITSETU_HOOKS_DIR"
+        return 0
+    fi
+
+    ensure_dirs
+
+    # Write the hook script
+    cat > "$hook_path" <<'HOOK_SCRIPT'
+#!/usr/bin/env bash
+# [gitsetu:managed] Pre-commit identity guard
+# Checks if current user.email matches expected profile for this directory.
+# Installed by: gitsetu guard --install
+# Remove with:  gitsetu guard --uninstall
+
+set -euo pipefail
+
+# Find the profiles.conf
+GITSETU_CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu"
+GITSETU_CONF="$GITSETU_CONF_DIR/profiles.conf"
+
+if [[ ! -f "$GITSETU_CONF" ]]; then
+    # No config found — block commit to ensure zero-trust policy.
+    printf "\033[0;31m[GitSetu Guard] ERROR: Identity configuration not found at %s\033[0m\n" "$GITSETU_CONF" >&2
+    printf "If you uninstalled GitSetu, run: \033[1mgit config --global --unset core.hooksPath\033[0m\n" >&2
+    printf "To bypass this check once, use: \033[1mgit commit --no-verify\033[0m\n" >&2
+    exit 1
+fi
+
+# Get the current git directory (absolute path)
+current_dir=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+
+# Detect case-insensitivity (Windows / macOS)
+is_case_insensitive=0
+case "${OSTYPE:-}" in
+    msys*|mingw*|cygwin*|darwin*)
+        is_case_insensitive=1
+        ;;
+    *)
+        u=$(uname -s 2>/dev/null || true)
+        case "$u" in
+            MSYS*|MINGW*|CYGWIN*|Darwin*)
+                is_case_insensitive=1
+                ;;
+        esac
+        ;;
+esac
+
+# Normalize current directory
+current_norm="${current_dir//\\//}"
+if [[ "$current_norm" =~ ^/([a-zA-Z])/(.*) ]]; then
+    c_letter=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
+    current_norm="${c_letter}:/${BASH_REMATCH[2]}"
+elif [[ "$current_norm" =~ ^([a-zA-Z]):/(.*) ]]; then
+    c_letter=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
+    current_norm="${c_letter}:/${BASH_REMATCH[2]}"
+fi
+current_slash="${current_norm%/}/"
+
+# Get the configured email for this repo
+actual_email=$(git config user.email 2>/dev/null || true)
+
+if [[ -z "$actual_email" ]]; then
+    # No email configured — git will error anyway
+    exit 0
+fi
+
+# Search profiles.conf for a matching directory (longest prefix match wins)
+expected_email=""
+expected_label=""
+max_len=0
+
+raw_line=""
+while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+    # Skip comments and empty lines
+    [[ "$raw_line" == "#"* ]] && continue
+    [[ -z "$raw_line" ]] && continue
+    
+    clean_line=$(printf '%s' "$raw_line" | sed -E 's/:([a-zA-Z]):/:\1#DRIVE#/g')
+    IFS=: read -r label email dir provider _rest <<< "$clean_line"
+    dir="${dir//#DRIVE#/:}"
+    
+    # Skip manual mode profiles (no directory)
+    [[ -z "$dir" ]] && continue
+
+    # Normalize Windows drive letters and slashes
+    dir_norm="${dir//\\//}"
+    if [[ "$dir_norm" =~ ^/([a-zA-Z])/(.*) ]]; then
+        d_letter=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
+        dir_norm="${d_letter}:/${BASH_REMATCH[2]}"
+    elif [[ "$dir_norm" =~ ^([a-zA-Z]):/(.*) ]]; then
+        d_letter=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
+        dir_norm="${d_letter}:/${BASH_REMATCH[2]}"
+    fi
+    dir_slash="${dir_norm%/}/"
+
+    check_current="$current_slash"
+    check_target="$dir_slash"
+    if [[ "$is_case_insensitive" -eq 1 ]]; then
+        check_current=$(printf '%s' "$check_current" | tr '[:upper:]' '[:lower:]')
+        check_target=$(printf '%s' "$check_target" | tr '[:upper:]' '[:lower:]')
+    fi
+
+    # Check if current dir is under this profile's directory
+    if [[ "$check_current" == "$check_target"* ]]; then
+        dir_len=${#dir_slash}
+        if [[ $dir_len -gt $max_len ]]; then
+            max_len=$dir_len
+            expected_label="$label"
+            # Extract email from the local profile.gitconfig to avoid dual-state desync
+            expected_email=$(git config -f "$GITSETU_CONF_DIR/profiles/${label}.gitconfig" user.email 2>/dev/null || true)
+            
+            # If the local config doesn't exist or doesn't have an email, fallback to the registry one (legacy)
+            if [[ -z "$expected_email" && -n "$email" ]]; then
+                expected_email="$email"
+            fi
+        fi
+    fi
+done < "$GITSETU_CONF"
+
+# If no profile matched this directory, allow commit
+if [[ -z "$expected_email" ]]; then
+    exit 0
+fi
+
+# Compare
+if [[ "$actual_email" != "$expected_email" ]]; then
+    printf '\n'
+    printf '  \033[0;33m⚠\033[0m  \033[1mgitsetu: Identity mismatch detected!\033[0m\n'
+    printf '     Expected: \033[0;32m%s\033[0m (profile: %s)\n' "$expected_email" "$expected_label"
+    printf '     Actual:   \033[0;31m%s\033[0m\n' "$actual_email"
+    printf '\n'
+    printf '     Run \033[1mgitsetu status\033[0m to investigate.\n'
+    printf '     Use \033[2m--no-verify\033[0m to skip this check.\n'
+    printf '\n'
+    exit 1
+fi
+
+# --- Pass-through to local repository hook ---
+# If the repo has its own pre-commit hook (e.g., Husky, Lefthook), we MUST run it
+local_hooks_path=$(git config --local core.hooksPath 2>/dev/null || echo ".git/hooks")
+
+# Resolve absolute path for local hook
+if [[ "$local_hooks_path" != /* ]]; then
+    local_hooks_path="$current_dir/$local_hooks_path"
+fi
+
+if [[ -x "$local_hooks_path/pre-commit" ]]; then
+    "$local_hooks_path/pre-commit" "$@"
+    exit_code=$?
+    if [[ $exit_code -ne 0 ]]; then
+        exit $exit_code
+    fi
+fi
+
+exit 0
+HOOK_SCRIPT
+
+    chmod +x "$hook_path"
+    local hooks_dir
+    hooks_dir=$(normalize_path "$GITSETU_HOOKS_DIR")
+    git config --global core.hooksPath "$hooks_dir"
+
+    print_success "Guard hook installed: $hook_path"
+    print_info "All repos will now check identity before commits."
+    print_info "Use 'gitsetu guard --uninstall' to remove."
+}
+
+# ------------------------------------------------------------------------------
+# uninstall_guard — Remove the pre-commit identity guard hook
+#
+# Removes the hook file and unsets core.hooksPath (only if it was gitsetu's).
+#
+# Usage: uninstall_guard
+# ------------------------------------------------------------------------------
+uninstall_guard() {
+    local hook_path="$GITSETU_HOOKS_DIR/pre-commit"
+
+    if [[ "$GITSETU_DRY_RUN" -eq 1 ]]; then
+        print_info "[DRY RUN] Would remove: $hook_path"
+        print_info "[DRY RUN] Would unset core.hooksPath"
+        return 0
+    fi
+
+    # Remove hook file
+    if [[ -f "$hook_path" ]]; then
+        rm -f "$hook_path"
+        print_success "Removed guard hook: $hook_path"
+    else
+        print_info "No guard hook found at: $hook_path"
+    fi
+
+    # Unset core.hooksPath only if it points to our directory
+    local current_hooks_path
+    current_hooks_path=$(git config --global core.hooksPath 2>/dev/null || true)
+    
+    # Normalize slashes for Windows Git Bash paths (C:\ vs C:/ vs /c/)
+    local normalized_current="${current_hooks_path//\\//}"
+    local normalized_target="${GITSETU_HOOKS_DIR//\\//}"
+
+    # Match exact path or suffix (to handle Windows C:/ vs /c/ drive letter differences)
+    if [[ "$normalized_current" == "$normalized_target" ]] || [[ "$normalized_current" == *"/gitsetu/hooks" ]]; then
+        git config --global --unset core.hooksPath
+        print_success "Unset core.hooksPath"
+    elif [[ -n "$current_hooks_path" ]]; then
+        print_warning "core.hooksPath points to '$current_hooks_path' (not gitsetu). Leaving it."
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# Inlined Module: lib/doctor.sh
+# ------------------------------------------------------------------------------
+# lib/doctor.sh — GitSetu Diagnostics Module
+#
+# Analyzes the current environment to help users troubleshoot Git identity issues.
+
+# ------------------------------------------------------------------------------
+# run_doctor — Execute system diagnostics
+# ------------------------------------------------------------------------------
+run_doctor() {
+    print_section "GitSetu Diagnostics (Doctor)"
+
+    # 1. Determine active profile based on PWD
+    local current_dir="$PWD"
+    if [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]]; then
+        current_dir=$(pwd -W 2>/dev/null || echo "$current_dir")
+    fi
+    current_dir="$(normalize_path "$current_dir")"
+    local active_profile="global"
+    local active_dir="[Global Fallback]"
+    
+    local i
+    # Iterate backwards so more specific (later) profiles win
+    for (( i=PROFILE_COUNT-1; i>=1; i-- )); do
+        local dir="${PROFILE_DIRS[$i]}"
+        local check_pwd="$current_dir"
+        local check_dir="$dir"
+        if [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]]; then
+            check_pwd=$(printf '%s' "$check_pwd" | tr '[:upper:]' '[:lower:]')
+            check_dir=$(printf '%s' "$check_dir" | tr '[:upper:]' '[:lower:]')
+        fi
+        if [[ -n "$dir" ]] && { [[ "$check_pwd/" == "$check_dir/"* ]] || [[ "$check_pwd" == "$check_dir" ]]; }; then
+            active_profile="${PROFILE_LABELS[$i]}"
+            active_dir="$dir"
+            break
+        fi
+    done
+
+    printf >&2 "  %bDirectory Match:%b\n" "$BOLD" "$RESET"
+    printf >&2 "    Current PWD: %s\n" "$current_dir"
+    printf >&2 "    Active Profile: %b%s%b\n" "$GREEN" "$active_profile" "$RESET"
+    if [[ "$active_profile" != "global" ]]; then
+        printf >&2 "    Matched Rule: %s\n" "$active_dir"
+    else
+        printf >&2 "    Matched Rule: No profile directory matched, falling back to global.\n"
+    fi
+    printf >&2 "\n"
+
+    # 2. Check Git resolution
+    printf >&2 "  %bGit Identity Resolution:%b\n" "$BOLD" "$RESET"
+    
+    local resolved_name
+    local resolved_email
+    local resolved_key
+
+    if command -v git >/dev/null 2>&1; then
+        resolved_name=$(git config user.name 2>/dev/null || echo "(Not Configured)")
+        resolved_email=$(git config user.email 2>/dev/null || echo "(Not Configured)")
+        resolved_key=$(git config core.sshCommand 2>/dev/null | awk -F '-i ' '{print $2}' | awk '{print $1}' || echo "(Not Configured)")
+        
+        printf >&2 "    Resolved Name: %s\n" "$resolved_name"
+        printf >&2 "    Resolved Email: %s\n" "$resolved_email"
+        printf >&2 "    Resolved Key: %s\n" "$resolved_key"
+    else
+        printf >&2 "    %bGit is not installed or not in PATH!%b\n" "$RED" "$RESET"
+    fi
+    printf >&2 "\n"
+
+    # 3. Check SSH Agent Status
+    printf >&2 "  %bSSH Agent Status:%b\n" "$BOLD" "$RESET"
+    
+    if [[ -z "${SSH_AUTH_SOCK:-}" ]]; then
+        printf >&2 "    %bWARNING: SSH_AUTH_SOCK is not set. The ssh-agent is not running!%b\n" "$YELLOW" "$RESET"
+        printf >&2 "    Run: eval \"\$(ssh-agent -s)\"\n"
+    else
+        printf >&2 "    Status: Running (Socket: %s)\n" "$SSH_AUTH_SOCK"
+        
+        local loaded_keys
+        loaded_keys=$(ssh-add -l 2>/dev/null || true)
+        
+        if [[ "$loaded_keys" == *"The agent has no identities"* ]] || [[ -z "$loaded_keys" ]]; then
+            printf >&2 "    Loaded Keys: %bNone!%b\n" "$YELLOW" "$RESET"
+            printf >&2 "    Run: ssh-add ~/.ssh/id_ed25519_%s\n" "$active_profile"
+        else
+            printf >&2 "    Loaded Keys:\n"
+            printf '%s\n' "$loaded_keys" | while read -r line; do
+                printf >&2 "      - %s\n" "$line"
+            done
+        fi
+    fi
+    
+    printf >&2 "\n"
+    
+    # 4. Check Config Integrity
+    printf >&2 "  %bGitSetu Integrity:%b\n" "$BOLD" "$RESET"
+    if [[ ! -f "$GITSETU_PROFILES_CONF" ]]; then
+        printf >&2 "    %bERROR: Registry missing at %s%b\n" "$RED" "$GITSETU_PROFILES_CONF" "$RESET"
+    else
+        printf >&2 "    Registry: OK\n"
+    fi
+    
+    if grep -qF "${GITSETU_MANAGED_START}" "$HOME/.gitconfig" 2>/dev/null; then
+        printf >&2 "    ~/.gitconfig: OK (Managed blocks present)\n"
+    else
+        printf >&2 "    ~/.gitconfig: %bWARNING (Managed blocks missing)%b\n" "$YELLOW" "$RESET"
+    fi
+
+    local include_directive="Include ~/.config/gitsetu/profiles/ssh_config"
+    if grep -qF "$include_directive" "$HOME/.ssh/config" 2>/dev/null || grep -qF "Include $GITSETU_PROFILES_DIR/ssh_config" "$HOME/.ssh/config" 2>/dev/null; then
+        printf >&2 "    ~/.ssh/config: OK (Include directive present)\n"
+    else
+        printf >&2 "    ~/.ssh/config: %bWARNING (Include directive missing)%b\n" "$YELLOW" "$RESET"
+    fi
+    
+    printf >&2 "\n"
+}
+
+# ------------------------------------------------------------------------------
+# Inlined Module: lib/verify.sh
+# ------------------------------------------------------------------------------
+# lib/verify.sh — Post-setup verification and connectivity tests
+#
+# Checks SSH keys, git config, and SSH connectivity for all profiles.
+# Bash 3.2 compatible.
+
+# ------------------------------------------------------------------------------
+# verify_ssh_keys — Check that expected SSH key files exist with correct perms
+#
+# Returns: 0 if all OK, 1 if any issues found
+# ------------------------------------------------------------------------------
+verify_ssh_keys() {
+    local issues=0
+    local i
+
+    for (( i=0; i<PROFILE_COUNT; i++ )); do
+        local label="${PROFILE_LABELS[$i]}"
+        local key_path="${PROFILE_KEYS[$i]:-$HOME/.ssh/id_ed25519_${label}}"
+        local pub_path="${key_path}.pub"
+
+        # Private key exists?
+        if [[ ! -f "$key_path" ]]; then
+            print_error "Missing private key: $key_path"
+            issues=$((issues + 1))
+            continue
+        fi
+
+        # Public key exists?
+        if [[ ! -f "$pub_path" ]]; then
+            print_error "Missing public key: $pub_path"
+            issues=$((issues + 1))
+            continue
+        fi
+
+        # Check private key permissions (should be 600, or 644 under Git Bash NTFS emulation)
+        local perms
+        perms=$(stat -c '%a' "$key_path" 2>/dev/null || stat -f '%Lp' "$key_path" 2>/dev/null || echo "???")
+        if [[ "$GITSETU_OS" == "gitbash" ]] && [[ "$perms" == "644" || "$perms" == "600" ]]; then
+            : # Normal under Windows MSYS NTFS emulation
+        elif [[ "$perms" != "600" ]]; then
+            print_warning "Incorrect permissions on $key_path: $perms (should be 600)"
+            issues=$((issues + 1))
+        fi
+    done
+
+    return "$issues"
+}
+
+# ------------------------------------------------------------------------------
+# verify_git_config — Check that git config returns expected values
+#
+# For each profile directory (if it exists and contains git repos),
+# verifies that git config user.email returns the expected value.
+#
+# Returns: 0 if all OK, 1 if any issues found
+# ------------------------------------------------------------------------------
+verify_git_config() {
+    local issues=0
+    local i
+
+    # Check global config exists
+    if [[ ! -f "$HOME/.gitconfig" ]]; then
+        print_error "Global gitconfig not found: ~/.gitconfig"
+        return 1
+    fi
+
+    # Check profile configs exist
+    for (( i=0; i<PROFILE_COUNT; i++ )); do
+
+        local label="${PROFILE_LABELS[$i]}"
+        local profile_path="$GITSETU_PROFILES_DIR/${label}.gitconfig"
+
+        if [[ ! -f "$profile_path" ]]; then
+            print_error "Missing profile config: $profile_path"
+            issues=$((issues + 1))
+        fi
+    done
+
+    # Verify includeIf works in actual git repos (if any exist)
+    for (( i=0; i<PROFILE_COUNT; i++ )); do
+
+        local label="${PROFILE_LABELS[$i]}"
+        local email="${PROFILE_EMAILS[$i]}"
+        local dir="${PROFILE_DIRS[$i]}"
+
+        # Skip manual mode profiles
+        if [[ -z "$dir" ]]; then
+            continue
+        fi
+
+        # Find first git repo in the profile directory
+        if [[ -d "$dir" ]]; then
+            local repo_dir
+            repo_dir=$(find "$dir" -maxdepth 2 -name ".git" -type d 2>/dev/null | head -n1)
+            if [[ -n "$repo_dir" ]]; then
+                repo_dir=$(dirname "$repo_dir")
+                local actual_email
+                actual_email=$(git -C "$repo_dir" config user.email 2>/dev/null || echo "")
+
+                if [[ "$actual_email" == "$email" ]]; then
+                    print_success "Profile '$label': git config correct in $repo_dir"
+                elif [[ -z "$actual_email" ]]; then
+                    print_warning "Profile '$label': no email configured in $repo_dir"
+                    issues=$((issues + 1))
+                else
+                    print_error "Profile '$label': expected '$email', got '$actual_email' in $repo_dir"
+                    issues=$((issues + 1))
+                fi
+            fi
+        fi
+    done
+
+    return "$issues"
+}
+
+# ------------------------------------------------------------------------------
+# verify_ssh_connectivity — Test SSH connection to GitHub for each profile
+#
+# Runs ssh -T with a timeout to test authentication.
+# Parses output to distinguish: authenticated, key not added, timeout, error.
+#
+# Returns: 0 if all OK, 1 if any issues
+# ------------------------------------------------------------------------------
+verify_ssh_connectivity() {
+    local issues=0
+    local i
+
+    for (( i=0; i<PROFILE_COUNT; i++ )); do
+        local label="${PROFILE_LABELS[$i]}"
+        local provider="${PROFILE_PROVIDERS[$i]:-github.com}"
+        
+        local prefix
+        prefix=$(printf '%s' "$provider" | cut -d'.' -f1)
+        local host="${prefix}-${label}"
+
+        local tmp_out
+        tmp_out=$(mktemp)
+        GITSETU_CLEANUP_FILES+=("$tmp_out")
+        
+        # Hide cursor
+        printf '\033[?25l' >&2
+        
+        ssh -T -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR "git@${host}" >"$tmp_out" 2>&1 &
+        local pid=$!
+        
+        local spinstr='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+        while kill -0 "$pid" 2>/dev/null; do
+            local temp=${spinstr#?}
+            printf >&2 '\r  %b%c%b Testing SSH: %s ... ' "$CYAN" "${spinstr:0:1}" "$RESET" "$host"
+            local spinstr=$temp${spinstr:0:1}
+            sleep 0.1
+        done
+        wait "$pid" || true
+        
+        # Show cursor, clear line, and print clean base text
+        printf '\033[?25h\r\033[K' >&2
+        printf >&2 '  Testing SSH: %s ... ' "$host"
+        
+        local output
+        output=$(cat "$tmp_out")
+        rm -f "$tmp_out"
+
+        if printf '%s' "$output" | grep -qi "successfully authenticated\|logged in as\|welcome to"; then
+            printf >&2 '%b%s authenticated%b\n' "$GREEN" "$SYM_CHECK" "$RESET"
+        elif printf '%s' "$output" | grep -qi "permission denied"; then
+            printf >&2 '%b%s key not added to %s%b\n' "$YELLOW" "$SYM_WARN" "$provider" "$RESET"
+            issues=$((issues + 1))
+        elif printf '%s' "$output" | grep -qi "could not resolve\|connection refused\|timed out"; then
+            printf >&2 '%b%s connection failed%b\n' "$RED" "$SYM_CROSS" "$RESET"
+            issues=$((issues + 1))
+        else
+            printf >&2 '%b%s unknown response%b\n' "$DIM" "$SYM_INFO" "$RESET"
+            issues=$((issues + 1))
+        fi
+    done
+
+    return "$issues"
+}
+
+# ------------------------------------------------------------------------------
+# verify_all — Run all verification checks and print a summary table
+#
+# Usage: verify_all
+# Returns: 0 if all checks pass, 1 if any fail
+# ------------------------------------------------------------------------------
+verify_all() {
+    print_section "Verification Results"
+
+    local total_issues=0
+
+    # Header
+    printf >&2 '  %-12s %-30s %-10s %-10s %-12s\n' \
+        "Profile" "Email" "SSH Key" "Perms" "Config"
+    printf >&2 '  %-12s %-30s %-10s %-10s %-12s\n' \
+        "-------" "-----" "-------" "-----" "------"
+
+    local i
+    for (( i=0; i<PROFILE_COUNT; i++ )); do
+        local label="${PROFILE_LABELS[$i]}"
+        local email="${PROFILE_EMAILS[$i]}"
+        local key_path="${PROFILE_KEYS[$i]:-$HOME/.ssh/id_ed25519_${label}}"
+
+        # Key status
+        local key_status="${GREEN}${SYM_CHECK}${RESET}"
+        if [[ ! -f "$key_path" ]]; then
+            key_status="${RED}${SYM_CROSS}${RESET}"
+            total_issues=$((total_issues + 1))
+        fi
+
+        # Permissions status
+        local perm_status="${GREEN}${SYM_CHECK}${RESET}"
+        if [[ -f "$key_path" ]]; then
+            local perms
+            perms=$(stat -c '%a' "$key_path" 2>/dev/null || stat -f '%Lp' "$key_path" 2>/dev/null || echo "???")
+            if [[ "$perms" != "600" ]]; then
+                perm_status="${YELLOW}${SYM_WARN} ${perms}${RESET}"
+                total_issues=$((total_issues + 1))
+            fi
+        else
+            perm_status="${DIM}-${RESET}"
+        fi
+
+        # Config status
+        local config_status="${GREEN}${SYM_CHECK}${RESET}"
+        local profile_path="$GITSETU_PROFILES_DIR/${label}.gitconfig"
+        if [[ ! -f "$profile_path" ]]; then
+            config_status="${RED}${SYM_CROSS}${RESET}"
+            total_issues=$((total_issues + 1))
+        fi
+
+        printf >&2 "  %-12s %-30s %b     %b     %b\n" \
+            "$label" "$email" "$key_status" "$perm_status" "$config_status"
+    done
+
+    printf >&2 '\n'
+
+    # SSH connectivity
+    print_section "SSH Connectivity"
+    verify_ssh_connectivity || total_issues=$((total_issues + 1))
+
+    # Summary
+    printf >&2 '\n'
+    if [[ "$total_issues" -eq 0 ]]; then
+        print_success "All checks passed!"
+    else
+        print_warning "$total_issues issue(s) found. See above for details."
+    fi
+
+    return "$total_issues"
+}
+
+# ------------------------------------------------------------------------------
+# Inlined Module: lib/teardown.sh
+# ------------------------------------------------------------------------------
+# shellcheck disable=SC2034  # Variables used by sourcing script
+# lib/teardown.sh — Safely remove all GitSetu configurations
+#
+# Removes managed blocks from ~/.gitconfig and ~/.ssh/config,
+# uninstalls the guard hook, and deletes the ~/.config/gitsetu directory.
+# Leaves SSH keys intact but lists them for manual deletion.
+# Bash 3.2 compatible.
+
+# ------------------------------------------------------------------------------
+# teardown_gitconfig — Remove managed block from ~/.gitconfig
+#
+# Usage: teardown_gitconfig
+# ------------------------------------------------------------------------------
+teardown_gitconfig() {
+    local gitconfig="$HOME/.gitconfig"
+
+    if [[ ! -f "$gitconfig" ]]; then
+        print_info "No ~/.gitconfig found, skipping."
+        return 0
+    fi
+
+    if ! grep -q "\[gitsetu:managed:start\]" "$gitconfig" 2>/dev/null; then
+        print_info "No gitsetu managed block found in ~/.gitconfig, skipping."
+        return 0
+    fi
+
+    if [[ "$GITSETU_DRY_RUN" -eq 1 ]]; then
+        print_info "[DRY RUN] Would remove managed block from: $gitconfig"
+        return 0
+    fi
+
+    backup_file "$gitconfig"
+
+    local tmp_file
+    tmp_file=$(mktemp "${gitconfig}.tmp.XXXXXX")
+    GITSETU_CLEANUP_FILES+=("$tmp_file")
+
+    awk '
+        /\[gitsetu:managed:start\]/ {skip=1; next}
+        /\[gitsetu:managed:end\]/   {skip=0; next}
+        !skip                      {print}
+    ' "$gitconfig" > "$tmp_file"
+
+    # If the resulting file is empty or only whitespace, delete it
+    if ! grep -q '[^[:space:]]' "$tmp_file" 2>/dev/null; then
+        rm -f "$tmp_file"
+        rm -f "$gitconfig"
+        print_success "Removed ~/.gitconfig (it was empty after cleanup)"
+    else
+        mv "$tmp_file" "$gitconfig"
+        print_success "Removed managed block from: $gitconfig"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# teardown_sshconfig — Remove managed host blocks from ~/.ssh/config
+#
+# Usage: teardown_sshconfig
+# ------------------------------------------------------------------------------
+teardown_sshconfig() {
+    local ssh_config="$HOME/.ssh/config"
+    local isolated_config="$GITSETU_PROFILES_DIR/ssh_config"
+    local include_path="$isolated_config"
+    if [[ "$isolated_config" == "$HOME/"* ]]; then
+        include_path="~/${isolated_config#"$HOME"/}"
+    elif [[ "$isolated_config" =~ (\.config/.*)$ ]]; then
+        include_path="~/${BASH_REMATCH[1]}"
+    fi
+    local include_directive="Include ${include_path}"
+    local legacy_directive="Include $isolated_config"
+    local default_directive="Include ~/.config/gitsetu/profiles/ssh_config"
+
+    # 1. Delete the isolated file
+    if [[ -f "$isolated_config" ]]; then
+        if [[ "$GITSETU_DRY_RUN" -eq 1 ]]; then
+            print_info "[DRY RUN] Would delete isolated config: $isolated_config"
+        else
+            rm -f "$isolated_config"
+            print_success "Deleted isolated gitsetu SSH config: $isolated_config"
+        fi
+    fi
+
+    if [[ ! -f "$ssh_config" ]]; then
+        print_info "No ~/.ssh/config found, skipping."
+        return 0
+    fi
+
+    # 2. Legacy Migration Cleanup: Just in case they still have old blocks
+    if grep -q "\[gitsetu:managed:start\]" "$ssh_config" 2>/dev/null; then
+        if [[ "$GITSETU_DRY_RUN" -eq 1 ]]; then
+            print_info "[DRY RUN] Would remove legacy managed blocks from: $ssh_config"
+        else
+            backup_file "$ssh_config"
+            local tmp_legacy
+            tmp_legacy=$(mktemp "${ssh_config}.tmp.legacy.XXXXXX")
+            GITSETU_CLEANUP_FILES+=("$tmp_legacy")
+            awk '
+                /\[gitsetu:managed:start\]/ {skip=1; next}
+                /\[gitsetu:managed:end\]/   {skip=0; next}
+                !skip                      {print}
+            ' "$ssh_config" > "$tmp_legacy"
+            mv "$tmp_legacy" "$ssh_config"
+            print_success "Removed legacy managed blocks from: $ssh_config"
+        fi
+    fi
+
+    # 3. Remove the Include directive safely
+    if grep -q -F "$include_directive" "$ssh_config" 2>/dev/null || grep -q -F "$legacy_directive" "$ssh_config" 2>/dev/null || grep -q -F "$default_directive" "$ssh_config" 2>/dev/null; then
+        if [[ "$GITSETU_DRY_RUN" -eq 1 ]]; then
+            print_info "[DRY RUN] Would remove Include directive from: $ssh_config"
+            return 0
+        fi
+
+        backup_file "$ssh_config"
+        local tmp_file
+        tmp_file=$(mktemp "${ssh_config}.tmp.XXXXXX")
+        GITSETU_CLEANUP_FILES+=("$tmp_file")
+
+        grep -v -F "$include_directive" "$ssh_config" | grep -v -F "$legacy_directive" | grep -v -F "$default_directive" > "$tmp_file" || true
+
+        # If the resulting file is empty or only whitespace, delete it
+        if ! grep -q '[^[:space:]]' "$tmp_file" 2>/dev/null; then
+            rm -f "$tmp_file"
+            rm -f "$ssh_config"
+            print_success "Removed ~/.ssh/config (it was empty after cleanup)"
+        else
+            mv "$tmp_file" "$ssh_config"
+            print_success "Removed Include directive from: $ssh_config"
+        fi
+    else
+        print_info "No gitsetu Include directive found in ~/.ssh/config, skipping."
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# teardown_config_dir — Remove ~/.config/gitsetu
+#
+# Usage: teardown_config_dir
+# ------------------------------------------------------------------------------
+teardown_config_dir() {
+    if [[ ! -d "$GITSETU_CONFIG_DIR" ]]; then
+        print_info "Directory $GITSETU_CONFIG_DIR not found, skipping."
+        return 0
+    fi
+
+    if [[ "$GITSETU_DRY_RUN" -eq 1 ]]; then
+        print_info "[DRY RUN] Would completely remove: $GITSETU_CONFIG_DIR"
+        return 0
+    fi
+
+    rm -rf "$GITSETU_CONFIG_DIR"
+    print_success "Removed configuration directory: $GITSETU_CONFIG_DIR"
+}
+
+# ------------------------------------------------------------------------------
+# list_orphaned_keys — Show SSH keys generated by gitsetu
+#
+# Usage: list_orphaned_keys
+# ------------------------------------------------------------------------------
+list_orphaned_keys() {
+    local keys=()
+    local f
+    
+    # Check for keys generated by gitsetu pattern (id_ed25519_<label>)
+    # Ignore the standard id_ed25519 key to avoid false positives
+    if [[ -d "$HOME/.ssh" ]]; then
+        # shellcheck disable=SC2045  # Iterating safely since we control names
+        for f in "$HOME/.ssh"/id_ed25519_*; do
+            if [[ -f "$f" ]] && [[ ! "$f" == *.pub ]] && [[ ! "$f" == *.old.* ]] && [[ "$f" != "$HOME/.ssh/id_ed25519" ]]; then
+                keys+=("$f")
+            fi
+        done
+    fi
+
+    if [[ ${#keys[@]} -gt 0 ]]; then
+        print_section "Action Required: SSH Keys"
+        print_warning "GitSetu has left your SSH keys intact to prevent accidental lockouts."
+        print_info "If you no longer need them, remove them from GitHub/GitLab and delete them locally:"
+        
+        local key
+        for key in "${keys[@]}"; do
+            printf >&2 "    rm %s %s.pub\n" "$key" "$key"
+        done
+        printf >&2 "\n"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# teardown_deep — Remove local overrides from repositories
+#
+# Usage: teardown_deep
+# ------------------------------------------------------------------------------
+teardown_deep() {
+    print_section "Deep Cleanup: Repository Overrides"
+    
+    # We must load profiles to know what directories to scan and what to unset
+    load_profiles 2>/dev/null || return 0
+    
+    if [[ "$PROFILE_COUNT" -eq 0 ]]; then
+        print_info "No profiles found. Skipping deep cleanup."
+        return 0
+    fi
+    
+    local i
+    local found_any=0
+    for (( i=0; i<PROFILE_COUNT; i++ )); do
+        local dir="${PROFILE_DIRS[$i]}"
+        local p_email="${PROFILE_EMAILS[$i]}"
+        local p_key="${PROFILE_KEYS[$i]}"
+        
+        if [[ -n "$dir" ]] && [[ -d "$dir" ]]; then
+            # Prevent catastrophic global traverse DoS
+            # shellcheck disable=SC2088
+            if [[ "$dir" == "/" || "$dir" == "$HOME" || "$dir" == "$HOME/" || "$dir" == "~" || "$dir" == "~/" ]]; then
+                print_warning "Skipping deep cleanup for '$dir' to prevent Denial of Service traversal."
+                continue
+            fi
+            
+            # Find all .git/config in the directory tree
+            local repo_conf
+            while IFS= read -r repo_conf; do
+                [[ -z "$repo_conf" ]] && continue
+                
+                # Check if this repo config has our identity
+                local repo_email repo_key
+                repo_email=$(git config -f "$repo_conf" user.email 2>/dev/null || true)
+                
+                if [[ "$repo_email" == "$p_email" ]]; then
+                    if [[ "$GITSETU_DRY_RUN" -eq 1 ]]; then
+                        print_info "[DRY RUN] Would strip local GitSetu identity from: $repo_conf"
+                    else
+                        git config -f "$repo_conf" --unset user.email 2>/dev/null || true
+                        git config -f "$repo_conf" --unset user.name 2>/dev/null || true
+                        
+                        repo_key=$(git config -f "$repo_conf" core.sshCommand 2>/dev/null || true)
+                        if [[ "$repo_key" == *"ssh -i $p_key"* ]]; then
+                            git config -f "$repo_conf" --unset core.sshCommand 2>/dev/null || true
+                        fi
+                        print_success "Removed local overrides from: $repo_conf"
+                    fi
+                    found_any=1
+                fi
+            done < <(find "$dir" -type f -name config -path "*/.git/config" 2>/dev/null || true)
+        fi
+    done
+    
+    if [[ "$found_any" -eq 0 ]]; then
+        print_info "No local repository overrides found."
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# teardown_all — Main coordinator for teardown
+#
+# Usage: teardown_all [deep]
+# ------------------------------------------------------------------------------
+teardown_all() {
+    local deep="${1:-0}"
+    
+    print_section "Teardown Process"
+    
+    # 1. Uninstall guard hook (relies on config dir existing)
+    uninstall_guard
+    
+    # 2. Clean gitconfig
+    teardown_gitconfig
+    
+    # 3. Clean ssh config
+    teardown_sshconfig
+    
+    # 3.5 Deep cleanup (if requested)
+    if [[ "$deep" == "1" ]]; then
+        teardown_deep
+    fi
+    
+    # 4. Remove config directory (must be last state modifier)
+    teardown_config_dir
+    
+    # 5. Provide final advice on keys
+    list_orphaned_keys
+    
+    if [[ "$GITSETU_DRY_RUN" -eq 0 ]]; then
+        print_success "GitSetu teardown complete."
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# Inlined Module: lib/discovery.sh
+# ------------------------------------------------------------------------------
+# lib/discovery.sh — Auto-discovery engine for GitSetu
+#
+# Scans the system for existing Git configurations, SSH keys,
+# and common workspace directories to pre-populate the setup blueprint.
+
+# ------------------------------------------------------------------------------
+# discover_global_git_identity
+#
+# Returns global name and email from ~/.gitconfig if present.
+# Variables set: DISCOVERED_GLOBAL_NAME, DISCOVERED_GLOBAL_EMAIL
+# ------------------------------------------------------------------------------
+discover_global_git_identity() {
+    DISCOVERED_GLOBAL_NAME=""
+    DISCOVERED_GLOBAL_EMAIL=""
+
+    # 1. Try to read from git config
+    if command -v git >/dev/null 2>&1; then
+        DISCOVERED_GLOBAL_NAME=$(git config --global user.name 2>/dev/null || true)
+        DISCOVERED_GLOBAL_EMAIL=$(git config --global user.email 2>/dev/null || true)
+    fi
+
+    # 1b. Fallback directly to $HOME/.gitconfig if present
+    if [[ -z "$DISCOVERED_GLOBAL_NAME" ]] && [[ -f "$HOME/.gitconfig" ]]; then
+        DISCOVERED_GLOBAL_NAME=$(git config --file "$HOME/.gitconfig" user.name 2>/dev/null || true)
+    fi
+    if [[ -z "$DISCOVERED_GLOBAL_EMAIL" ]] && [[ -f "$HOME/.gitconfig" ]]; then
+        DISCOVERED_GLOBAL_EMAIL=$(git config --file "$HOME/.gitconfig" user.email 2>/dev/null || true)
+    fi
+
+    # 2. If name/email are empty, check if global.gitconfig exists (GitSetu fallback)
+    if [[ -z "$DISCOVERED_GLOBAL_NAME" ]] && [[ -f "$HOME/.config/gitsetu/profiles/global.gitconfig" ]]; then
+        DISCOVERED_GLOBAL_NAME=$(git config --file "$HOME/.config/gitsetu/profiles/global.gitconfig" user.name 2>/dev/null || true)
+    fi
+    if [[ -z "$DISCOVERED_GLOBAL_EMAIL" ]] && [[ -f "$HOME/.config/gitsetu/profiles/global.gitconfig" ]]; then
+        DISCOVERED_GLOBAL_EMAIL=$(git config --file "$HOME/.config/gitsetu/profiles/global.gitconfig" user.email 2>/dev/null || true)
+    fi
+
+    # 3. If email is STILL empty, try to extract it from SSH public keys
+    if [[ -z "$DISCOVERED_GLOBAL_EMAIL" ]]; then
+        local pub_key
+        for pub_key in "$HOME/.ssh/id_ed25519_global.pub" "$HOME/.ssh/id_rsa_global.pub" "$HOME/.ssh/id_ed25519.pub" "$HOME/.ssh/id_rsa.pub"; do
+            if [[ -f "$pub_key" ]]; then
+                local extracted
+                extracted=$(awk '{print $3}' "$pub_key" | grep "@" || true)
+                if [[ -n "$extracted" ]]; then
+                    DISCOVERED_GLOBAL_EMAIL="$extracted"
+                    break
+                fi
+            fi
+        done
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# discover_ssh_keys
+#
+# Scans ~/.ssh/ for ed25519 or rsa keys and returns the best match for a label.
+#
+# Usage: key_path=$(discover_ssh_key_for_label "work")
+# Returns: path or empty string
+# ------------------------------------------------------------------------------
+discover_ssh_key_for_label() {
+    local label="$1"
+    local ssh_dir="$HOME/.ssh"
+    
+    if [[ ! -d "$ssh_dir" ]]; then
+        echo ""
+        return
+    fi
+
+    # Patterns to look for, in order of preference
+    local patterns=(
+        "id_ed25519_sk_${label}"
+        "id_ed25519_${label}"
+        "id_rsa_${label}"
+    )
+
+    local p
+    for p in "${patterns[@]}"; do
+        if [[ -f "$ssh_dir/$p" ]]; then
+            echo "$ssh_dir/$p"
+            return
+        fi
+    done
+
+    echo ""
+}
+
+# ------------------------------------------------------------------------------
+# discover_workspace_dir
+#
+# Checks if common workspace directories exist for a label.
+# e.g. "work" -> ~/work, ~/dev/work
+#
+# Usage: dir=$(discover_workspace_dir "work")
+# Returns: path or empty string
+# ------------------------------------------------------------------------------
+discover_workspace_dir() {
+    local label="$1"
+    
+    # Don't try to guess for generic global labels
+    if [[ "$label" == "global" ]] || [[ "$label" == "default" ]]; then
+        echo ""
+        return
+    fi
+
+    # 1. Parse existing ~/.gitconfig for includeIf paths containing the label
+    if [[ -f "$HOME/.gitconfig" ]]; then
+        local extracted
+        extracted=$(grep -i "includeIf.*gitdir:.*${label}" "$HOME/.gitconfig" | head -n1 | sed 's/.*gitdir:\([^"]*\)".*/\1/' || true)
+        if [[ -n "$extracted" ]]; then
+            extracted="${extracted/#\~/$HOME}"
+            extracted="${extracted%/}"
+            if [[ -d "$extracted" ]]; then
+                echo "$extracted"
+                return
+            fi
+        fi
+        
+        # Or look for exact match if label is something else
+        extracted=$(grep -i "includeIf.*gitdir" "$HOME/.gitconfig" | grep -i "$label" | head -n1 | sed 's/.*gitdir:\([^"]*\)".*/\1/' || true)
+        if [[ -n "$extracted" ]]; then
+            extracted="${extracted/#\~/$HOME}"
+            extracted="${extracted%/}"
+            if [[ -d "$extracted" ]]; then
+                echo "$extracted"
+                return
+            fi
+        fi
+    fi
+
+    # 2. Hardcoded fallback paths
+    local potential_dirs=(
+        "$HOME/$label"
+        "$HOME/dev/$label"
+        "$HOME/Development/$label"
+        "$HOME/workspace/$label"
+        "$HOME/projects/$label"
+    )
+
+    local p
+    for p in "${potential_dirs[@]}"; do
+        if [[ -d "$p" ]]; then
+            echo "$p"
+            return
+        fi
+    done
+
+    echo ""
+}
+
+# ------------------------------------------------------------------------------
+# generate_initial_blueprint
+#
+# Initializes PROFILE_* arrays with discovered defaults if profiles.conf is empty.
+# ------------------------------------------------------------------------------
+generate_initial_blueprint() {
+    # If we already have profiles (from load_profiles), do nothing
+    if [[ "$PROFILE_COUNT" -gt 0 ]]; then
+        return 0
+    fi
+
+    discover_global_git_identity
+
+    # Initialize Global Profile (Index 0)
+    # shellcheck disable=SC2034
+    PROFILE_LABELS[0]="global"
+    # shellcheck disable=SC2034
+    PROFILE_NAMES[0]="${DISCOVERED_GLOBAL_NAME:-}"
+    # shellcheck disable=SC2034
+    PROFILE_EMAILS[0]="${DISCOVERED_GLOBAL_EMAIL:-}"
+    # shellcheck disable=SC2034
+    PROFILE_DIRS[0]=""
+    # shellcheck disable=SC2034
+    PROFILE_PROVIDERS[0]="github.com"
+    # shellcheck disable=SC2034
+    PROFILE_SIGNS[0]="0"
+    
+    local global_key
+    global_key=$(discover_ssh_key_for_label "global")
+    # shellcheck disable=SC2034
+    PROFILE_KEYS[0]="${global_key:-$HOME/.ssh/id_ed25519_global}"
+    # shellcheck disable=SC2034
+    PROFILE_USERS[0]=""
+    # shellcheck disable=SC2034
+    PROFILE_PATS[0]=""
+    
+    PROFILE_COUNT=1
+
+    # Try to discover candidate profiles (work, personal, oss) if directory or key exists
+    local candidate
+    for candidate in "work" "personal" "oss"; do
+        local cand_dir
+        cand_dir=$(discover_workspace_dir "$candidate")
+        local cand_key
+        cand_key=$(discover_ssh_key_for_label "$candidate")
+        
+        if [[ -n "$cand_dir" ]] || [[ -n "$cand_key" ]]; then
+            local idx=$PROFILE_COUNT
+            # shellcheck disable=SC2034
+            PROFILE_LABELS[idx]="$candidate"
+            # shellcheck disable=SC2034
+            PROFILE_NAMES[idx]="${DISCOVERED_GLOBAL_NAME:-}"
+            # shellcheck disable=SC2034
+            PROFILE_EMAILS[idx]=""
+            
+            # Try to extract email from pubkey if available
+            if [[ -n "$cand_key" ]] && [[ -f "${cand_key}.pub" ]]; then
+                local ext_mail
+                ext_mail=$(awk '{print $3}' "${cand_key}.pub" | grep "@" || true)
+                if [[ -n "$ext_mail" ]]; then
+                    # shellcheck disable=SC2034
+                    PROFILE_EMAILS[idx]="$ext_mail"
+                fi
+            fi
+            
+            # shellcheck disable=SC2034
+            PROFILE_DIRS[idx]="${cand_dir:-$HOME/$candidate}"
+            # shellcheck disable=SC2034
+            PROFILE_PROVIDERS[idx]="github.com"
+            # shellcheck disable=SC2034
+            PROFILE_SIGNS[idx]="0"
+            # shellcheck disable=SC2034
+            PROFILE_KEYS[idx]="${cand_key:-$HOME/.ssh/id_ed25519_${candidate}}"
+            # shellcheck disable=SC2034
+            PROFILE_USERS[idx]=""
+            # shellcheck disable=SC2034
+            PROFILE_PATS[idx]=""
+            
+            PROFILE_COUNT=$((PROFILE_COUNT + 1))
+        fi
+    done
+}
+
+# ------------------------------------------------------------------------------
+# Inlined Module: lib/setup.sh
+# ------------------------------------------------------------------------------
+# lib/setup.sh — Interactive Blueprint Dashboard for GitSetu
+#
+# Replaces the linear wizard with a fast "Review & Apply" TUI menu.
+
+# ------------------------------------------------------------------------------
+# render_blueprint_dashboard
+# ------------------------------------------------------------------------------
+render_blueprint_dashboard() {
+    clear || printf '\033c'
+    
+    printf >&2 '\n  %b╔══════════════════════════════════════╗%b\n' "$BOLD" "$RESET"
+    printf >&2 '  %b║  GitSetu Setup Blueprint              ║%b\n' "$BOLD" "$RESET"
+    printf >&2 '  %b╚══════════════════════════════════════╝%b\n\n' "$BOLD" "$RESET"
+
+    if [[ "$PROFILE_COUNT" -eq 0 ]]; then
+        printf >&2 '  No profiles configured.\n\n'
+    fi
+
+    local i
+    for (( i=0; i<PROFILE_COUNT; i++ )); do
+        local label="${PROFILE_LABELS[i]}"
+        local name="${PROFILE_NAMES[i]}"
+        local email="${PROFILE_EMAILS[i]}"
+        local dir="${PROFILE_DIRS[i]}"
+        local key="${PROFILE_KEYS[i]}"
+        
+        local key_status="(Will Generate)"
+        if [[ -f "$key" ]]; then
+            key_status="${GREEN}(Found Existing!)${RESET}"
+        elif [[ "$key" == *"_sk_"* ]]; then
+            key_status="(Will Generate FIDO2)"
+        fi
+        
+        local display_name="${name:-(Not Configured)}"
+        local display_email="${email:-(Not Configured)}"
+        local display_dir="${dir:-[Global Fallback]}"
+        
+        printf >&2 '  %b%s) [%s]%b %s <%s>\n' "$BOLD" "$((i+1))" "$label" "$RESET" "$display_name" "$display_email"
+        printf >&2 '     Key: %s %b\n' "$key" "$key_status"
+        printf >&2 '     Dir: %s\n\n' "$display_dir"
+    done
+
+    printf >&2 '  ──────────────────────────────────────────────────────────\n'
+    printf >&2 '  [A]dd Profile | [E]dit Profile | [R]emove | [S]ecurity \n'
+    printf >&2 '  [H]elp        | [Q]uit         | [ENTER] Apply\n\n'
+}
+
+# ------------------------------------------------------------------------------
+# prompt_edit_profile
+# ------------------------------------------------------------------------------
+prompt_edit_profile() {
+    local i="$1"
+    local label="${PROFILE_LABELS[i]}"
+    
+    printf >&2 '\n  ─── Editing Profile: %b%s%b ───\n' "$BOLD" "$label" "$RESET"
+    
+    # Name
+    ask "Full Name" "${PROFILE_NAMES[i]}"
+    if [[ -n "$REPLY" ]]; then PROFILE_NAMES[i]="$REPLY"; fi
+    
+    # Email
+    ask "Email Address" "${PROFILE_EMAILS[i]}"
+    if [[ -n "$REPLY" ]]; then PROFILE_EMAILS[i]="$REPLY"; fi
+    
+    # Directory (skip for global)
+    if [[ "$i" -ne 0 ]]; then
+        ask "Directory (e.g. ~/work)" "${PROFILE_DIRS[i]}"
+        if [[ -n "$REPLY" ]]; then PROFILE_DIRS[i]=$(normalize_path "$REPLY"); fi
+    fi
+    
+    # Key
+    local def_key="${PROFILE_KEYS[i]}"
+    if confirm "Use a FIDO2 / YubiKey hardware key for this profile?" "n"; then
+        if [[ "$def_key" != *"_sk_"* ]]; then
+            def_key="${def_key/id_ed25519/id_ed25519_sk}"
+        fi
+    else
+        def_key="${def_key/_sk_/}"
+    fi
+    ask "SSH Key Path" "$def_key"
+    if [[ -n "$REPLY" ]]; then PROFILE_KEYS[i]=$(normalize_path "$REPLY"); fi
+
+    # HTTPS PAT Integration
+    ask "Provider Username (e.g. GitHub handle, for HTTPS cloning)" "${PROFILE_USERS[i]:-}"
+    if [[ -n "$REPLY" ]]; then 
+        PROFILE_USERS[i]="$REPLY"
+        if confirm "Would you like to store a Personal Access Token (PAT) for this profile now?" "n"; then
+            ask_password "Enter PAT token"
+            if [[ -n "$REPLY" ]]; then
+                PROFILE_PATS[i]="$REPLY"
+            fi
+        fi
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# prompt_add_profile
+# ------------------------------------------------------------------------------
+prompt_add_profile() {
+    printf >&2 '\n  ─── Adding New Profile ───\n'
+    
+    ask_required "Profile Label (e.g. oss, client)"
+    local label
+    label=$(to_lower "$REPLY")
+    
+    while ! validate_label "$label" || array_contains "$label" "${PROFILE_LABELS[@]+"${PROFILE_LABELS[@]}"}"; do
+        print_warning "Invalid or duplicate label."
+        ask_required "Profile Label"
+        label=$(to_lower "$REPLY")
+    done
+    
+    PROFILE_LABELS[PROFILE_COUNT]="$label"
+    
+    # Default name to global
+    local def_name="${PROFILE_NAMES[0]}"
+    ask "Full Name" "$def_name"
+    PROFILE_NAMES[PROFILE_COUNT]="$REPLY"
+    
+    ask "Email Address" ""
+    PROFILE_EMAILS[PROFILE_COUNT]="$REPLY"
+    
+    local def_dir="$HOME/$label"
+    ask "Directory" "$def_dir"
+    PROFILE_DIRS[PROFILE_COUNT]=$(normalize_path "$REPLY")
+    
+    local def_key="$HOME/.ssh/id_ed25519_${label}"
+    if confirm "Use a FIDO2 / YubiKey hardware key for this profile?" "n"; then
+        def_key="$HOME/.ssh/id_ed25519_sk_${label}"
+    fi
+    ask "SSH Key Path" "$def_key"
+    PROFILE_KEYS[PROFILE_COUNT]=$(normalize_path "$REPLY")
+    
+    PROFILE_PROVIDERS[PROFILE_COUNT]="github.com"
+    PROFILE_SIGNS[PROFILE_COUNT]="${GITSETU_DEFAULT_SIGN:-0}"
+
+    ask "Provider Username (e.g. GitHub handle, for HTTPS cloning)" ""
+    PROFILE_USERS[PROFILE_COUNT]="$REPLY"
+    PROFILE_PATS[PROFILE_COUNT]=""
+    if [[ -n "$REPLY" ]]; then
+        if confirm "Would you like to store a Personal Access Token (PAT) for this profile now?" "n"; then
+            ask_password "Enter PAT token"
+            if [[ -n "$REPLY" ]]; then
+                PROFILE_PATS[PROFILE_COUNT]="$REPLY"
+            fi
+        fi
+    fi
+
+    PROFILE_COUNT=$((PROFILE_COUNT + 1))
+}
+
+# ------------------------------------------------------------------------------
+# prompt_security
+# ------------------------------------------------------------------------------
+prompt_security() {
+    printf >&2 '\n  ─── Global Security Settings ───\n'
+    
+    if confirm "Enable Native SSH Commit Signing for all generated profiles?" "n"; then
+        GITSETU_DEFAULT_SIGN=1
+        local i
+        for (( i=0; i<PROFILE_COUNT; i++ )); do
+            PROFILE_SIGNS[i]=1
+        done
+    else
+        GITSETU_DEFAULT_SIGN=0
+        local i
+        for (( i=0; i<PROFILE_COUNT; i++ )); do
+            PROFILE_SIGNS[i]=0
+        done
+    fi
+    
+    if confirm "Protect newly generated keys with a Passphrase?" "n"; then
+        GITSETU_USE_PASSPHRASE=1
+    else
+        # shellcheck disable=SC2034  # consumed by generate_ssh_key() via dynamic scoping
+        GITSETU_USE_PASSPHRASE=0
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# ensure_workspace_dirs — Create profile workspace directories if missing
+# ------------------------------------------------------------------------------
+ensure_workspace_dirs() {
+    local i
+    for (( i=0; i<PROFILE_COUNT; i++ )); do
+        local dir="${PROFILE_DIRS[i]}"
+        local label="${PROFILE_LABELS[i]}"
+        if [[ -n "$dir" && "$dir" != "$HOME" ]]; then
+            if [[ ! -d "$dir" ]]; then
+                if [[ "$GITSETU_DRY_RUN" -eq 1 ]]; then
+                    print_info "[DRY RUN] Would create workspace directory: $dir"
+                else
+                    if mkdir -p "$dir" 2>/dev/null; then
+                        print_success "Created workspace directory for '$label': $dir"
+                    else
+                        print_warning "Could not create workspace directory: $dir"
+                    fi
+                fi
+            fi
+        fi
+    done
+}
+
+# ------------------------------------------------------------------------------
+# execute_blueprint
+# ------------------------------------------------------------------------------
+execute_blueprint() {
+    clear || printf '\033c'
+    print_section "Executing Setup Blueprint"
+    
+    ensure_dirs
+    ensure_workspace_dirs
+
+    # 1. Generate SSH keys
+    print_section "Generating SSH Keys"
+    local i
+    for (( i=0; i<PROFILE_COUNT; i++ )); do
+        local key_path="${PROFILE_KEYS[i]}"
+        
+        if [[ -f "$key_path" ]]; then
+            print_info "Using existing key: $key_path"
+            continue
+        fi
+        
+        generate_ssh_key "${PROFILE_LABELS[i]}" "${PROFILE_EMAILS[i]}" "$key_path"
+        # shellcheck disable=SC2181
+        if [[ $? -ne 0 ]] && [[ "$key_path" == *"_sk_"* ]]; then
+            print_warning "FIDO2 Hardware Key generation failed."
+            if confirm "Fallback to standard software SSH key for '${PROFILE_LABELS[i]}'?" "y"; then
+                key_path="$HOME/.ssh/id_ed25519_${PROFILE_LABELS[i]}"
+                PROFILE_KEYS[i]="$key_path"
+                generate_ssh_key "${PROFILE_LABELS[i]}" "${PROFILE_EMAILS[i]}" "$key_path"
+            else
+                print_error "Setup aborted due to FIDO2 key generation failure."
+                exit 1
+            fi
+        fi
+    done
+
+    # 1.5 Store PATs in Keychain
+    local has_pats=0
+    for (( i=0; i<PROFILE_COUNT; i++ )); do
+        if [[ -n "${PROFILE_PATS[$i]:-}" ]] && [[ -n "${PROFILE_USERS[$i]:-}" ]]; then
+            has_pats=1
+            break
+        fi
+    done
+    if [[ "$has_pats" -eq 1 ]]; then
+        print_section "Storing Credentials in Keychain"
+        for (( i=0; i<PROFILE_COUNT; i++ )); do
+            if [[ -n "${PROFILE_PATS[$i]:-}" ]] && [[ -n "${PROFILE_USERS[$i]:-}" ]]; then
+                local provider="${PROFILE_PROVIDERS[$i]:-github.com}"
+                if keychain_store "${PROFILE_LABELS[i]}" "$provider" "${PROFILE_USERS[i]}" "${PROFILE_PATS[i]}"; then
+                    print_success "Stored PAT for ${PROFILE_USERS[i]}@${provider}"
+                else
+                    print_error "Failed to store PAT for ${PROFILE_USERS[i]}@${provider}"
+                fi
+                # Erase PAT from memory after storing
+                PROFILE_PATS[i]=""
+            fi
+        done
+    fi
+
+    # 2. Write global gitconfig
+    print_section "Writing Git Configuration"
+    write_global_gitconfig
+
+    # 3. Write SSH config
+    print_section "Updating SSH Configuration"
+    write_ssh_config
+
+    # 4. Write profiles registry
+    write_profiles_conf
+
+    # 5. Display public keys
+    display_public_keys
+    
+    # SSH agent advice
+    print_section "SSH Agent Setup"
+    get_ssh_agent_advice
+    printf >&2 '\n'
+
+    print_success "Setup complete! You're ready to go."
+    printf >&2 '\n'
+}
+
+# ------------------------------------------------------------------------------
+# auto_setup_runner — Zero-prompt autonomous onboarding pipeline
+# ------------------------------------------------------------------------------
+auto_setup_runner() {
+    load_profiles
+    if [[ "$PROFILE_COUNT" -eq 0 ]]; then
+        generate_initial_blueprint
+    fi
+
+    local default_name="${PROFILE_NAMES[0]:-}"
+    local default_email="${PROFILE_EMAILS[0]:-}"
+
+    if [[ -z "$default_email" ]]; then
+        print_error "Auto-discovery could not detect a global Git email in ~/.gitconfig or ~/.ssh/."
+        print_error "Please configure your email first via: git config --global user.email you@example.com"
+        print_error "Or run interactive setup: gitsetu setup"
+        return 1
+    fi
+
+    local i
+    for (( i=0; i<PROFILE_COUNT; i++ )); do
+        if [[ -z "${PROFILE_NAMES[i]}" ]]; then
+            PROFILE_NAMES[i]="${default_name:-GitSetu User}"
+        fi
+        if [[ -z "${PROFILE_EMAILS[i]}" ]]; then
+            PROFILE_EMAILS[i]="$default_email"
+        fi
+    done
+
+    print_section "Zero-Prompt Auto-Discovery Blueprint"
+    printf >&2 "  Discovered and configured %b%d%b profile(s):\n\n" "$BOLD" "$PROFILE_COUNT" "$RESET"
+
+    for (( i=0; i<PROFILE_COUNT; i++ )); do
+        local label="${PROFILE_LABELS[i]}"
+        local name="${PROFILE_NAMES[i]}"
+        local email="${PROFILE_EMAILS[i]}"
+        local dir="${PROFILE_DIRS[i]:-[Global Fallback]}"
+        local key="${PROFILE_KEYS[i]}"
+
+        printf >&2 "  %b[%s]%b %s <%s>\n" "$BOLD" "$label" "$RESET" "$name" "$email"
+        printf >&2 "     Dir: %s\n" "$dir"
+        printf >&2 "     Key: %s\n\n" "$key"
+    done
+
+    execute_blueprint
+}
+
+# ------------------------------------------------------------------------------
+# interactive_setup_wizard
+# ------------------------------------------------------------------------------
+interactive_setup_wizard() {
+    # Bootstrap initial state if empty
+    load_profiles
+    if [[ "$PROFILE_COUNT" -eq 0 ]]; then
+        generate_initial_blueprint
+    fi
+
+    while true; do
+        render_blueprint_dashboard
+        
+        read -r -p "[?] Select an option, or press ENTER to Apply: " choice
+        choice=$(echo "$choice" | tr '[:lower:]' '[:upper:]')
+        
+        case "$choice" in
+            "")
+                # Validate before applying
+                local valid=1
+                local i
+                for (( i=0; i<PROFILE_COUNT; i++ )); do
+                    if [[ -z "${PROFILE_NAMES[i]}" ]] || [[ -z "${PROFILE_EMAILS[i]}" ]]; then
+                        print_error "Profile '${PROFILE_LABELS[i]}' is missing a name or email!"
+                        valid=0
+                        sleep 2
+                        break
+                    fi
+                done
+                if [[ "$valid" -eq 1 ]]; then
+                    execute_blueprint
+                    break
+                fi
+                ;;
+            "A")
+                prompt_add_profile
+                ;;
+            "E")
+                read -r -p "Enter profile number to edit (1-$PROFILE_COUNT): " idx
+                if [[ "$idx" =~ ^[0-9]+$ ]] && [[ "$idx" -ge 1 ]] && [[ "$idx" -le "$PROFILE_COUNT" ]]; then
+                    prompt_edit_profile $((idx - 1))
+                fi
+                ;;
+            "R")
+                read -r -p "Enter profile number to remove: " idx
+                if [[ "$idx" =~ ^[0-9]+$ ]] && [[ "$idx" -ge 2 ]] && [[ "$idx" -le "$PROFILE_COUNT" ]]; then
+                    # Use safe array removal to preserve empty strings
+                    local rem_idx=$((idx - 1))
+                    remove_profile_at_index "$rem_idx"
+                else
+                    print_warning "Cannot remove default profile or invalid index."
+                    sleep 1
+                fi
+                ;;
+            "S")
+                prompt_security
+                ;;
+            "Q"|"QUIT"|"EXIT")
+                print_info "Setup aborted."
+                exit 0
+                ;;
+            "H"|"HELP")
+                clear || printf '\033c'
+                printf >&2 '\n  %b─── GitSetu Setup Help ───%b\n\n' "$BOLD" "$RESET"
+                printf >&2 '  GitSetu auto-discovers your SSH keys and Git configurations.\n'
+                printf >&2 '  If the proposed Blueprint looks correct, simply press %bENTER%b to apply.\n\n' "$BOLD" "$RESET"
+                printf >&2 '  %b[A]dd%b       : Manually add a new profile (e.g. client, oss).\n' "$BOLD" "$RESET"
+                printf >&2 '  %b[E]dit%b      : Modify a profile. Select its number to change Name, Email, or Key.\n' "$BOLD" "$RESET"
+                printf >&2 '  %b[R]emove%b    : Delete a profile from the Blueprint.\n' "$BOLD" "$RESET"
+                printf >&2 '  %b[S]ecurity%b  : Configure advanced options like FIDO2 Hardware keys, Commit Signing,\n' "$BOLD" "$RESET"
+                printf >&2 '                and SSH Passphrases.\n\n'
+                printf >&2 '  Press ENTER to return to the Dashboard.\n'
+                read -r
+                ;;
+            *)
+                # If they typed a number, edit that profile
+                if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le "$PROFILE_COUNT" ]]; then
+                    prompt_edit_profile $((choice - 1))
+                fi
+                ;;
+        esac
+    done
+}
+
+# ------------------------------------------------------------------------------
+# cmd_add — Syntactic sugar for 'profile add' using positional arguments
+# Usage: gitsetu add <label> "<name>" <email> <dir>
+# ------------------------------------------------------------------------------
+cmd_add() {
+    local label="${1:-}"
+    local name="${2:-}"
+    local email="${3:-}"
+    local dir="${4:-}"
+
+    if [[ -z "$label" ]] || [[ -z "$name" ]] || [[ -z "$email" ]] || [[ -z "$dir" ]]; then
+        print_error "Usage: gitsetu add <label> \"<name>\" <email> <dir>"
+        printf >&2 "Example: gitsetu add personal \"Aditya Kumar\" aditya@gmail.com ~/personal\n"
+        exit 1
+    fi
+
+    label=$(to_lower "$label")
+    # Pass it to the underlying profile router
+    cmd_profile add "$label" --name="$name" --email="$email" --dir="$dir"
+}
+
+# ------------------------------------------------------------------------------
+# cmd_profile — Headless router for adding/removing profiles
+# Usage: gitsetu profile add <label> --email="..."
+# ------------------------------------------------------------------------------
+cmd_profile() {
+    local action="$1"
+    shift
+    local label="$1"
+    shift
+
+    if [[ -z "$action" ]] || [[ -z "$label" ]]; then
+        print_error "Usage: gitsetu profile add|remove <label> [flags...]"
+        exit 1
+    fi
+    label=$(to_lower "$label")
+
+    # Acquire POSIX directory lock for headless read-modify-write safety
+    local lock_dir="${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu/profiles.lock"
+    local max_retries=300
+    local retry=0
+    local no_pid_count=0
+    
+    # Ensure config directory exists before locking
+    mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu"
+    
+    while ! mkdir "$lock_dir" 2>/dev/null; do
+        if [[ -f "$lock_dir/pid" ]]; then
+            no_pid_count=0
+            local lock_pid
+            lock_pid=$(cat "$lock_dir/pid" 2>/dev/null || echo "")
+            if [[ -n "$lock_pid" ]] && ! kill -0 "$lock_pid" 2>/dev/null; then
+                # The process holding the lock is dead. Stale lock!
+                # Use atomic mv to prevent TOCTOU race conditions where multiple processes try to delete and acquire
+                if mv "$lock_dir" "${lock_dir}.stale.$$" 2>/dev/null; then
+                    rm -rf "${lock_dir}.stale.$$"
+                    continue # Immediately retry acquiring (only the process that successfully mv'd gets here without sleep)
+                fi
+            fi
+        else
+            # Phantom deadlock prover: the lock dir exists but has no PID file.
+            # This can happen legitimately for a microsecond while a healthy process
+            # is between mkdir and echo $$. Only reap after 50 consecutive observations
+            # (each separated by the 0.1s retry sleep) to definitively prove it's dead.
+            no_pid_count=$((no_pid_count + 1))
+            if [[ "$no_pid_count" -ge 50 ]]; then
+                if mv "$lock_dir" "${lock_dir}.stale.$$" 2>/dev/null; then
+                    rm -rf "${lock_dir}.stale.$$"
+                    no_pid_count=0
+                    continue
+                fi
+            fi
+        fi
+        
+        retry=$((retry+1))
+        if [[ "$retry" -ge "$max_retries" ]]; then
+            print_error "Failed to acquire lock for profiles.conf. Is another gitsetu process running?"
+            exit 1
+        fi
+        sleep 0.1
+    done
+
+    # Lock acquired. Write PID and register for cleanup.
+    echo $$ > "$lock_dir/pid"
+    GITSETU_CLEANUP_DIRS+=("$lock_dir")
+
+    load_profiles
+    if [[ "$PROFILE_COUNT" -eq 0 ]]; then
+        generate_initial_blueprint
+    fi
+
+    case "$action" in
+        add|edit)
+            # Find if it exists
+            local idx=-1
+            local i
+            for (( i=0; i<PROFILE_COUNT; i++ )); do
+                if [[ "${PROFILE_LABELS[i]}" == "$label" ]]; then
+                    idx=$i
+                    break
+                fi
+            done
+
+            if [[ "$idx" -eq -1 ]] && [[ "$action" == "edit" ]]; then
+                print_error "Profile '$label' not found."
+                exit 1
+            fi
+
+            if [[ "$idx" -eq -1 ]]; then
+                if ! validate_label "$label"; then
+                    print_error "Invalid profile label: '$label'."
+                    exit 1
+                fi
+                idx=$PROFILE_COUNT
+                PROFILE_COUNT=$((PROFILE_COUNT + 1))
+                PROFILE_LABELS[idx]="$label"
+                PROFILE_NAMES[idx]="${PROFILE_NAMES[0]}" # default to global name
+                PROFILE_EMAILS[idx]=""
+                PROFILE_DIRS[idx]="$HOME/$label"
+                PROFILE_PROVIDERS[idx]="github.com"
+                PROFILE_SIGNS[idx]="${GITSETU_DEFAULT_SIGN:-0}"
+                PROFILE_KEYS[idx]="$HOME/.ssh/id_ed25519_${label}"
+                PROFILE_USERS[idx]=""
+                PROFILE_PATS[idx]=""
+            fi
+
+            # Parse flags
+            while [[ $# -gt 0 ]]; do
+                # shellcheck disable=SC2034  # PROFILE_* arrays consumed by write_profiles_conf()
+                case "$1" in
+                    --name=*) PROFILE_NAMES[idx]="${1#*=}" ;;
+                    --email=*) PROFILE_EMAILS[idx]="${1#*=}" ;;
+                    --dir=*) PROFILE_DIRS[idx]=$(normalize_path "${1#*=}") ;;
+                    --provider=*) PROFILE_PROVIDERS[idx]="${1#*=}" ;;
+                    --key=*) PROFILE_KEYS[idx]=$(normalize_path "${1#*=}") ;;
+                    --fido2) PROFILE_KEYS[idx]="$HOME/.ssh/id_ed25519_sk_${label}" ;;
+                    --sign) PROFILE_SIGNS[idx]="1" ;;
+                    --no-sign) PROFILE_SIGNS[idx]="0" ;;
+                    *)
+                        print_error "Unknown flag: $1"
+                        exit 1
+                        ;;
+                esac
+                shift
+            done
+
+            # Validation
+            if [[ -z "${PROFILE_EMAILS[idx]}" ]]; then
+                if [[ -t 1 ]]; then
+                    ask_required "Email Address for $label"
+                    PROFILE_EMAILS[idx]="$REPLY"
+                else
+                    print_error "--email is required in headless mode."
+                    exit 1
+                fi
+            fi
+
+            execute_blueprint
+            ;;
+        remove)
+            local idx=-1
+            local i
+            for (( i=0; i<PROFILE_COUNT; i++ )); do
+                if [[ "${PROFILE_LABELS[i]}" == "$label" ]]; then
+                    idx=$i
+                    break
+                fi
+            done
+            if [[ "$idx" -eq -1 ]]; then
+                print_error "Profile '$label' not found."
+                exit 1
+            fi
+            if [[ "$idx" -eq 0 ]]; then
+                print_error "Cannot remove the global/default profile."
+                exit 1
+            fi
+
+            rm -f "$GITSETU_PROFILES_DIR/${label}.gitconfig"
+
+            # Use safe array removal to preserve empty strings
+            remove_profile_at_index "$idx"
+
+            execute_blueprint
+            ;;
+        *)
+            print_error "Unknown profile action: $action"
+            exit 1
+            ;;
+    esac
+}
+
+# ------------------------------------------------------------------------------
+# Inlined Module: lib/keychain.sh
+# ------------------------------------------------------------------------------
+# lib/keychain.sh — OS-level keychain wrapper for Git credential management
+#
+# Bash 3.2 compatible.
+
+# ------------------------------------------------------------------------------
+# keychain_store — Securely store a credential in the OS keychain
+#
+# Usage: keychain_store "$profile" "$host" "$username" "$token"
+# ------------------------------------------------------------------------------
+keychain_store() {
+    local profile="$1"
+    local host="$2"
+    local username="$3"
+    local token="$4"
+
+    local service_name="gitsetu:${profile}:${host}"
+
+    case "$GITSETU_OS" in
+        macos)
+            if command -v security >/dev/null 2>&1; then
+                # Delete existing to prevent duplication errors
+                security delete-internet-password -s "$service_name" >/dev/null 2>&1 || true
+                security add-internet-password -s "$service_name" -a "$username" -w "$token" >/dev/null 2>&1
+                return $?
+            fi
+            ;;
+        linux)
+            if command -v secret-tool >/dev/null 2>&1; then
+                printf "%s" "$token" | secret-tool store --label="GitSetu ($profile) $host" gitsetu "$profile" host "$host" user "$username" >/dev/null 2>&1
+                return $?
+            fi
+            ;;
+    esac
+
+    # Fallback to local file if OS tools are missing or unsupported (WSL/GitBash)
+    local tokens_file="${GITSETU_CONFIG_DIR:-$HOME/.config/gitsetu}/.tokens"
+    touch "$tokens_file"
+    
+    # Remove existing entry
+    if [[ -f "$tokens_file" ]]; then
+        local tmp_file="${TMPDIR:-/tmp}/gitsetu_tokens_$$_${RANDOM}"
+        GITSETU_CLEANUP_FILES+=("$tmp_file")
+        awk -v s="$service_name" -F':' '$1":"$2":"$3 != s' "$tokens_file" > "$tmp_file"
+        mv "$tmp_file" "$tokens_file"
+    fi
+    
+    # Append new entry (service_name:username:token)
+    echo "${service_name}:${username}:${token}" >> "$tokens_file"
+    # Set restrictive permissions AFTER all writes (mv replaces inode, so chmod must come last)
+    chmod 600 "$tokens_file"
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# keychain_get — Retrieve a credential from the OS keychain
+#
+# Usage: keychain_get "$profile" "$host"
+# Outputs:
+#   username=<username>
+#   password=<token>
+# ------------------------------------------------------------------------------
+keychain_get() {
+    local profile="$1"
+    local host="$2"
+    local service_name="gitsetu:${profile}:${host}"
+
+    case "$GITSETU_OS" in
+        macos)
+            if command -v security >/dev/null 2>&1; then
+                local out pass user
+                # Fetch password and attributes
+                if out=$(security find-internet-password -s "$service_name" -g 2>&1); then
+                    pass=$(printf "%s" "$out" | grep "password:" | cut -d'"' -f2)
+                    user=$(printf "%s" "$out" | grep "\"acct\"<blob>=" | cut -d'"' -f4)
+                    if [[ -n "$user" ]] && [[ -n "$pass" ]]; then
+                        printf "username=%s\npassword=%s\n" "$user" "$pass"
+                        return 0
+                    fi
+                fi
+                return 1
+            fi
+            ;;
+        linux)
+            if command -v secret-tool >/dev/null 2>&1; then
+                # On Linux, secret-tool lookup only returns the password. 
+                # We need the username. But we didn't store the username as an output of lookup, 
+                # wait, secret-tool lookup searches by attributes. 
+                # If we do `secret-tool search gitsetu $profile host $host`, it returns attributes.
+                local search_out
+                search_out=$(secret-tool search gitsetu "$profile" host "$host" 2>/dev/null)
+                if [[ -n "$search_out" ]]; then
+                    local user pass
+                    user=$(printf "%s" "$search_out" | grep "user = " | cut -d' ' -f3-)
+                    pass=$(secret-tool lookup gitsetu "$profile" host "$host" 2>/dev/null)
+                    if [[ -n "$user" ]] && [[ -n "$pass" ]]; then
+                        printf "username=%s\npassword=%s\n" "$user" "$pass"
+                        return 0
+                    fi
+                fi
+                return 1
+            fi
+            ;;
+    esac
+
+    # Fallback to local file
+    local tokens_file="${GITSETU_CONFIG_DIR:-$HOME/.config/gitsetu}/.tokens"
+    if [[ -f "$tokens_file" ]]; then
+        local entry
+        entry=$(grep "^${service_name}:" "$tokens_file" 2>/dev/null || true)
+        if [[ -n "$entry" ]]; then
+            # Format: gitsetu:profile:host:username:token
+            # We know service_name has 2 colons. So fields 4 and 5 are user and token.
+            local user token
+            user=$(printf "%s" "$entry" | cut -d':' -f4)
+            token=$(printf "%s" "$entry" | cut -d':' -f5-)
+            if [[ -n "$user" ]] && [[ -n "$token" ]]; then
+                printf "username=%s\npassword=%s\n" "$user" "$token"
+                return 0
+            fi
+        fi
+    fi
+
+    return 1
+}
+
+# ------------------------------------------------------------------------------
+# keychain_erase — Remove a credential from the OS keychain
+#
+# Usage: keychain_erase "$profile" "$host"
+# ------------------------------------------------------------------------------
+keychain_erase() {
+    local profile="$1"
+    local host="$2"
+    local service_name="gitsetu:${profile}:${host}"
+
+    case "$GITSETU_OS" in
+        macos)
+            if command -v security >/dev/null 2>&1; then
+                security delete-internet-password -s "$service_name" >/dev/null 2>&1 || true
+                return 0
+            fi
+            ;;
+        linux)
+            if command -v secret-tool >/dev/null 2>&1; then
+                secret-tool clear gitsetu "$profile" host "$host" >/dev/null 2>&1 || true
+                return 0
+            fi
+            ;;
+    esac
+
+    # Fallback to local file
+    local tokens_file="${GITSETU_CONFIG_DIR:-$HOME/.config/gitsetu}/.tokens"
+    if [[ -f "$tokens_file" ]]; then
+        local tmp_file="${TMPDIR:-/tmp}/gitsetu_tokens_$$_${RANDOM}"
+        GITSETU_CLEANUP_FILES+=("$tmp_file")
+        awk -v s="$service_name" -F':' '$1":"$2":"$3 != s' "$tokens_file" > "$tmp_file"
+        mv "$tmp_file" "$tokens_file"
+    fi
+    return 0
+}
+
+# Unified Global Cleanup Architecture
+# ------------------------------------------------------------------------------
+GITSETU_CLEANUP_FILES=()
+GITSETU_CLEANUP_DIRS=()
+
+gitsetu_global_cleanup() {
+    # Restore terminal cursor visibility and echo if interrupted
+    printf '\033[?25h' >&2 2>/dev/null || true
+    stty echo 2>/dev/null || true
+    # Clean up CRLF self-healing temp file (created before exec)
+    rm -f "${TMPDIR:-/tmp}/.gitsetu_crlf_$$" 2>/dev/null || true
+    local f d
+    for f in ${GITSETU_CLEANUP_FILES[@]+"${GITSETU_CLEANUP_FILES[@]}"}; do
+        rm -f "$f" 2>/dev/null || true
+    done
+    for d in ${GITSETU_CLEANUP_DIRS[@]+"${GITSETU_CLEANUP_DIRS[@]}"}; do
+        if [[ "$d" == *.lock ]]; then
+            if [[ -f "$d/pid" ]]; then
+                local lock_owner
+                lock_owner=$(cat "$d/pid" 2>/dev/null || echo "")
+                if [[ "$lock_owner" != "$$" ]]; then
+                    continue # We do not own this lock. Do not delete it.
+                fi
+                rm -f "$d/pid" 2>/dev/null || true
+            else
+                continue # Lock has no pid file; we do not own it. Do not delete it.
+            fi
+        fi
+        rmdir "$d" 2>/dev/null || true
+    done
+}
+
+cleanup() {
+    printf '\033[?25h' >&2 2>/dev/null || true
+    stty echo 2>/dev/null || true  # Restore terminal echo if interrupted during password entry
+    printf >&2 '\n'
+    print_warning "Interrupted. No changes were made (or partial changes were backed up)."
+    gitsetu_global_cleanup
+    exit 130
+}
+trap gitsetu_global_cleanup EXIT
+trap cleanup SIGINT SIGTERM
+
+# ------------------------------------------------------------------------------
+# Usage / Help text
+# ------------------------------------------------------------------------------
+show_help() {
+    cat >&2 <<EOF
+${BOLD}gitsetu${RESET} v${GITSETU_VERSION} — One command. All identities. Every machine.
+
+${BOLD}USAGE${RESET}
+    gitsetu setup [--auto] [--dry-run]  Interactive wizard or zero-prompt discovery
+    gitsetu init [--auto] [--dry-run]   Alias for setup
+    gitsetu add <label> <name> <email> <dir>
+                                     Add a profile (non-interactive)
+    gitsetu remove <label>           Remove a profile
+    gitsetu status                   Show current identity configuration
+    gitsetu verify                   Test SSH keys and git config
+    gitsetu doctor                   Run diagnostic checks
+    gitsetu update                   Update gitsetu to the latest version
+    gitsetu prompt                   Print active profile for \$PS1
+    gitsetu backup [out_file]        Export encrypted identity state
+    gitsetu restore <in_file>        Import encrypted identity state
+    gitsetu run <profile> -- <cmd>   Run command as specific identity
+    gitsetu teardown [--force] [--deep]  Remove all configurations
+                                     --deep: Recursively strip local repository overrides
+                                     --force: Bypass confirmation prompt
+    gitsetu guard --install          Install pre-commit identity guard hook
+    gitsetu guard --uninstall        Remove the guard hook
+    gitsetu --help, -h               Show this help
+    gitsetu --version, -v            Show version
+
+${BOLD}EXAMPLES${RESET}
+    ${DIM}# Instant zero-prompt onboarding:${RESET}
+    gitsetu setup --auto
+
+    ${DIM}# First-time interactive setup:${RESET}
+    gitsetu setup
+
+    ${DIM}# Add a profile non-interactively:${RESET}
+    gitsetu add work "Your Name" work@company.com ~/work
+
+    ${DIM}# Check current identity:${RESET}
+    gitsetu status
+
+    ${DIM}# Run git as a specific profile:${RESET}
+    gitsetu run work -- git commit -m "fix"
+
+    ${DIM}# Install commit safety net:${RESET}
+    gitsetu guard --install
+
+${BOLD}MORE INFO${RESET}
+    https://github.com/bhaskarjha-dev/gitsetu
+EOF
+}
+
+show_version() {
+    printf 'gitsetu v%s\n' "$GITSETU_VERSION"
+}
+
+# ------------------------------------------------------------------------------
+# cmd_status — Show current identity configuration
+# ------------------------------------------------------------------------------
+cmd_status() {
+    detect_os
+
+    print_header
+
+    # Current directory info
+    local cwd
+    cwd=$(pwd)
+    print_section "Current Directory"
+    printf >&2 '  %s\n\n' "$cwd"
+
+    # Current git identity
+    local current_name current_email
+    current_name=$(git config user.name 2>/dev/null || echo "(not set)")
+    current_email=$(git config user.email 2>/dev/null || echo "(not set)")
+
+    printf >&2 '  %b┌─ Active Identity ─────────────────────────────┐%b\n' "$BOLD" "$RESET"
+    printf >&2 '  %b│%b  Name:  %b%s%b\n' "$DIM" "$RESET" "$CYAN" "${current_name}" "$RESET"
+    printf >&2 '  %b│%b  Email: %b%s%b\n' "$DIM" "$RESET" "$CYAN" "${current_email}" "$RESET"
+    
+    # Check if inside a git repo
+    if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        local ssh_cmd
+        ssh_cmd=$(git config core.sshCommand 2>/dev/null || echo "(default)")
+        printf >&2 '  %b│%b  SSH:   %b%s%b\n' "$DIM" "$RESET" "$GREEN" "${ssh_cmd}" "$RESET"
+        
+        # Check for Pre-Commit Guard Subversion
+        local local_hooks
+        local_hooks=$(git config --local core.hooksPath 2>/dev/null || true)
+        if [[ -n "$local_hooks" ]]; then
+            printf >&2 '  %b│%b\n' "$DIM" "$RESET"
+            printf >&2 '  %b│%b  %b[!] SECURITY WARNING:%b\n' "$DIM" "$RESET" "$RED" "$RESET"
+            printf >&2 '  %b│%b  This repository locally overrides core.hooksPath (%s).\n' "$DIM" "$RESET" "$local_hooks"
+            printf >&2 '  %b│%b  The global GitSetu identity guard is completely bypassed!\n' "$DIM" "$RESET"
+        fi
+    fi
+    printf >&2 '  %b└───────────────────────────────────────────────┘%b\n\n' "$DIM" "$RESET"
+
+    # Show profile registry if it exists
+    if [[ -f "$GITSETU_PROFILES_CONF" ]]; then
+        print_section "Configured Profiles"
+
+        # shellcheck disable=SC2034  # sign_commits parsed for field alignment
+        local raw_line
+        while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+            [[ "$raw_line" == "#"* ]] && continue
+            [[ -z "$raw_line" ]] && continue
+            local clean_line
+            clean_line=$(printf '%s' "$raw_line" | sed -E 's/:([a-zA-Z]):/:\1#DRIVE#/g')
+            local label email dir provider sign_commits key_path _unused
+            IFS=: read -r label email dir provider sign_commits key_path _unused <<< "$clean_line"
+            dir="${dir//#DRIVE#/:}"
+            key_path="${key_path//#DRIVE#/:}"
+            
+            local dir_disp="${dir:-[Manual Mode]}"
+            local prov_disp="${provider:-github.com}"
+            
+            # Load email from profile gitconfig (registry leaves email column empty)
+            local profile_email
+            profile_email=$(git config -f "$GITSETU_PROFILES_DIR/${label}.gitconfig" user.email 2>/dev/null || true)
+            if [[ -z "$profile_email" ]] && [[ -n "$email" ]]; then
+                profile_email="$email"  # Legacy fallback
+            fi
+            
+            # Check if this profile matches current identity
+            local is_active="  "
+            if [[ -n "$profile_email" ]] && [[ "$profile_email" == "$current_email" ]]; then
+                is_active="${GREEN}${SYM_CHECK} ${RESET}"
+            fi
+            
+            printf >&2 '  %s%b%s%b\n' "$is_active" "$BOLD" "$label" "$RESET"
+            printf >&2 '    %b├─%b %-9s %s\n' "$DIM" "$RESET" "Email:" "$profile_email"
+            printf >&2 '    %b├─%b %-9s %s\n' "$DIM" "$RESET" "Provider:" "$prov_disp"
+            printf >&2 '    %b└─%b %-9s %s\n\n' "$DIM" "$RESET" "Path:" "$dir_disp"
+        done < "$GITSETU_PROFILES_CONF"
+    else
+        print_info "No profiles configured. Run 'gitsetu setup' to get started."
+    fi
+
+    # Platform info
+    print_section "Environment"
+    printf >&2 '  OS:       %s\n' "$GITSETU_OS"
+    printf >&2 '  Bash:     %s\n' "${BASH_VERSION:-unknown}"
+    printf >&2 '  Git:      %s\n' "$(git --version 2>/dev/null | head -n1)"
+    printf >&2 '  Config:   %s\n' "$GITSETU_CONFIG_DIR"
+    printf >&2 '\n'
+}
+
+# ------------------------------------------------------------------------------
+# cmd_update — Safely update gitsetu to the latest version
+# ------------------------------------------------------------------------------
+cmd_update() {
+    detect_os
+    print_header
+
+    # Ensure we are in a git-based installation
+    if [[ ! -d "$GITSETU_DIR/.git" ]]; then
+        print_error "GitSetu was not installed via Git. Cannot auto-update."
+        print_info "If you installed via a raw script, please re-install using the official installer:"
+        print_info "  curl -sL https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.sh | bash"
+        return 1
+    fi
+
+    print_step "Checking for updates..."
+    
+    cd "$GITSETU_DIR" || return 1
+
+    if ! git fetch --quiet origin 2>/dev/null; then
+        print_error "Failed to reach GitHub. Check your network connection."
+        return 1
+    fi
+
+    local current_hash
+    local remote_hash
+    current_hash=$(git rev-parse HEAD 2>/dev/null || echo "1")
+    remote_hash=$(git rev-parse origin/main 2>/dev/null || echo "2")
+
+    if [[ "$current_hash" == "$remote_hash" ]]; then
+        print_success "GitSetu is already up-to-date (v${GITSETU_VERSION})"
+        return 0
+    fi
+
+    print_info "Update found. Applying latest patches..."
+
+    if ! git reset --quiet --hard origin/main 2>/dev/null; then
+        print_error "Failed to apply update."
+        return 1
+    fi
+
+    # Parse the new version from the freshly updated core.sh
+    local new_version="Unknown"
+    if [[ -f "$GITSETU_DIR/lib/core.sh" ]]; then
+        new_version=$(grep "GITSETU_VERSION=" "$GITSETU_DIR/lib/core.sh" | head -n1 | cut -d'"' -f2 || echo "Unknown")
+    fi
+
+    if [[ "$GITSETU_VERSION" == "$new_version" ]]; then
+        print_success "GitSetu successfully updated (v${new_version})"
+    else
+        print_success "GitSetu successfully updated from v${GITSETU_VERSION} to v${new_version}"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# cmd_verify — Run all verification checks
+# ------------------------------------------------------------------------------
+cmd_verify() {
+    detect_os
+    print_header
+
+    # Load profiles from registry
+    if [[ ! -f "$GITSETU_PROFILES_CONF" ]]; then
+        print_error "No profiles configured. Run 'gitsetu setup' first."
+        return 1
+    fi
+
+    # Read profiles from registry
+    load_profiles
+
+    if [[ "$PROFILE_COUNT" -eq 0 ]]; then
+        print_error "No profiles found in registry. Run 'gitsetu setup' first."
+        return 1
+    fi
+
+    verify_all
+}
+
+# ------------------------------------------------------------------------------
+# cmd_teardown — Remove all gitsetu configurations
+# ------------------------------------------------------------------------------
+cmd_teardown() {
+    detect_os
+    print_header
+
+    if [[ "$GITSETU_DRY_RUN" -eq 1 ]]; then
+        print_info "DRY RUN MODE — no files will be written/deleted"
+        printf >&2 '\n'
+    fi
+
+    local force="${1:-0}"
+    local deep="${2:-0}"
+
+    if [[ "$force" -eq 0 ]] && [[ "$GITSETU_DRY_RUN" -eq 0 ]]; then
+        print_warning "This will remove all GitSetu configurations:"
+        printf >&2 "  - Remove managed blocks from ~/.gitconfig\n"
+        printf >&2 "  - Remove Include directive from ~/.ssh/config\n"
+        printf >&2 "  - Uninstall the commit guard hook\n"
+        printf >&2 "  - Delete the ~/.config/gitsetu directory\n"
+        if [[ "$deep" -eq 1 ]]; then
+            printf >&2 "  - STRIP local identity overrides from all mapped repositories\n"
+        fi
+        printf >&2 "\n"
+        if ! confirm "Are you sure you want to proceed?" "n"; then
+            print_info "Teardown cancelled."
+            return 0
+        fi
+    fi
+
+    teardown_all "$deep"
+}
+
+# ------------------------------------------------------------------------------
+# cmd_setup — Interactive Blueprint Dashboard / Headless setup
+# ------------------------------------------------------------------------------
+cmd_setup() {
+    local auto_mode="${1:-0}"
+    detect_os
+    print_header
+
+    if [[ "$GITSETU_DRY_RUN" -eq 1 ]]; then
+        print_info "DRY RUN MODE — no files will be written"
+        printf >&2 '\n'
+    fi
+
+    # --- Preflight ---
+    print_section "Preflight Checks"
+    printf >&2 '  OS detected: %b%s%b\n' "$BOLD" "$GITSETU_OS" "$RESET"
+
+    if ! check_prerequisites; then
+        return 1
+    fi
+    print_success "All prerequisites met"
+
+    # Check for shared folder
+    if is_shared_mount "$HOME" 2>/dev/null; then
+        print_warning "Home directory appears to be on a shared folder."
+        print_info "SSH keys will be stored on the native filesystem at ~/.ssh"
+    fi
+
+    # Fast-path for autonomous zero-prompt discovery mode
+    if [[ "$auto_mode" -eq 1 ]]; then
+        export GITSETU_AUTO_MODE=1
+        auto_setup_runner
+        return $?
+    fi
+    
+    # Check if TTY
+    if [[ ! -t 1 ]]; then
+        print_error "Interactive setup requires an interactive terminal (TTY)."
+        print_error "For automated non-interactive setup, run: gitsetu setup --auto"
+        print_error "For headless profile scripting, use: gitsetu profile add <label> --email=..."
+        return 1
+    fi
+
+    # Launch the interactive menu
+    interactive_setup_wizard
+}
+
+# ------------------------------------------------------------------------------
+# cmd_run — Execute a command under a specific profile identity
+# ------------------------------------------------------------------------------
+cmd_run() {
+    detect_os
+    local profile="$1"
+    shift
+    profile=$(to_lower "$profile")
+    
+    if [[ -z "$profile" ]]; then
+        print_error "Usage: gitsetu run <profile> -- <command>"
+        return 1
+    fi
+    
+    if [[ "$1" == "--" ]]; then shift; fi
+    
+    if [[ $# -eq 0 ]]; then
+        print_error "No command provided. Usage: gitsetu run <profile> -- <command>"
+        return 1
+    fi
+    
+    # Check if profile exists
+    if [[ ! -f "$GITSETU_PROFILES_CONF" ]]; then
+        print_error "No profiles configured. Run 'gitsetu setup' first."
+        return 1
+    fi
+
+    local found=0
+    local found_key_path=""
+    # shellcheck disable=SC2034  # sign_commits parsed for field alignment
+    local raw_line
+    while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+        [[ "$raw_line" == "#"* ]] && continue
+        [[ -z "$raw_line" ]] && continue
+        local clean_line
+        clean_line=$(printf '%s' "$raw_line" | sed -E 's/:([a-zA-Z]):/:\1#DRIVE#/g')
+        local label email dir provider sign_commits key_path _unused
+        IFS=: read -r label email dir provider sign_commits key_path _unused <<< "$clean_line"
+        key_path="${key_path//#DRIVE#/:}"
+
+        if [[ "$label" == "$profile" ]]; then
+            found=1
+            found_key_path="${key_path:-$HOME/.ssh/id_ed25519_${label}}"
+            break
+        fi
+    done < "$GITSETU_PROFILES_CONF"
+    
+    if [[ "$found" -eq 0 ]]; then
+        print_error "Profile '$profile' not found in registry."
+        return 1
+    fi
+    
+    local name email
+    local config_file="$GITSETU_PROFILES_DIR/${profile}.gitconfig"
+    
+    if [[ ! -f "$config_file" ]]; then
+        # Global profile (stored in ~/.gitconfig)
+        name=$(git config --global user.name 2>/dev/null || echo "")
+        email=$(git config --global user.email 2>/dev/null || echo "")
+    else
+        name=$(git config -f "$config_file" user.name 2>/dev/null || echo "")
+        email=$(git config -f "$config_file" user.email 2>/dev/null || echo "")
+    fi
+    
+    export GIT_AUTHOR_NAME="$name"
+    export GIT_AUTHOR_EMAIL="$email"
+    export GIT_COMMITTER_NAME="$name"
+    export GIT_COMMITTER_EMAIL="$email"
+    export GIT_SSH_COMMAND="ssh -i \"${found_key_path}\""
+    
+    # exec replaces this process — EXIT trap will never fire.
+    # Flush any registered temp files before handoff.
+    gitsetu_global_cleanup
+    exec "$@"
+}
+
+# ------------------------------------------------------------------------------
+# cmd_remove — Surgically remove a single profile
+# ------------------------------------------------------------------------------
+cmd_remove() {
+    detect_os
+    local profile="$1"
+    profile=$(to_lower "$profile")
+    
+    if [[ -z "$profile" ]]; then
+        print_error "Usage: gitsetu remove <profile>"
+        return 1
+    fi
+    
+    if [[ ! -f "$GITSETU_PROFILES_CONF" ]]; then
+        print_error "No profiles configured."
+        return 1
+    fi
+    
+    # Check if profile exists
+    local found=0
+    local found_key_path=""
+    # shellcheck disable=SC2034  # sign_commits parsed for field alignment; key_path is the target
+    local raw_line
+    while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+        [[ "$raw_line" == "#"* ]] && continue
+        [[ -z "$raw_line" ]] && continue
+        local clean_line
+        clean_line=$(printf '%s' "$raw_line" | sed -E 's/:([a-zA-Z]):/:\1#DRIVE#/g')
+        local label _email _dir _provider _sign_commits key_path _unused
+        IFS=: read -r label _email _dir _provider _sign_commits key_path _unused <<< "$clean_line"
+        key_path="${key_path//#DRIVE#/:}"
+
+        if [[ "$label" == "$profile" ]]; then
+            found=1
+            found_key_path="${key_path:-$HOME/.ssh/id_ed25519_${label}}"
+            break
+        fi
+    done < "$GITSETU_PROFILES_CONF"
+    
+    if [[ "$found" -eq 0 ]]; then
+        print_error "Profile '$profile' not found."
+        return 1
+    fi
+
+    if ! confirm "Are you sure you want to completely remove profile '$profile'?" "n"; then
+        print_info "Cancelled."
+        return 0
+    fi
+    
+    print_step "Removing profile '$profile'..."
+    
+    # 1. Remove from profiles.conf using awk (sed is non-portable across BSD/GNU without weird syntax)
+    local tmp_conf
+    tmp_conf=$(mktemp "${GITSETU_PROFILES_CONF}.tmp.XXXXXX")
+    GITSETU_CLEANUP_FILES+=("$tmp_conf")
+    awk -F: -v prof="$profile" '$1 != prof {print}' "$GITSETU_PROFILES_CONF" > "$tmp_conf"
+    mv "$tmp_conf" "$GITSETU_PROFILES_CONF"
+    
+    # 2. Delete the profile gitconfig
+    local config_file="$GITSETU_PROFILES_DIR/${profile}.gitconfig"
+    if [[ -f "$config_file" ]]; then
+        rm -f "$config_file"
+    fi
+    
+    # 3. Reload in-memory arrays from the updated registry
+    load_profiles
+    
+    # 4. Re-run block generators (idempotent, they will overwrite the global configs without the removed profile)
+    if ! write_global_gitconfig; then
+        print_warning "Failed to regenerate ~/.gitconfig. Run 'gitsetu setup' to repair."
+    fi
+    if ! write_ssh_config; then
+        print_warning "Failed to regenerate ~/.ssh/config. Run 'gitsetu setup' to repair."
+    fi
+    
+    print_success "Profile '$profile' successfully removed."
+    
+    # Ask about SSH keys
+    local key_file="${found_key_path}"
+    if [[ -f "$key_file" ]]; then
+        printf >&2 '\n'
+        print_warning "SSH keys for '$profile' still exist:"
+        print_info "  $key_file"
+        print_info "  $key_file.pub"
+        if confirm "Delete these SSH keys permanently?" "n"; then
+            rm -f "$key_file" "$key_file.pub"
+            print_success "SSH keys deleted."
+        else
+            print_info "Keys kept. You can manually delete them later."
+        fi
+    fi
+}
+
+
+# ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# cmd_credential — Git Credential Helper Broker
+# ------------------------------------------------------------------------------
+cmd_credential() {
+    local action="${1:-}"
+    if [[ -z "$action" ]]; then
+        return 1
+    fi
+
+    # Read from stdin
+    local host=""
+    local protocol=""
+    local username=""
+    local password=""
+
+    while read -r line; do
+        [[ -z "$line" ]] && break
+        case "$line" in
+            host=*) host="${line#*=}" ;;
+            protocol=*) protocol="${line#*=}" ;;
+            username=*) username="${line#*=}" ;;
+            password=*) password="${line#*=}" ;;
+        esac
+    done
+
+    # We only care about https and host
+    if [[ "$protocol" != "https" ]] || [[ -z "$host" ]]; then
+        return 0
+    fi
+
+    # Identify profile context
+    local profile
+    profile=$(cmd_prompt)
+    if [[ -z "$profile" ]]; then
+        # Not in a profile directory, ignore
+        return 0
+    fi
+
+    case "$action" in
+        get)
+            detect_os
+            keychain_get "$profile" "$host"
+            ;;
+        store)
+            if [[ -n "$username" ]] && [[ -n "$password" ]]; then
+                detect_os
+                keychain_store "$profile" "$host" "$username" "$password"
+            fi
+            ;;
+        erase)
+            detect_os
+            keychain_erase "$profile" "$host"
+            ;;
+    esac
+}
+
+# ------------------------------------------------------------------------------
+# cmd_doctor — Run diagnostics
+# ------------------------------------------------------------------------------
+cmd_doctor() {
+    load_profiles
+    run_doctor
+}
+
+# ------------------------------------------------------------------------------
+# Main — Parse arguments and route to subcommand
+# ------------------------------------------------------------------------------
+main() {
+    # No arguments → show brief usage
+    if [[ $# -eq 0 ]]; then
+        printf >&2 '%bgitsetu%b v%s — One command. All identities. Every machine.\n\n' \
+            "$BOLD" "$RESET" "$GITSETU_VERSION"
+        printf >&2 'Usage: gitsetu setup [--dry-run]    Start the setup wizard\n'
+        printf >&2 '       gitsetu status               Show current identity\n'
+        printf >&2 '       gitsetu verify               Test SSH and git config\n'
+        printf >&2 '       gitsetu prompt               Print active profile (for PS1)\n'
+        printf >&2 '       gitsetu run <profile> -- <cmd>  Run as identity\n'
+        printf >&2 '       gitsetu remove <profile>     Remove a specific profile\n'
+        printf >&2 '       gitsetu backup [out_file]    Export encrypted state vault\n'
+        printf >&2 '       gitsetu restore <in_file>    Import encrypted state vault\n'
+        printf >&2 '       gitsetu teardown [--force]   Remove all configurations\n'
+        printf >&2 '       gitsetu guard --install      Install commit guard hook\n'
+        printf >&2 '       gitsetu --help                Full help\n\n'
+        return 0
+    fi
+
+    local cmd="$1"
+    shift
+
+    case "$cmd" in
+        setup|init)
+            # Parse setup flags
+            local auto_mode=0
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --dry-run)
+                        GITSETU_DRY_RUN=1
+                        shift
+                        ;;
+                    --auto|-y|--yes)
+                        auto_mode=1
+                        shift
+                        ;;
+                    *)
+                        print_error "Unknown flag: $1"
+                        printf >&2 'Usage: gitsetu setup [--auto] [--dry-run]\n'
+                        return 1
+                        ;;
+                esac
+            done
+            cmd_setup "$auto_mode"
+            ;;
+        add)
+            cmd_add "$@"
+            ;;
+        status)
+            cmd_status
+            ;;
+        verify)
+            cmd_verify
+            ;;
+        run)
+            if [[ $# -lt 1 ]]; then
+                print_error "Usage: gitsetu run <profile> -- <command>"
+                return 1
+            fi
+            cmd_run "$@"
+            ;;
+        remove)
+            cmd_remove "${1:-}"
+            ;;
+        backup)
+            cmd_backup "$@"
+            ;;
+        restore)
+            cmd_restore "$@"
+            ;;
+        profile)
+            cmd_profile "$@"
+            ;;
+        credential)
+            cmd_credential "$@"
+            ;;
+        teardown)
+            local force=0
+            local deep=0
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --dry-run) GITSETU_DRY_RUN=1 ;;
+                    --force|-f) force=1 ;;
+                    --deep) deep=1 ;;
+                    *)
+                        print_error "Unknown flag: $1"
+                        printf >&2 'Usage: gitsetu teardown [--dry-run] [--force] [--deep]\n'
+                        return 1
+                        ;;
+                esac
+                shift
+            done
+            cmd_teardown "$force" "$deep"
+            ;;
+        guard)
+            if [[ $# -eq 0 ]]; then
+                print_error "Usage: gitsetu guard --install | --uninstall"
+                return 1
+            fi
+            case "$1" in
+                --install)   detect_os; install_guard ;;
+                --uninstall) detect_os; uninstall_guard ;;
+                *)
+                    print_error "Unknown flag: $1"
+                    printf >&2 'Usage: gitsetu guard --install | --uninstall\n'
+                    return 1
+                    ;;
+            esac
+            ;;
+        doctor)
+            cmd_doctor "$@"
+            ;;
+        update)
+            cmd_update
+            ;;
+        --help|-h|help)
+            show_help
+            ;;
+        --version|-v)
+            show_version
+            ;;
+        *)
+            print_error "Unknown command: $cmd"
+            printf >&2 'Run "gitsetu --help" for usage.\n'
+            return 1
+            ;;
+    esac
+}
+
+main "$@"

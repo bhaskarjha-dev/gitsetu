@@ -1,0 +1,44 @@
+{
+  "name": "gitsetu",
+  "version": "1.0.0",
+  "description": "Zero-trust multi-account Git identity orchestrator. One command. All identities. Every machine.",
+  "main": "bin/gitsetu.js",
+  "bin": {
+    "gitsetu": "./bin/gitsetu.js",
+    "git-setu": "./bin/gitsetu.js"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "gitsetu",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "bash tests/run_all.sh",
+    "dist": "bash scripts/bundle.sh"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bhaskarjha-dev/gitsetu.git"
+  },
+  "keywords": [
+    "git",
+    "identity",
+    "ssh",
+    "multi-account",
+    "gitconfig",
+    "developer-tools",
+    "productivity",
+    "zero-trust"
+  ],
+  "author": "Bhaskar Jha <contact@bhaskarjha.dev> (https://bhaskarjha.dev)",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/bhaskarjha-dev/gitsetu/issues"
+  },
+  "homepage": "https://gitsetu.bhaskarjha.dev",
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "version": "1.0.0",
+  "description": "Zero-trust multi-account Git identity orchestrator",
+  "homepage": "https://gitsetu.bhaskarjha.dev",
+  "license": "MIT",
+  "url": "https://github.com/bhaskarjha-dev/gitsetu/archive/refs/tags/v1.0.0.zip",
+  "extract_dir": "gitsetu-1.0.0",
+  "bin": [
+    "gitsetu",
+    ["gitsetu", "git-setu"]
+  ],
+  "checkver": "github",
+  "autoupdate": {
+    "url": "https://github.com/bhaskarjha-dev/gitsetu/archive/refs/tags/v$version.zip",
+    "extract_dir": "gitsetu-$version"
+  }
+}

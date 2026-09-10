@@ -4,11 +4,11 @@
 # Clones the GitSetu repository to ~/.local/share/gitsetu
 # and symlinks the executable to ~/.local/bin/gitsetu.
 #
-# Usage: curl -sL https://raw.githubusercontent.com/bhaskarjha-com/gitsetu/main/install.sh | bash
+# Usage: curl -sL https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.sh | bash
 
 set -euo pipefail
 
-REPO_URL="${GITSETU_REPO_URL:-https://github.com/bhaskarjha-com/gitsetu.git}"
+REPO_URL="${GITSETU_REPO_URL:-https://github.com/bhaskarjha-dev/gitsetu.git}"
 SHARE_DIR="$HOME/.local/share/gitsetu"
 BIN_DIR="$HOME/.local/bin"
 

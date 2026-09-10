@@ -1,0 +1,40 @@
+# Maintainer: Bhaskar Jha <contact@bhaskarjha.dev>
+pkgname=gitsetu
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Zero-trust multi-account Git identity orchestrator"
+arch=('any')
+url="https://gitsetu.bhaskarjha.dev"
+license=('MIT')
+depends=('bash>=4.0' 'git' 'openssh')
+optdepends=(
+  'libfido2: FIDO2 / YubiKey hardware key support'
+)
+source=("$pkgname-$pkgver.tar.gz::https://github.com/bhaskarjha-dev/gitsetu/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+package() {
+  cd "$pkgname-$pkgver"
+
+  install -dm755 "$pkgdir/usr/bin"
+  install -dm755 "$pkgdir/usr/share/$pkgname/lib"
+
+  install -m755 gitsetu "$pkgdir/usr/share/$pkgname/gitsetu"
+  install -m644 lib/*.sh "$pkgdir/usr/share/$pkgname/lib/"
+
+  # Wrapper script in /usr/bin
+  cat << 'EOF' > "$pkgdir/usr/bin/gitsetu"
+#!/usr/bin/env bash
+exec /usr/share/gitsetu/gitsetu "$@"
+EOF
+  chmod 755 "$pkgdir/usr/bin/gitsetu"
+
+  # Link git-setu compatibility command
+  ln -s gitsetu "$pkgdir/usr/bin/git-setu"
+
+  # Shell completions
+  install -Dm644 lib/completion.sh "$pkgdir/usr/share/bash-completion/completions/gitsetu"
+
+  # License
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

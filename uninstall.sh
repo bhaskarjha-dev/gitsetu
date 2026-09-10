@@ -3,7 +3,7 @@
 #
 # Removes the ~/.local/share/gitsetu directory and symlinks.
 #
-# Usage: curl -sL https://raw.githubusercontent.com/bhaskarjha-com/gitsetu/main/uninstall.sh | bash
+# Usage: curl -sL https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/uninstall.sh | bash
 
 set -euo pipefail
 

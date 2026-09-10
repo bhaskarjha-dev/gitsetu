@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# gh-gitsetu — GitHub CLI extension wrapper for GitSetu
+# Usage: gh gitsetu <subcommand> [flags...]
+set -euo pipefail
+
+# 1. If gitsetu is already installed on the system, delegate directly
+if command -v gitsetu >/dev/null 2>&1; then
+    exec gitsetu "$@"
+fi
+
+# 2. Check if running from within the gitsetu repository checkout
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$SCRIPT_DIR/../../gitsetu" ]; then
+    exec "$SCRIPT_DIR/../../gitsetu" "$@"
+fi
+if [ -f "$SCRIPT_DIR/gitsetu" ]; then
+    exec "$SCRIPT_DIR/gitsetu" "$@"
+fi
+
+# 3. Fallback: Download/cache standalone gitsetu release runner
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/gitsetu"
+RUNNER="$CACHE_DIR/gitsetu"
+
+if [ ! -f "$RUNNER" ]; then
+    mkdir -p "$CACHE_DIR"
+    echo "Downloading GitSetu standalone runner..." >&2
+    if command -v curl >/dev/null 2>&1; then
+        curl -sL "https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/dist/gitsetu" -o "$RUNNER"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q "https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/dist/gitsetu" -O "$RUNNER"
+    else
+        echo "Error: curl or wget is required to fetch GitSetu standalone runner." >&2
+        exit 1
+    fi
+    chmod +x "$RUNNER"
+fi
+
+exec "$RUNNER" "$@"

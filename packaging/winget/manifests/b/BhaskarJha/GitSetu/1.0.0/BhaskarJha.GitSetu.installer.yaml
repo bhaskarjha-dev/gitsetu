@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+
+PackageIdentifier: BhaskarJha.GitSetu
+PackageVersion: 1.0.0
+InstallerLocale: en-US
+InstallerType: zip
+NestedInstallerType: portable
+NestedInstallerFiles:
+  - RelativeFilePath: gitsetu.exe
+    PortableCommandAlias: gitsetu
+Commands:
+  - gitsetu
+  - git-setu
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/bhaskarjha-dev/gitsetu/releases/download/v1.0.0/gitsetu-windows-x64.zip
+    InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
+    ReleaseDate: '2026-09-11'
+ManifestType: installer
+ManifestVersion: 1.6.0
