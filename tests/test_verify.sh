@@ -90,6 +90,9 @@ test_verify_ssh_keys_wrong_perms() {
     setup_test_home
     source_gitsetu_libs
 
+    # Skip on filesystems that ignore chmod (NTFS emulation, VM mounts)
+    can_chmod_600 || return 0
+
     mkdir -p "$HOME/.ssh"
     touch "$HOME/.ssh/id_ed25519_work"
     chmod 644 "$HOME/.ssh/id_ed25519_work"

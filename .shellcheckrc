@@ -12,3 +12,12 @@ source-path=tests
 # All test files source helpers.sh via $(dirname "${BASH_SOURCE[0]}")/helpers.sh
 # which ShellCheck cannot follow statically.
 disable=SC1091
+
+# SC2034: Global configuration arrays (PROFILE_LABELS, PROFILE_DIRS, etc.)
+# are defined/mocked across modular files and consumed by other sourced libraries.
+disable=SC2034
+
+# SC2088: GitSetu intentionally uses portable literal tilde ('~/.ssh/...', '~/.gitconfig')
+# strings in generated OpenSSH and Git configs because Git and OpenSSH natively expand
+# tildes at runtime.
+disable=SC2088

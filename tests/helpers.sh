@@ -144,6 +144,20 @@ assert_dir_exists() {
     return 1
 }
 
+# Assert directory does NOT exist
+assert_dir_not_exists() {
+    local path="$1"
+    local msg="${2:-}"
+
+    if [[ ! -d "$path" ]]; then
+        return 0
+    fi
+
+    printf '    FAIL: %s\n' "${msg:-assert_dir_not_exists}"
+    printf '      Directory should not exist: %s\n' "$path"
+    return 1
+}
+
 # Assert file contains a string
 assert_file_contains() {
     local path="$1"
@@ -229,7 +243,11 @@ TEST_HOME=""
 setup_test_home() {
     ORIGINAL_HOME="$HOME"
     TEST_HOME=$(mktemp -d "${TMPDIR:-/tmp}/gitsetu-test.XXXXXX")
-    TEST_HOME=$(cd "$TEST_HOME" && pwd -P)
+    if [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]]; then
+        TEST_HOME=$(cd "$TEST_HOME" && pwd -W)
+    else
+        TEST_HOME=$(cd "$TEST_HOME" && pwd -P)
+    fi
     export HOME="$TEST_HOME"
     unset XDG_CONFIG_HOME
     mkdir -p "$HOME/.ssh"

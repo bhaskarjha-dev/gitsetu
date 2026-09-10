@@ -36,9 +36,11 @@ test_global_block_has_includeif() {
 
     local keyword
     keyword=$(get_gitdir_keyword)
+    local expected_path
+    expected_path=$(normalize_path "${GITSETU_PROFILES_DIR}/pro.gitconfig")
 
     assert_contains "$block" "[includeIf \"${keyword}/dev/pro/\"]" "has includeIf for pro" &&
-    assert_contains "$block" "path = \"${GITSETU_PROFILES_DIR}/pro.gitconfig\"" "has profile path"
+    assert_contains "$block" "path = \"${expected_path}\"" "has profile path"
 }
 
 test_global_block_has_safe_directories() {
@@ -90,7 +92,7 @@ test_profile_gitconfig_content() {
 
     assert_contains "$content" "name = Pro User" "has name" &&
     assert_contains "$content" "email = pro@test.com" "has email" &&
-    assert_contains "$content" "sshCommand = ssh -i ${HOME}/.ssh/id_ed25519_pro" "has sshCommand" &&
+    assert_contains "$content" "sshCommand = ssh -i ~/.ssh/id_ed25519_pro" "has sshCommand" &&
     assert_contains "$content" "[gitsetu:managed:start] Profile: pro" "has start marker" &&
     assert_contains "$content" "[gitsetu:managed:end] Profile: pro" "has end marker"
 }

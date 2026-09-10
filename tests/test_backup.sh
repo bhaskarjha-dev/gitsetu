@@ -116,7 +116,7 @@ EOF
     
     # 1. Test Backup
     local vault_file="test_vault.enc"
-    cmd_backup "$vault_file" >/dev/null 2>&1
+    cmd_backup "$vault_file" || return 1
     assert_equals 0 $? "cmd_backup runs successfully" || return 1
     
     if [[ ! -f "$vault_file" ]]; then
@@ -129,7 +129,7 @@ EOF
     rm -f "$HOME/.ssh/id_ed25519_test" "$HOME/.ssh/id_ed25519_test.pub"
     
     # 3. Test Restore
-    cmd_restore "$vault_file" >/dev/null 2>&1
+    cmd_restore "$vault_file" || return 1
     assert_equals 0 $? "cmd_restore runs successfully" || return 1
     
     # Verify config state is restored

@@ -67,12 +67,12 @@ test_integration_includeif_correct() {
 test_integration_profile_config_created() {
     assert_file_exists "$GITSETU_PROFILES_DIR/pro.gitconfig" "pro profile exists" &&
     assert_file_contains "$GITSETU_PROFILES_DIR/pro.gitconfig" "email = pro@test.com" "pro has email" &&
-    assert_file_contains "$GITSETU_PROFILES_DIR/pro.gitconfig" "sshCommand = ssh -i ${HOME}/.ssh/id_ed25519_pro" "pro has sshCommand"
+    assert_file_contains "$GITSETU_PROFILES_DIR/pro.gitconfig" "sshCommand = ssh -i ~/.ssh/id_ed25519_pro" "pro has sshCommand"
 }
 
 test_integration_ssh_config_created() {
     assert_file_exists "$HOME/.ssh/config" "ssh config exists" &&
-    assert_file_contains "$HOME/.ssh/config" "Include $GITSETU_PROFILES_DIR/ssh_config" "has include directive" &&
+    assert_file_contains "$HOME/.ssh/config" "Include ~/.config/gitsetu/profiles/ssh_config" "has include directive" &&
     assert_file_exists "$GITSETU_PROFILES_DIR/ssh_config" "isolated ssh config exists" &&
     assert_file_contains "$GITSETU_PROFILES_DIR/ssh_config" "Host github-global" "has global host" &&
     assert_file_contains "$GITSETU_PROFILES_DIR/ssh_config" "Host github-pro" "has pro host" &&
@@ -117,7 +117,7 @@ test_integration_idempotent_rerun() {
     assert_equals "1" "$gitconfig_markers" "gitconfig has exactly 1 managed block" || return 1
 
     local ssh_host_count
-    ssh_host_count=$(grep -c "Include $GITSETU_PROFILES_DIR/ssh_config" "$HOME/.ssh/config")
+    ssh_host_count=$(grep -c "Include ~/.config/gitsetu/profiles/ssh_config" "$HOME/.ssh/config")
     assert_equals "1" "$ssh_host_count" "ssh config has exactly 1 Include directive"
 }
 

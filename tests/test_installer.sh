@@ -74,6 +74,73 @@ test_installation_pipeline() {
     return 0
 }
 
+test_windows_powershell_installer_pipeline() {
+    # Skip if not on Windows / MSYS / Cygwin
+    if [[ "${OSTYPE:-}" != "msys"* ]] && [[ "${OSTYPE:-}" != "cygwin"* ]] && [[ "${OSTYPE:-}" != "win"* ]]; then
+        return 0
+    fi
+    if ! command -v powershell.exe >/dev/null 2>&1; then
+        return 0
+    fi
+    
+    local sandbox_appdata
+    sandbox_appdata=$(mktemp -d "${TMPDIR:-/tmp}/gitsetu_ps_test_XXXXXX")
+    local win_sandbox_appdata
+    win_sandbox_appdata=$(cd "$sandbox_appdata" && { pwd -W 2>/dev/null || pwd; })
+    
+    local local_repo
+    local_repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && { pwd -W 2>/dev/null || pwd; })
+    
+    # 1. Run install.ps1 with isolated LOCALAPPDATA
+    LOCALAPPDATA="$win_sandbox_appdata" GITSETU_REPO_URL="$local_repo" GITSETU_TEST="true" \
+        powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$local_repo/install.ps1" >/dev/null 2>&1
+    assert_equals 0 $? "install.ps1 runs successfully" || { rm -rf "$sandbox_appdata"; return 1; }
+    
+    # 2. Verify files created
+    if [[ ! -d "$sandbox_appdata/gitsetu/share" ]]; then
+        echo "Failed: %LOCALAPPDATA%/gitsetu/share not found"
+        rm -rf "$sandbox_appdata"; return 1
+    fi
+    if [[ ! -f "$sandbox_appdata/gitsetu/bin/gitsetu.cmd" ]]; then
+        echo "Failed: gitsetu.cmd not found in bin"
+        rm -rf "$sandbox_appdata"; return 1
+    fi
+    if [[ ! -f "$sandbox_appdata/gitsetu/bin/gitsetu.ps1" ]]; then
+        echo "Failed: gitsetu.ps1 not found in bin"
+        rm -rf "$sandbox_appdata"; return 1
+    fi
+    
+    # 3. Verify execution via cmd.exe
+    local cmd_out
+    cmd_out=$(MSYS2_ARG_CONV_EXCL="*" cmd.exe /c "$win_sandbox_appdata/gitsetu/bin/gitsetu.cmd" --version 2>&1 || true)
+    if [[ "$cmd_out" != *"gitsetu v1.0.0"* ]]; then
+        echo "Failed: gitsetu.cmd --version output: $cmd_out"
+        rm -rf "$sandbox_appdata"; return 1
+    fi
+    
+    # 4. Verify execution via powershell.exe
+    local ps_out
+    ps_out=$(powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$win_sandbox_appdata/gitsetu/bin/gitsetu.ps1" --version 2>&1 || true)
+    if [[ "$ps_out" != *"gitsetu v1.0.0"* ]]; then
+        echo "Failed: gitsetu.ps1 --version output: $ps_out"
+        rm -rf "$sandbox_appdata"; return 1
+    fi
+    
+    # 5. Test uninstaller
+    LOCALAPPDATA="$win_sandbox_appdata" GITSETU_TEST="true" CI="true" \
+        powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$local_repo/uninstall.ps1" -Force >/dev/null 2>&1
+    assert_equals 0 $? "uninstall.ps1 runs successfully" || { rm -rf "$sandbox_appdata"; return 1; }
+    
+    if [[ -d "$sandbox_appdata/gitsetu" ]]; then
+        echo "Failed: %LOCALAPPDATA%/gitsetu was not removed by uninstall.ps1"
+        rm -rf "$sandbox_appdata"; return 1
+    fi
+    
+    rm -rf "$sandbox_appdata"
+    return 0
+}
+
 printf '\n%btest_installer.sh%b\n' "$T_BOLD" "$T_RESET"
-run_test "Full Installation/Uninstallation Pipeline" test_installation_pipeline
+run_test "POSIX Bash Installation/Uninstallation Pipeline" test_installation_pipeline
+run_test "Windows PowerShell Installation/Uninstallation Pipeline" test_windows_powershell_installer_pipeline
 print_results "Installer pipeline tests"

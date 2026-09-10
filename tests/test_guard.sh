@@ -23,17 +23,7 @@ test_install_guard() {
     local hooks_path
     hooks_path=$(git config --global core.hooksPath 2>/dev/null || echo "")
     
-    # Normalize path on Windows (C:/ -> /c/) so it matches gitbash POSIX path
-    if [[ "$GITSETU_OS" == "gitbash" ]] || [[ "$GITSETU_OS" == "wsl" ]]; then
-        if [[ "$hooks_path" =~ ^([a-zA-Z]):/(.*) ]]; then
-            local drive="${BASH_REMATCH[1]}"
-            local rest="${BASH_REMATCH[2]}"
-            drive=$(printf '%s' "$drive" | tr '[:upper:]' '[:lower:]')
-            hooks_path="/${drive}/${rest}"
-        fi
-    fi
-    
-    assert_equals "$GITSETU_HOOKS_DIR" "$hooks_path" "core.hooksPath set globally" || return 1
+    assert_equals "$(normalize_path "$GITSETU_HOOKS_DIR")" "$(normalize_path "$hooks_path")" "core.hooksPath set globally" || return 1
 }
 
 test_guard_blocks_mismatch() {

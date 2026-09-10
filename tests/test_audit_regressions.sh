@@ -216,6 +216,130 @@ test_s01_cleanup_restores_stty() {
 }
 
 # ==============================================================================
+# W01: Windows drive path normalization converts /c/path to C:/path
+# ==============================================================================
+test_w01_windows_path_normalization() {
+    setup_test_home
+    source_gitsetu_libs
+
+    if [[ "$GITSETU_OS" == "gitbash" ]]; then
+        local p1 p2
+        p1=$(normalize_path "/c/Users/test/pro")
+        assert_equals "C:/Users/test/pro" "$p1" "convert /c/ to C:/"
+
+        p2=$(normalize_path 'D:\dev\work')
+        assert_equals "D:/dev/work" "$p2" "convert backslash to forward slash and uppercase drive"
+    fi
+    return 0
+}
+
+# ==============================================================================
+# W02: OpenSSH Include and IdentityFile use portable tilde notation
+# ==============================================================================
+test_w02_openssh_portable_paths() {
+    setup_test_home
+    source_gitsetu_libs
+
+    local block
+    block=$(build_ssh_host_block "work" "github.com" "$HOME/.ssh/id_ed25519_work")
+    assert_contains "$block" "IdentityFile ~/.ssh/id_ed25519_work" "IdentityFile uses portable ~/.ssh/"
+
+    PROFILE_LABELS=("global" "work")
+    PROFILE_PROVIDERS=("github.com" "github.com")
+    PROFILE_KEYS=("$HOME/.ssh/id_ed25519_global" "$HOME/.ssh/id_ed25519_work")
+    PROFILE_COUNT=2
+
+    write_ssh_config >/dev/null 2>&1
+    assert_file_contains "$HOME/.ssh/config" "Include ~/.config/gitsetu/profiles/ssh_config" "Include uses portable path"
+}
+
+# ==============================================================================
+# W03: Profile gitconfig uses portable sshCommand
+# ==============================================================================
+test_w03_profile_portable_sshcommand() {
+    setup_test_home
+    source_gitsetu_libs
+
+    local content
+    content=$(build_profile_gitconfig "work" "Work User" "work@company.com" 0 "$HOME/.ssh/id_ed25519_work")
+    assert_contains "$content" "sshCommand = ssh -i ~/.ssh/id_ed25519_work" "sshCommand uses portable path"
+}
+
+# ==============================================================================
+# W04: Windows uses native credential manager helper
+# ==============================================================================
+test_w04_windows_credential_helper() {
+    setup_test_home
+    source_gitsetu_libs
+
+    if [[ "$GITSETU_OS" == "gitbash" ]]; then
+        local block
+        block=$(build_global_gitconfig_block)
+        assert_contains "$block" "helper = manager" "Windows uses manager credential helper"
+    fi
+    return 0
+}
+
+# ==============================================================================
+# W06: NTFS 644 permission warnings suppressed under gitbash
+# ==============================================================================
+test_w06_ntfs_permissions_handling() {
+    setup_test_home
+    source_gitsetu_libs
+
+    if [[ "$GITSETU_OS" == "gitbash" ]]; then
+        local key="$HOME/.ssh/id_ed25519_test"
+        mkdir -p "$HOME/.ssh"
+        touch "$key" "$key.pub"
+        chmod 644 "$key" 2>/dev/null || true
+
+        local issues=0
+        PROFILE_LABELS=("test")
+        PROFILE_KEYS=("$key")
+        PROFILE_COUNT=1
+        verify_ssh_keys || issues=$?
+        assert_equals 0 "$issues" "644 on NTFS should not trigger permission error"
+    fi
+    return 0
+}
+
+# ==============================================================================
+# W07: Live Git configuration evaluation in a real repo
+# ==============================================================================
+test_w07_live_git_resolution() {
+    setup_test_home
+    source_gitsetu_libs
+
+    local work_dir="$HOME/work_repo"
+    mkdir -p "$work_dir"
+
+    PROFILE_LABELS=("global" "work")
+    PROFILE_NAMES=("Global User" "Work User")
+    PROFILE_EMAILS=("global@example.com" "work@company.com")
+    PROFILE_DIRS=("" "$work_dir")
+    PROFILE_PROVIDERS=("github.com" "github.com")
+    PROFILE_SIGNS=("0" "0")
+    PROFILE_KEYS=("$HOME/.ssh/id_ed25519_global" "$HOME/.ssh/id_ed25519_work")
+    PROFILE_USERS=("" "")
+    PROFILE_PATS=("" "")
+    PROFILE_COUNT=2
+
+    ensure_dirs
+    write_global_gitconfig >/dev/null 2>&1
+    write_profile_gitconfig "work" "Work User" "work@company.com" >/dev/null 2>&1
+    write_profiles_conf >/dev/null 2>&1
+
+    # Initialize a real Git repository in work_dir
+    (
+        cd "$work_dir"
+        git init --quiet
+        local resolved_email
+        resolved_email=$(git config user.email 2>/dev/null || echo "")
+        assert_equals "work@company.com" "$resolved_email" "Live Git resolves work profile email inside work_dir"
+    )
+}
+
+# ==============================================================================
 # Run all regression tests
 # ==============================================================================
 run_test "F01: cmd_status loads email from profile gitconfig" test_f01_status_loads_email_from_gitconfig
@@ -226,6 +350,12 @@ run_test "F07: completion offers no ghost subcommands" test_f07_completion_no_gh
 run_test "F09: empty cleanup arrays survive set -u" test_f09_empty_cleanup_arrays_safe
 run_test "C01: ask_password not called via subshell capture" test_c01_ask_password_not_in_subshell
 run_test "S01: cleanup trap restores stty echo" test_s01_cleanup_restores_stty
+run_test "W01: Windows drive path normalization converts /c/path to C:/path" test_w01_windows_path_normalization
+run_test "W02: OpenSSH Include and IdentityFile use portable tilde notation" test_w02_openssh_portable_paths
+run_test "W03: Profile gitconfig uses portable sshCommand" test_w03_profile_portable_sshcommand
+run_test "W04: Windows uses native credential manager helper" test_w04_windows_credential_helper
+run_test "W06: NTFS 644 permissions accepted under gitbash" test_w06_ntfs_permissions_handling
+run_test "W07: Live Git resolves includeIf in real repo" test_w07_live_git_resolution
 
 print_results "Audit Regression tests"
 
