@@ -330,7 +330,7 @@ load_profiles() {
     done < "$GITSETU_PROFILES_CONF"
 }
 GITSETU_SCRIPT_DIR="${GITSETU_SCRIPT_DIR:-}"   # Preserve value set by main script
-
+GITSETU_DIR="${GITSETU_DIR:-${GITSETU_SCRIPT_DIR:-}}"
 # ------------------------------------------------------------------------------
 # Helper: lowercase a string (bash 3.2 compatible)
 # Usage: result=$(to_lower "FooBar")
@@ -392,15 +392,15 @@ remove_profile_at_index() {
         fi
     done
     
-    PROFILE_LABELS=(${new_labels[@]+"${new_labels[@]}"})
-    PROFILE_NAMES=(${new_names[@]+"${new_names[@]}"})
-    PROFILE_EMAILS=(${new_emails[@]+"${new_emails[@]}"})
-    PROFILE_DIRS=(${new_dirs[@]+"${new_dirs[@]}"})
-    PROFILE_PROVIDERS=(${new_providers[@]+"${new_providers[@]}"})
-    PROFILE_SIGNS=(${new_signs[@]+"${new_signs[@]}"})
-    PROFILE_KEYS=(${new_keys[@]+"${new_keys[@]}"})
-    PROFILE_USERS=(${new_users[@]+"${new_users[@]}"})
-    PROFILE_PATS=(${new_pats[@]+"${new_pats[@]}"})
+    PROFILE_LABELS=("${new_labels[@]+"${new_labels[@]}"}")
+    PROFILE_NAMES=("${new_names[@]+"${new_names[@]}"}")
+    PROFILE_EMAILS=("${new_emails[@]+"${new_emails[@]}"}")
+    PROFILE_DIRS=("${new_dirs[@]+"${new_dirs[@]}"}")
+    PROFILE_PROVIDERS=("${new_providers[@]+"${new_providers[@]}"}")
+    PROFILE_SIGNS=("${new_signs[@]+"${new_signs[@]}"}")
+    PROFILE_KEYS=("${new_keys[@]+"${new_keys[@]}"}")
+    PROFILE_USERS=("${new_users[@]+"${new_users[@]}"}")
+    PROFILE_PATS=("${new_pats[@]+"${new_pats[@]}"}")
     
     PROFILE_COUNT=$((PROFILE_COUNT - 1))
     return 0
@@ -546,9 +546,10 @@ normalize_path() {
 # Everything else uses case-sensitive: gitdir:
 # ------------------------------------------------------------------------------
 get_gitdir_keyword() {
+    # Note: lib/guard.sh also handles macos case-insensitivity consistently
     case "$GITSETU_OS" in
-        gitbash) printf 'gitdir/i:' ;;
-        *)       printf 'gitdir:' ;;
+        gitbash|macos) printf 'gitdir/i:' ;;
+        *)             printf 'gitdir:' ;;
     esac
 }
 
@@ -1150,53 +1151,6 @@ validate_path() {
     return 1
 }
 
-# ------------------------------------------------------------------------------
-# validate_no_overlap — Check that a new path doesn't overlap with existing ones
-#
-# "Overlap" means one path is a parent of another:
-#   /a/b overlaps with /a/b/c (parent of)
-#   /a/b/c overlaps with /a/b (child of)
-#   /a/b does NOT overlap with /a/x
-#
-# Usage: validate_no_overlap "/new/path" "${PROFILE_DIRS[@]}"
-# Returns: 0 if no overlap, 1 if overlap detected
-# ------------------------------------------------------------------------------
-validate_no_overlap() {
-    local new_path="$1"
-    shift
-    local existing_paths=("$@")
-
-    # Empty paths don't overlap
-    if [[ -z "$new_path" ]]; then
-        return 0
-    fi
-
-    # Normalize and ensure trailing slash for comparison
-    new_path=$(normalize_path "$new_path")
-    local new_with_slash="${new_path}/"
-
-    local existing
-    for existing in "${existing_paths[@]}"; do
-        if [[ -z "$existing" ]]; then
-            continue
-        fi
-
-        existing=$(normalize_path "$existing")
-        local existing_with_slash="${existing}/"
-
-        # Check if new is parent of existing
-        if [[ "$existing_with_slash" == "$new_with_slash"* ]]; then
-            return 1
-        fi
-
-        # Check if new is child of existing
-        if [[ "$new_with_slash" == "$existing_with_slash"* ]]; then
-            return 1
-        fi
-    done
-
-    return 0
-}
 
 # ------------------------------------------------------------------------------
 # validate_key_name — SSH key filename validation

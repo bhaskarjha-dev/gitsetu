@@ -136,9 +136,10 @@ normalize_path() {
 # Everything else uses case-sensitive: gitdir:
 # ------------------------------------------------------------------------------
 get_gitdir_keyword() {
+    # Note: lib/guard.sh also handles macos case-insensitivity consistently
     case "$GITSETU_OS" in
-        gitbash) printf 'gitdir/i:' ;;
-        *)       printf 'gitdir:' ;;
+        gitbash|macos) printf 'gitdir/i:' ;;
+        *)             printf 'gitdir:' ;;
     esac
 }
 

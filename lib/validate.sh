@@ -152,53 +152,6 @@ validate_path() {
     return 1
 }
 
-# ------------------------------------------------------------------------------
-# validate_no_overlap — Check that a new path doesn't overlap with existing ones
-#
-# "Overlap" means one path is a parent of another:
-#   /a/b overlaps with /a/b/c (parent of)
-#   /a/b/c overlaps with /a/b (child of)
-#   /a/b does NOT overlap with /a/x
-#
-# Usage: validate_no_overlap "/new/path" "${PROFILE_DIRS[@]}"
-# Returns: 0 if no overlap, 1 if overlap detected
-# ------------------------------------------------------------------------------
-validate_no_overlap() {
-    local new_path="$1"
-    shift
-    local existing_paths=("$@")
-
-    # Empty paths don't overlap
-    if [[ -z "$new_path" ]]; then
-        return 0
-    fi
-
-    # Normalize and ensure trailing slash for comparison
-    new_path=$(normalize_path "$new_path")
-    local new_with_slash="${new_path}/"
-
-    local existing
-    for existing in "${existing_paths[@]}"; do
-        if [[ -z "$existing" ]]; then
-            continue
-        fi
-
-        existing=$(normalize_path "$existing")
-        local existing_with_slash="${existing}/"
-
-        # Check if new is parent of existing
-        if [[ "$existing_with_slash" == "$new_with_slash"* ]]; then
-            return 1
-        fi
-
-        # Check if new is child of existing
-        if [[ "$new_with_slash" == "$existing_with_slash"* ]]; then
-            return 1
-        fi
-    done
-
-    return 0
-}
 
 # ------------------------------------------------------------------------------
 # validate_key_name — SSH key filename validation

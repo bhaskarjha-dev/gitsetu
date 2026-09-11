@@ -107,41 +107,6 @@ test_label_invalid_too_long() {
     assert_exit_code 1 validate_label "abcdefghijklmnopqrstu"
 }
 
-# --- Path overlap tests ---
-
-test_overlap_parent_child() {
-    # /a/b is parent of /a/b/c → overlap
-    assert_exit_code 1 validate_no_overlap "/a/b" "/a/b/c"
-}
-
-test_overlap_child_parent() {
-    # /a/b/c is child of /a/b → overlap
-    assert_exit_code 1 validate_no_overlap "/a/b/c" "/a/b"
-}
-
-test_overlap_same_path() {
-    # Same path → overlap
-    assert_exit_code 1 validate_no_overlap "/a/b" "/a/b"
-}
-
-test_no_overlap_siblings() {
-    # /a/b and /a/x are siblings → no overlap
-    assert_exit_code 0 validate_no_overlap "/a/x" "/a/b"
-}
-
-test_no_overlap_different_roots() {
-    assert_exit_code 0 validate_no_overlap "/dev/work" "/dev/pro"
-}
-
-test_no_overlap_empty_existing() {
-    # No existing paths → no overlap
-    assert_exit_code 0 validate_no_overlap "/dev/work"
-}
-
-test_no_overlap_empty_string_in_list() {
-    # Existing list has an empty string (like the default profile)
-    assert_exit_code 0 validate_no_overlap "/media/sf_dev/pro" "" "/some/other/path"
-}
 
 # --- Run ---
 
@@ -173,13 +138,5 @@ run_test "invalid label: starts with number" test_label_invalid_starts_number
 run_test "invalid label: starts with hyphen" test_label_invalid_starts_hyphen
 run_test "invalid label: ends with hyphen" test_label_invalid_ends_hyphen
 run_test "invalid label: too long (21 chars)" test_label_invalid_too_long
-
-run_test "overlap: parent contains child" test_overlap_parent_child
-run_test "overlap: child within parent" test_overlap_child_parent
-run_test "overlap: same path" test_overlap_same_path
-run_test "no overlap: siblings" test_no_overlap_siblings
-run_test "no overlap: different roots" test_no_overlap_different_roots
-run_test "no overlap: empty existing list" test_no_overlap_empty_existing
-run_test "no overlap: empty string in list" test_no_overlap_empty_string_in_list
 
 print_results "Validation tests"
