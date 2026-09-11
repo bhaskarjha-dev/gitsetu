@@ -20,13 +20,24 @@
 # latency-sensitive — both must skip re-exec.
 # Uses a temp file instead of process substitution <(...) because bash 3.2
 # (macOS default) has unreliable fd handling with exec + process substitution.
-if ! command -v tr >/dev/null 2>&1; then echo "Error: 'tr' command is required but not found." >&2; exit 1; fi
 if [[ "${GITSETU_CRLF_CLEAN:-}" != "1" ]] && [[ "${1:-}" != "credential" ]] && [[ "${1:-}" != "prompt" ]]; then
-    export GITSETU_CRLF_CLEAN=1
-    export GITSETU_ORIG_SCRIPT="${BASH_SOURCE[0]:-$0}"
-    _crlf_tmp="${TMPDIR:-/tmp}/.gitsetu_crlf_$$"
-    tr -d '\r' < "${BASH_SOURCE[0]:-$0}" > "$_crlf_tmp"
-    exec bash "$_crlf_tmp" "$@"
+    # Only re-exec if carriage return actually exists in script header
+    if head -n 2 "${BASH_SOURCE[0]:-$0}" 2>/dev/null | grep -q $'\r'; then
+        if ! command -v tr >/dev/null 2>&1; then
+            echo "Error: 'tr' command is required to normalize CRLF line endings." >&2
+            exit 1
+        fi
+        export GITSETU_CRLF_CLEAN=1
+        export GITSETU_ORIG_SCRIPT="${BASH_SOURCE[0]:-$0}"
+        _crlf_tmp=$(umask 077 && mktemp "${TMPDIR:-/tmp}/.gitsetu_crlf.XXXXXX")
+        export GITSETU_CRLF_TMP="$_crlf_tmp"
+        tr -d '\r' < "${BASH_SOURCE[0]:-$0}" > "$_crlf_tmp"
+        chmod 700 "$_crlf_tmp" 2>/dev/null || true
+        trap 'rm -f "$_crlf_tmp" 2>/dev/null || true' EXIT INT TERM
+        exec bash "$_crlf_tmp" "$@"
+        rm -f "$_crlf_tmp" 2>/dev/null || true
+        exit 1
+    fi
 fi
 
 set -euo pipefail
@@ -165,11 +176,22 @@ fi
 # stdin from pipes, breaking commands like "credential" that read stdin.
 # ------------------------------------------------------------------------------
 gitsetu_source() {
-    local _src_tmp="${TMPDIR:-/tmp}/.gitsetu_src_$$_${RANDOM}"
-    tr -d '\r' < "$1" > "$_src_tmp"
+    local target="$1"
+    # Fast path: If file contains no CRLF, source directly (zero temp file, zero race condition)
+    if ! grep -q $'\r' "$target" 2>/dev/null; then
+        # shellcheck disable=SC1090
+        source "$target"
+        return $?
+    fi
+
+    # Slow path: CRLF-contaminated mount (vboxsf). Create mode 0600 temp file
+    local _src_tmp
+    _src_tmp=$(umask 077 && mktemp "${TMPDIR:-/tmp}/.gitsetu_src.XXXXXX")
+    GITSETU_CLEANUP_FILES+=("$_src_tmp")
+    tr -d '\r' < "$target" > "$_src_tmp"
     # shellcheck disable=SC1090
     source "$_src_tmp"
-    rm -f "$_src_tmp"
+    rm -f "$_src_tmp" 2>/dev/null || true
 }
 gitsetu_source "$GITSETU_SCRIPT_DIR/lib/core.sh"
 gitsetu_source "$GITSETU_SCRIPT_DIR/lib/platform.sh"
@@ -196,12 +218,18 @@ gitsetu_global_cleanup() {
     # Restore terminal cursor visibility and echo if interrupted
     printf '\033[?25h' >&2 2>/dev/null || true
     stty echo 2>/dev/null || true
-    # Clean up CRLF self-healing temp file (created before exec)
-    rm -f "${TMPDIR:-/tmp}/.gitsetu_crlf_$$" 2>/dev/null || true
+    # Clean up CRLF self-healing temp file if any
+    if [[ -n "${GITSETU_CRLF_TMP:-}" ]] && [[ -f "$GITSETU_CRLF_TMP" ]]; then
+        rm -f "$GITSETU_CRLF_TMP" 2>/dev/null || true
+    fi
     local f d
     for f in ${GITSETU_CLEANUP_FILES[@]+"${GITSETU_CLEANUP_FILES[@]}"}; do
         rm -f "$f" 2>/dev/null || true
     done
+    if type release_lock >/dev/null 2>&1; then
+        GITSETU_LOCK_DEPTH=1
+        release_lock 2>/dev/null || true
+    fi
     for d in ${GITSETU_CLEANUP_DIRS[@]+"${GITSETU_CLEANUP_DIRS[@]}"}; do
         if [[ "$d" == *.lock ]]; then
             if [[ -f "$d/pid" ]]; then
@@ -210,7 +238,7 @@ gitsetu_global_cleanup() {
                 if [[ "$lock_owner" != "$$" ]]; then
                     continue # We do not own this lock. Do not delete it.
                 fi
-                rm -f "$d/pid" 2>/dev/null || true
+                rm -f "$d/pid" "$d/timestamp" 2>/dev/null || true
             else
                 continue # Lock has no pid file; we do not own it. Do not delete it.
             fi
@@ -487,7 +515,9 @@ cmd_teardown() {
         fi
     fi
 
+    acquire_lock || return 1
     teardown_all "$deep"
+    release_lock
 }
 
 # ------------------------------------------------------------------------------
@@ -521,8 +551,11 @@ cmd_setup() {
     # Fast-path for autonomous zero-prompt discovery mode
     if [[ "$auto_mode" -eq 1 ]]; then
         export GITSETU_AUTO_MODE=1
+        acquire_lock || return 1
         auto_setup_runner
-        return $?
+        local auto_res=$?
+        release_lock
+        return "$auto_res"
     fi
     
     # Check if TTY
@@ -662,14 +695,18 @@ cmd_remove() {
         return 0
     fi
     
+    acquire_lock || return 1
+
     print_step "Removing profile '$profile'..."
     
-    # 1. Remove from profiles.conf using awk (sed is non-portable across BSD/GNU without weird syntax)
+    # 1. Remove from profiles.conf using awk with secure temp file permissions
     local tmp_conf
-    tmp_conf=$(mktemp "${GITSETU_PROFILES_CONF}.tmp.XXXXXX")
+    tmp_conf=$(umask 077 && mktemp "${GITSETU_PROFILES_CONF}.tmp.XXXXXX")
     GITSETU_CLEANUP_FILES+=("$tmp_conf")
     awk -F: -v prof="$profile" '$1 != prof {print}' "$GITSETU_PROFILES_CONF" > "$tmp_conf"
+    chmod 600 "$tmp_conf" 2>/dev/null || true
     mv "$tmp_conf" "$GITSETU_PROFILES_CONF"
+    chmod 600 "$GITSETU_PROFILES_CONF" 2>/dev/null || true
     
     # 2. Delete the profile gitconfig
     local config_file="$GITSETU_PROFILES_DIR/${profile}.gitconfig"
@@ -688,6 +725,8 @@ cmd_remove() {
         print_warning "Failed to regenerate ~/.ssh/config. Run 'gitsetu setup' to repair."
     fi
     
+    release_lock
+
     print_success "Profile '$profile' successfully removed."
     
     # Ask about SSH keys

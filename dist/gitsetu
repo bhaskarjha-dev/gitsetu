@@ -20,13 +20,24 @@
 # latency-sensitive — both must skip re-exec.
 # Uses a temp file instead of process substitution <(...) because bash 3.2
 # (macOS default) has unreliable fd handling with exec + process substitution.
-if ! command -v tr >/dev/null 2>&1; then echo "Error: 'tr' command is required but not found." >&2; exit 1; fi
 if [[ "${GITSETU_CRLF_CLEAN:-}" != "1" ]] && [[ "${1:-}" != "credential" ]] && [[ "${1:-}" != "prompt" ]]; then
-    export GITSETU_CRLF_CLEAN=1
-    export GITSETU_ORIG_SCRIPT="${BASH_SOURCE[0]:-$0}"
-    _crlf_tmp="${TMPDIR:-/tmp}/.gitsetu_crlf_$$"
-    tr -d '\r' < "${BASH_SOURCE[0]:-$0}" > "$_crlf_tmp"
-    exec bash "$_crlf_tmp" "$@"
+    # Only re-exec if carriage return actually exists in script header
+    if head -n 2 "${BASH_SOURCE[0]:-$0}" 2>/dev/null | grep -q $'\r'; then
+        if ! command -v tr >/dev/null 2>&1; then
+            echo "Error: 'tr' command is required to normalize CRLF line endings." >&2
+            exit 1
+        fi
+        export GITSETU_CRLF_CLEAN=1
+        export GITSETU_ORIG_SCRIPT="${BASH_SOURCE[0]:-$0}"
+        _crlf_tmp=$(umask 077 && mktemp "${TMPDIR:-/tmp}/.gitsetu_crlf.XXXXXX")
+        export GITSETU_CRLF_TMP="$_crlf_tmp"
+        tr -d '\r' < "${BASH_SOURCE[0]:-$0}" > "$_crlf_tmp"
+        chmod 700 "$_crlf_tmp" 2>/dev/null || true
+        trap 'rm -f "$_crlf_tmp" 2>/dev/null || true' EXIT INT TERM
+        exec bash "$_crlf_tmp" "$@"
+        rm -f "$_crlf_tmp" 2>/dev/null || true
+        exit 1
+    fi
 fi
 
 set -euo pipefail
@@ -193,6 +204,30 @@ GITSETU_BACKUP_DIR="$GITSETU_CONFIG_DIR/backups"
 GITSETU_PROFILES_DIR="$GITSETU_CONFIG_DIR/profiles"
 GITSETU_HOOKS_DIR="$GITSETU_CONFIG_DIR/hooks"
 GITSETU_PROFILES_CONF="$GITSETU_CONFIG_DIR/profiles.conf"
+GITSETU_LOCK_DIR="$GITSETU_CONFIG_DIR/profiles.lock"
+GITSETU_LOCK_DEPTH=0
+
+# ------------------------------------------------------------------------------
+# Secure Temporary File & Directory Helpers
+# Creates temporary files/directories with restrictive permissions (0600 / 0700)
+# under umask 077, and registers them for automated process cleanup.
+# ------------------------------------------------------------------------------
+secure_mktemp() {
+    local template="${1:-${TMPDIR:-/tmp}/gitsetu.XXXXXX}"
+    local tmp_file
+    tmp_file=$(umask 077 && mktemp "$template") || return 1
+    GITSETU_CLEANUP_FILES+=("$tmp_file")
+    printf '%s\n' "$tmp_file"
+}
+
+secure_mktemp_dir() {
+    local template="${1:-${TMPDIR:-/tmp}/gitsetu.XXXXXX}"
+    local tmp_dir
+    tmp_dir=$(umask 077 && mktemp -d "$template") || return 1
+    GITSETU_CLEANUP_DIRS+=("$tmp_dir")
+    printf '%s\n' "$tmp_dir"
+}
+
 
 # ------------------------------------------------------------------------------
 # Managed block markers
@@ -1344,9 +1379,11 @@ cmd_backup() {
         out_file="gitsetu_vault_${timestamp}.tar.gz.enc"
     fi
 
-    # Tar the state safely
-    local temp_tar="${TMPDIR:-/tmp}/gitsetu_vault_$$_${RANDOM}.tar.gz"
-    GITSETU_CLEANUP_FILES+=("$temp_tar")
+    # Secure temporary directory created with mode 0700 under umask 077
+    local temp_dir
+    temp_dir=$(umask 077 && mktemp -d "${TMPDIR:-/tmp}/gitsetu_vault.XXXXXX")
+    GITSETU_CLEANUP_DIRS+=("$temp_dir")
+    local temp_tar="$temp_dir/gitsetu_vault.tar.gz"
 
     # Bundle: config directory + individual SSH key files from registry
     local tar_args=()
@@ -1371,13 +1408,13 @@ cmd_backup() {
 
     if [[ ${#tar_args[@]} -eq 0 ]]; then
         print_error "No state files found to backup."
-        rm -f "$temp_tar"
+        rm -rf "$temp_dir"
         return 1
     fi
 
-    if ! tar -czf "$temp_tar" -C "$HOME" "${tar_args[@]}" 2>/dev/null; then
+    if ! (umask 077 && tar -czf "$temp_tar" -C "$HOME" "${tar_args[@]}" 2>/dev/null); then
         print_error "Failed to compress state directories."
-        rm -f "$temp_tar"
+        rm -rf "$temp_dir"
         return 1
     fi
 
@@ -1394,7 +1431,7 @@ cmd_backup() {
 
         if [[ "$password" != "$confirm" ]]; then
             print_error "Passwords do not match. Backup aborted."
-            rm -f "$temp_tar"
+            rm -rf "$temp_dir"
             return 1
         fi
     fi
@@ -1404,18 +1441,17 @@ cmd_backup() {
     read -r -a extra_ssl_args <<< "$(get_openssl_args)"
     ssl_args+=("${extra_ssl_args[@]}")
 
-    export GITSETU_VAULT_PASS="$password"
-    if openssl enc "${ssl_args[@]}" -in "$temp_tar" -out "$out_file" -pass env:GITSETU_VAULT_PASS 2>/dev/null; then
+    # Pass password directly via stdin to prevent process environment or table leakage
+    if (umask 077 && printf '%s\n' "$password" | openssl enc "${ssl_args[@]}" -in "$temp_tar" -out "$out_file" -pass stdin 2>/dev/null); then
+        chmod 600 "$out_file" 2>/dev/null || true
         print_success "Vault created successfully: $out_file"
     else
         print_error "Encryption failed."
-        unset GITSETU_VAULT_PASS
-        rm -f "$temp_tar"
+        rm -rf "$temp_dir"
         return 1
     fi
 
-    unset GITSETU_VAULT_PASS
-    rm -f "$temp_tar"
+    rm -rf "$temp_dir"
     return 0
 }
 
@@ -1444,48 +1480,91 @@ cmd_restore() {
     read -r -a extra_ssl_args <<< "$(get_openssl_args)"
     ssl_args+=("${extra_ssl_args[@]}")
 
-    local temp_tar="${TMPDIR:-/tmp}/gitsetu_vault_$$_${RANDOM}.tar.gz"
-    GITSETU_CLEANUP_FILES+=("$temp_tar")
+    # Secure temporary directory created with mode 0700 under umask 077
+    local temp_dir
+    temp_dir=$(umask 077 && mktemp -d "${TMPDIR:-/tmp}/gitsetu_vault.XXXXXX")
+    GITSETU_CLEANUP_DIRS+=("$temp_dir")
+    local temp_tar="$temp_dir/gitsetu_vault.tar.gz"
 
-    export GITSETU_VAULT_PASS="$password"
-    if ! openssl enc "${ssl_args[@]}" -in "$in_file" -out "$temp_tar" -pass env:GITSETU_VAULT_PASS 2>/dev/null; then
+    # Pass password via stdin to prevent process environment leakage
+    if ! (umask 077 && printf '%s\n' "$password" | openssl enc "${ssl_args[@]}" -in "$in_file" -out "$temp_tar" -pass stdin 2>/dev/null); then
         print_error "Decryption failed. Incorrect password or corrupted vault."
-        unset GITSETU_VAULT_PASS
-        rm -f "$temp_tar"
+        rm -rf "$temp_dir"
         return 1
     fi
-    unset GITSETU_VAULT_PASS
+
+    if type acquire_lock >/dev/null 2>&1; then
+        acquire_lock || { rm -rf "$temp_dir"; return 1; }
+    fi
 
     # Pre-Flight Safety Net
-    if [[ -d "$GITSETU_CONFIG_DIR" ]]; then
+    local has_active_state=0
+    if [[ -f "$GITSETU_PROFILES_CONF" ]] || [[ -d "$GITSETU_CONFIG_DIR/profiles" ]]; then
+        has_active_state=1
+    elif [[ -d "$GITSETU_CONFIG_DIR" ]]; then
+        local item
+        for item in "$GITSETU_CONFIG_DIR"/*; do
+            if [[ -e "$item" ]] && [[ "$item" != *.lock ]]; then
+                has_active_state=1
+                break
+            fi
+        done
+    fi
+
+    if [[ "$has_active_state" -eq 1 ]]; then
         print_warning "Active state detected. Creating pre-restore safety backup..."
         local safety_pass
         safety_pass=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c 32)
         local safety_file
         safety_file="gitsetu_vault_pre_restore_$(date +%Y%m%d_%H%M%S).tar.gz.enc"
+        local saved_test_pass="${GITSETU_TEST_VAULT_PASS:-}"
         export GITSETU_TEST_VAULT_PASS="$safety_pass"
-        cmd_backup "$safety_file" >/dev/null 2>&1 || return 1
-        unset GITSETU_TEST_VAULT_PASS
-        # Store password adjacent to vault so user can recover if needed
-        printf '%s\n' "$safety_pass" > "${safety_file}.password"
-        chmod 600 "${safety_file}.password"
+        cmd_backup "$safety_file" >/dev/null 2>&1 || {
+            rm -rf "$temp_dir"
+            if type release_lock >/dev/null 2>&1; then release_lock; fi
+            return 1
+        }
+        if [[ -n "$saved_test_pass" ]]; then
+            export GITSETU_TEST_VAULT_PASS="$saved_test_pass"
+        else
+            unset GITSETU_TEST_VAULT_PASS
+        fi
+        # Store password adjacent to vault with mode 0600 from inception
+        (umask 077 && printf '%s\n' "$safety_pass" > "${safety_file}.password")
+        chmod 600 "${safety_file}.password" 2>/dev/null || true
         print_info "Safety vault: $safety_file (password in ${safety_file}.password)"
         
         # Teardown current global configs to avoid duplicate block drift
         if type teardown_all >/dev/null 2>&1; then
             teardown_all >/dev/null 2>&1 || true
         fi
-        rm -rf "$GITSETU_CONFIG_DIR"
+        local f
+        for f in "$GITSETU_CONFIG_DIR"/*; do
+            if [[ "$f" != *.lock ]]; then
+                rm -rf "$f" 2>/dev/null || true
+            fi
+        done
+    fi
+
+    # Validate archive members against path traversal before extraction
+    local bad_paths
+    bad_paths=$(tar -tzf "$temp_tar" 2>/dev/null | grep -E '^/|\.\./' || true)
+    if [[ -n "$bad_paths" ]]; then
+        print_error "Security violation: backup archive contains prohibited path traversal entries."
+        rm -rf "$temp_dir"
+        if type release_lock >/dev/null 2>&1; then release_lock; fi
+        return 1
     fi
 
     mkdir -p "$HOME/.config" "$HOME/.ssh"
     if ! tar -xzf "$temp_tar" -C "$HOME" 2>/dev/null; then
         print_error "Failed to extract vault."
-        rm -f "$temp_tar"
+        rm -rf "$temp_dir"
+        if type release_lock >/dev/null 2>&1; then release_lock; fi
         return 1
     fi
 
-    rm -f "$temp_tar"
+    rm -rf "$temp_dir"
     print_success "State successfully extracted."
 
     # Regenerate global Git and SSH state from the restored profiles
@@ -1511,6 +1590,10 @@ cmd_restore() {
 
         # Regenerate SSH config (one call writes all host blocks)
         write_ssh_config
+    fi
+
+    if type release_lock >/dev/null 2>&1; then
+        release_lock
     fi
 
     print_success "Restore complete. Your identity is active."
@@ -3561,9 +3644,138 @@ ensure_workspace_dirs() {
 }
 
 # ------------------------------------------------------------------------------
+# Concurrency Locking Mechanism
+# Implements atomic directory locking on $GITSETU_LOCK_DIR with PID liveness
+# verification, stale lock recovery, 60s timeout handling, re-entrancy depth
+# tracking, and explicit release.
+# ------------------------------------------------------------------------------
+acquire_lock() {
+    local target_lock="${1:-${GITSETU_LOCK_DIR:-${GITSETU_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu}/profiles.lock}}"
+    local config_dir
+    config_dir=$(dirname "$target_lock")
+    local max_retries=600  # 600 * 0.1s = 60 seconds max wait
+    if [[ -n "${GITSETU_LOCK_TIMEOUT:-}" ]]; then
+        if [[ "${GITSETU_TEST:-0}" -eq 1 ]]; then
+            max_retries=$(( GITSETU_LOCK_TIMEOUT * 50 ))
+        else
+            max_retries=$(( GITSETU_LOCK_TIMEOUT * 10 ))
+        fi
+        [[ "$max_retries" -lt 1 ]] && max_retries=1
+    fi
+    local retry=0
+    local no_pid_count=0
+
+    # Re-entrancy: If current process already holds the lock, increment depth
+    if [[ "${GITSETU_LOCK_DEPTH:-0}" -gt 0 ]]; then
+        GITSETU_LOCK_DEPTH=$((GITSETU_LOCK_DEPTH + 1))
+        return 0
+    fi
+
+    # Ensure parent config directory exists before attempting mkdir
+    mkdir -p "$config_dir" 2>/dev/null || true
+
+    while ! mkdir "$target_lock" 2>/dev/null; do
+        local lock_pid=""
+        if [[ -f "$target_lock/pid" ]]; then
+            lock_pid=$(cat "$target_lock/pid" 2>/dev/null || echo "")
+        fi
+
+        # If current process already owns lock on disk, increment depth
+        if [[ -n "$lock_pid" ]] && [[ "$lock_pid" == "$$" ]]; then
+            GITSETU_LOCK_DEPTH=$((GITSETU_LOCK_DEPTH + 1))
+            return 0
+        fi
+
+        # Case 1: Holding process is dead (stale lock recovery)
+        if [[ -n "$lock_pid" ]] && ! kill -0 "$lock_pid" 2>/dev/null; then
+            if mv "$target_lock" "${target_lock}.stale.$$" 2>/dev/null; then
+                rm -rf "${target_lock}.stale.$$" 2>/dev/null || true
+                continue
+            fi
+        fi
+
+        # Case 2: PID file missing or empty (process died before writing PID)
+        if [[ -z "$lock_pid" ]]; then
+            no_pid_count=$((no_pid_count + 1))
+            if [[ "$no_pid_count" -ge 50 ]]; then
+                if mv "$target_lock" "${target_lock}.stale.$$" 2>/dev/null; then
+                    rm -rf "${target_lock}.stale.$$" 2>/dev/null || true
+                    no_pid_count=0
+                    continue
+                fi
+            fi
+        else
+            no_pid_count=0
+        fi
+
+        # Case 3: 60-second timeout recovery for abandoned locks
+        local lock_time=""
+        if [[ -f "$target_lock/timestamp" ]]; then
+            lock_time=$(cat "$target_lock/timestamp" 2>/dev/null || echo "")
+        fi
+        if [[ -z "$lock_time" ]]; then
+            lock_time=$(stat -c '%Y' "$target_lock" 2>/dev/null || stat -f '%m' "$target_lock" 2>/dev/null || echo "")
+        fi
+        local now
+        now=$(date +%s 2>/dev/null || echo "")
+        if [[ -n "$lock_time" ]] && [[ -n "$now" ]] && [[ "$now" =~ ^[0-9]+$ ]] && [[ "$lock_time" =~ ^[0-9]+$ ]]; then
+            local age=$((now - lock_time))
+            if [[ "$age" -ge 60 ]]; then
+                if mv "$target_lock" "${target_lock}.stale.$$" 2>/dev/null; then
+                    rm -rf "${target_lock}.stale.$$" 2>/dev/null || true
+                    continue
+                fi
+            fi
+        fi
+
+        retry=$((retry + 1))
+        if [[ "$retry" -ge "$max_retries" ]]; then
+            print_error "Failed to acquire lock for profiles.conf after timeout. Is another gitsetu process running?"
+            return 1
+        fi
+        local sleep_dur=0.1
+        if [[ "${GITSETU_TEST:-0}" -eq 1 ]]; then
+            sleep_dur=0.02
+        fi
+        sleep "$sleep_dur"
+    done
+
+    # Lock acquired: write PID and creation timestamp
+    echo "$$" > "$target_lock/pid"
+    date +%s > "$target_lock/timestamp" 2>/dev/null || true
+    GITSETU_LOCK_DEPTH=1
+    GITSETU_CLEANUP_DIRS+=("$target_lock")
+    return 0
+}
+
+release_lock() {
+    local target_lock="${1:-${GITSETU_LOCK_DIR:-${GITSETU_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu}/profiles.lock}}"
+
+    if [[ "${GITSETU_LOCK_DEPTH:-0}" -gt 1 ]]; then
+        GITSETU_LOCK_DEPTH=$((GITSETU_LOCK_DEPTH - 1))
+        return 0
+    fi
+    GITSETU_LOCK_DEPTH=0
+
+    if [[ -d "$target_lock" ]]; then
+        local lock_pid=""
+        if [[ -f "$target_lock/pid" ]]; then
+            lock_pid=$(cat "$target_lock/pid" 2>/dev/null || echo "")
+        fi
+        if [[ -z "$lock_pid" ]] || [[ "$lock_pid" == "$$" ]]; then
+            rm -f "$target_lock/pid" "$target_lock/timestamp" 2>/dev/null || true
+            rmdir "$target_lock" 2>/dev/null || true
+        fi
+    fi
+    return 0
+}
+
+# ------------------------------------------------------------------------------
 # execute_blueprint
 # ------------------------------------------------------------------------------
 execute_blueprint() {
+    acquire_lock || return 1
+
     clear || printf '\033c'
     print_section "Executing Setup Blueprint"
     
@@ -3591,6 +3803,7 @@ execute_blueprint() {
                 generate_ssh_key "${PROFILE_LABELS[i]}" "${PROFILE_EMAILS[i]}" "$key_path"
             else
                 print_error "Setup aborted due to FIDO2 key generation failure."
+                release_lock
                 exit 1
             fi
         fi
@@ -3641,6 +3854,8 @@ execute_blueprint() {
 
     print_success "Setup complete! You're ready to go."
     printf >&2 '\n'
+
+    release_lock
 }
 
 # ------------------------------------------------------------------------------
@@ -3811,54 +4026,7 @@ cmd_profile() {
     fi
     label=$(to_lower "$label")
 
-    # Acquire POSIX directory lock for headless read-modify-write safety
-    local lock_dir="${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu/profiles.lock"
-    local max_retries=300
-    local retry=0
-    local no_pid_count=0
-    
-    # Ensure config directory exists before locking
-    mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu"
-    
-    while ! mkdir "$lock_dir" 2>/dev/null; do
-        if [[ -f "$lock_dir/pid" ]]; then
-            no_pid_count=0
-            local lock_pid
-            lock_pid=$(cat "$lock_dir/pid" 2>/dev/null || echo "")
-            if [[ -n "$lock_pid" ]] && ! kill -0 "$lock_pid" 2>/dev/null; then
-                # The process holding the lock is dead. Stale lock!
-                # Use atomic mv to prevent TOCTOU race conditions where multiple processes try to delete and acquire
-                if mv "$lock_dir" "${lock_dir}.stale.$$" 2>/dev/null; then
-                    rm -rf "${lock_dir}.stale.$$"
-                    continue # Immediately retry acquiring (only the process that successfully mv'd gets here without sleep)
-                fi
-            fi
-        else
-            # Phantom deadlock prover: the lock dir exists but has no PID file.
-            # This can happen legitimately for a microsecond while a healthy process
-            # is between mkdir and echo $$. Only reap after 50 consecutive observations
-            # (each separated by the 0.1s retry sleep) to definitively prove it's dead.
-            no_pid_count=$((no_pid_count + 1))
-            if [[ "$no_pid_count" -ge 50 ]]; then
-                if mv "$lock_dir" "${lock_dir}.stale.$$" 2>/dev/null; then
-                    rm -rf "${lock_dir}.stale.$$"
-                    no_pid_count=0
-                    continue
-                fi
-            fi
-        fi
-        
-        retry=$((retry+1))
-        if [[ "$retry" -ge "$max_retries" ]]; then
-            print_error "Failed to acquire lock for profiles.conf. Is another gitsetu process running?"
-            exit 1
-        fi
-        sleep 0.1
-    done
-
-    # Lock acquired. Write PID and register for cleanup.
-    echo $$ > "$lock_dir/pid"
-    GITSETU_CLEANUP_DIRS+=("$lock_dir")
+    acquire_lock || exit 1
 
     load_profiles
     if [[ "$PROFILE_COUNT" -eq 0 ]]; then
@@ -3879,12 +4047,14 @@ cmd_profile() {
 
             if [[ "$idx" -eq -1 ]] && [[ "$action" == "edit" ]]; then
                 print_error "Profile '$label' not found."
+                release_lock
                 exit 1
             fi
 
             if [[ "$idx" -eq -1 ]]; then
                 if ! validate_label "$label"; then
                     print_error "Invalid profile label: '$label'."
+                    release_lock
                     exit 1
                 fi
                 idx=$PROFILE_COUNT
@@ -3914,6 +4084,7 @@ cmd_profile() {
                     --no-sign) PROFILE_SIGNS[idx]="0" ;;
                     *)
                         print_error "Unknown flag: $1"
+                        release_lock
                         exit 1
                         ;;
                 esac
@@ -3927,6 +4098,7 @@ cmd_profile() {
                     PROFILE_EMAILS[idx]="$REPLY"
                 else
                     print_error "--email is required in headless mode."
+                    release_lock
                     exit 1
                 fi
             fi
@@ -3944,10 +4116,12 @@ cmd_profile() {
             done
             if [[ "$idx" -eq -1 ]]; then
                 print_error "Profile '$label' not found."
+                release_lock
                 exit 1
             fi
             if [[ "$idx" -eq 0 ]]; then
                 print_error "Cannot remove the global/default profile."
+                release_lock
                 exit 1
             fi
 
@@ -3960,9 +4134,11 @@ cmd_profile() {
             ;;
         *)
             print_error "Unknown profile action: $action"
+            release_lock
             exit 1
             ;;
     esac
+    release_lock
 }
 
 # ------------------------------------------------------------------------------
@@ -3990,6 +4166,17 @@ keychain_store() {
             if [[ -z "${CI:-}" && -z "${GITSETU_TEST:-}" ]] && command -v security >/dev/null 2>&1; then
                 # Delete existing to prevent duplication errors
                 security delete-internet-password -s "$service_name" >/dev/null 2>&1 || true
+                local escaped_token="${token//\\/\\\\}"
+                escaped_token="${escaped_token//\"/\\\"}"
+                local escaped_user="${username//\\/\\\\}"
+                escaped_user="${escaped_user//\"/\\\"}"
+                local escaped_srv="${service_name//\\/\\\\}"
+                escaped_srv="${escaped_srv//\"/\\\"}"
+                if printf 'add-internet-password -s "%s" -a "%s" -w "%s"\n' "$escaped_srv" "$escaped_user" "$escaped_token" | security -i >/dev/null 2>&1; then
+                    if security find-internet-password -s "$service_name" >/dev/null 2>&1; then
+                        return 0
+                    fi
+                fi
                 security add-internet-password -s "$service_name" -a "$username" -w "$token" >/dev/null 2>&1
                 return $?
             fi
@@ -4003,21 +4190,29 @@ keychain_store() {
     esac
 
     # Fallback to local file if OS tools are missing or unsupported (WSL/GitBash)
-    local tokens_file="${GITSETU_CONFIG_DIR:-$HOME/.config/gitsetu}/.tokens"
-    touch "$tokens_file"
+    local tokens_dir="${GITSETU_CONFIG_DIR:-$HOME/.config/gitsetu}"
+    mkdir -p "$tokens_dir" 2>/dev/null || true
+    local tokens_file="$tokens_dir/.tokens"
+    (umask 077 && touch "$tokens_file")
+    chmod 600 "$tokens_file" 2>/dev/null || true
     
     # Remove existing entry
     if [[ -f "$tokens_file" ]]; then
-        local tmp_file="${TMPDIR:-/tmp}/gitsetu_tokens_$$_${RANDOM}"
+        local tmp_file
+        tmp_file=$(umask 077 && mktemp "${tokens_file}.tmp.XXXXXX" 2>/dev/null || true)
+        if [[ -z "$tmp_file" ]]; then
+            tmp_file=$(umask 077 && mktemp "${TMPDIR:-/tmp}/gitsetu_tokens.XXXXXX")
+        fi
         GITSETU_CLEANUP_FILES+=("$tmp_file")
         awk -v s="$service_name" -F':' '$1":"$2":"$3 != s' "$tokens_file" > "$tmp_file"
+        chmod 600 "$tmp_file" 2>/dev/null || true
         mv "$tmp_file" "$tokens_file"
+        chmod 600 "$tokens_file" 2>/dev/null || true
     fi
     
-    # Append new entry (service_name:username:token)
+    # Append new entry (service_name:username:token) under mode 0600
     echo "${service_name}:${username}:${token}" >> "$tokens_file"
-    # Set restrictive permissions AFTER all writes (mv replaces inode, so chmod must come last)
-    chmod 600 "$tokens_file"
+    chmod 600 "$tokens_file" 2>/dev/null || true
     return 0
 }
 
@@ -4119,12 +4314,19 @@ keychain_erase() {
     esac
 
     # Fallback to local file
-    local tokens_file="${GITSETU_CONFIG_DIR:-$HOME/.config/gitsetu}/.tokens"
+    local tokens_dir="${GITSETU_CONFIG_DIR:-$HOME/.config/gitsetu}"
+    local tokens_file="$tokens_dir/.tokens"
     if [[ -f "$tokens_file" ]]; then
-        local tmp_file="${TMPDIR:-/tmp}/gitsetu_tokens_$$_${RANDOM}"
+        local tmp_file
+        tmp_file=$(umask 077 && mktemp "${tokens_file}.tmp.XXXXXX" 2>/dev/null || true)
+        if [[ -z "$tmp_file" ]]; then
+            tmp_file=$(umask 077 && mktemp "${TMPDIR:-/tmp}/gitsetu_tokens.XXXXXX")
+        fi
         GITSETU_CLEANUP_FILES+=("$tmp_file")
         awk -v s="$service_name" -F':' '$1":"$2":"$3 != s' "$tokens_file" > "$tmp_file"
+        chmod 600 "$tmp_file" 2>/dev/null || true
         mv "$tmp_file" "$tokens_file"
+        chmod 600 "$tokens_file" 2>/dev/null || true
     fi
     return 0
 }
@@ -4138,12 +4340,18 @@ gitsetu_global_cleanup() {
     # Restore terminal cursor visibility and echo if interrupted
     printf '\033[?25h' >&2 2>/dev/null || true
     stty echo 2>/dev/null || true
-    # Clean up CRLF self-healing temp file (created before exec)
-    rm -f "${TMPDIR:-/tmp}/.gitsetu_crlf_$$" 2>/dev/null || true
+    # Clean up CRLF self-healing temp file if any
+    if [[ -n "${GITSETU_CRLF_TMP:-}" ]] && [[ -f "$GITSETU_CRLF_TMP" ]]; then
+        rm -f "$GITSETU_CRLF_TMP" 2>/dev/null || true
+    fi
     local f d
     for f in ${GITSETU_CLEANUP_FILES[@]+"${GITSETU_CLEANUP_FILES[@]}"}; do
         rm -f "$f" 2>/dev/null || true
     done
+    if type release_lock >/dev/null 2>&1; then
+        GITSETU_LOCK_DEPTH=1
+        release_lock 2>/dev/null || true
+    fi
     for d in ${GITSETU_CLEANUP_DIRS[@]+"${GITSETU_CLEANUP_DIRS[@]}"}; do
         if [[ "$d" == *.lock ]]; then
             if [[ -f "$d/pid" ]]; then
@@ -4152,7 +4360,7 @@ gitsetu_global_cleanup() {
                 if [[ "$lock_owner" != "$$" ]]; then
                     continue # We do not own this lock. Do not delete it.
                 fi
-                rm -f "$d/pid" 2>/dev/null || true
+                rm -f "$d/pid" "$d/timestamp" 2>/dev/null || true
             else
                 continue # Lock has no pid file; we do not own it. Do not delete it.
             fi
@@ -4429,7 +4637,9 @@ cmd_teardown() {
         fi
     fi
 
+    acquire_lock || return 1
     teardown_all "$deep"
+    release_lock
 }
 
 # ------------------------------------------------------------------------------
@@ -4463,8 +4673,11 @@ cmd_setup() {
     # Fast-path for autonomous zero-prompt discovery mode
     if [[ "$auto_mode" -eq 1 ]]; then
         export GITSETU_AUTO_MODE=1
+        acquire_lock || return 1
         auto_setup_runner
-        return $?
+        local auto_res=$?
+        release_lock
+        return "$auto_res"
     fi
     
     # Check if TTY
@@ -4604,14 +4817,18 @@ cmd_remove() {
         return 0
     fi
     
+    acquire_lock || return 1
+
     print_step "Removing profile '$profile'..."
     
-    # 1. Remove from profiles.conf using awk (sed is non-portable across BSD/GNU without weird syntax)
+    # 1. Remove from profiles.conf using awk with secure temp file permissions
     local tmp_conf
-    tmp_conf=$(mktemp "${GITSETU_PROFILES_CONF}.tmp.XXXXXX")
+    tmp_conf=$(umask 077 && mktemp "${GITSETU_PROFILES_CONF}.tmp.XXXXXX")
     GITSETU_CLEANUP_FILES+=("$tmp_conf")
     awk -F: -v prof="$profile" '$1 != prof {print}' "$GITSETU_PROFILES_CONF" > "$tmp_conf"
+    chmod 600 "$tmp_conf" 2>/dev/null || true
     mv "$tmp_conf" "$GITSETU_PROFILES_CONF"
+    chmod 600 "$GITSETU_PROFILES_CONF" 2>/dev/null || true
     
     # 2. Delete the profile gitconfig
     local config_file="$GITSETU_PROFILES_DIR/${profile}.gitconfig"
@@ -4630,6 +4847,8 @@ cmd_remove() {
         print_warning "Failed to regenerate ~/.ssh/config. Run 'gitsetu setup' to repair."
     fi
     
+    release_lock
+
     print_success "Profile '$profile' successfully removed."
     
     # Ask about SSH keys

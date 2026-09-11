@@ -202,9 +202,138 @@ ensure_workspace_dirs() {
 }
 
 # ------------------------------------------------------------------------------
+# Concurrency Locking Mechanism
+# Implements atomic directory locking on $GITSETU_LOCK_DIR with PID liveness
+# verification, stale lock recovery, 60s timeout handling, re-entrancy depth
+# tracking, and explicit release.
+# ------------------------------------------------------------------------------
+acquire_lock() {
+    local target_lock="${1:-${GITSETU_LOCK_DIR:-${GITSETU_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu}/profiles.lock}}"
+    local config_dir
+    config_dir=$(dirname "$target_lock")
+    local max_retries=600  # 600 * 0.1s = 60 seconds max wait
+    if [[ -n "${GITSETU_LOCK_TIMEOUT:-}" ]]; then
+        if [[ "${GITSETU_TEST:-0}" -eq 1 ]]; then
+            max_retries=$(( GITSETU_LOCK_TIMEOUT * 50 ))
+        else
+            max_retries=$(( GITSETU_LOCK_TIMEOUT * 10 ))
+        fi
+        [[ "$max_retries" -lt 1 ]] && max_retries=1
+    fi
+    local retry=0
+    local no_pid_count=0
+
+    # Re-entrancy: If current process already holds the lock, increment depth
+    if [[ "${GITSETU_LOCK_DEPTH:-0}" -gt 0 ]]; then
+        GITSETU_LOCK_DEPTH=$((GITSETU_LOCK_DEPTH + 1))
+        return 0
+    fi
+
+    # Ensure parent config directory exists before attempting mkdir
+    mkdir -p "$config_dir" 2>/dev/null || true
+
+    while ! mkdir "$target_lock" 2>/dev/null; do
+        local lock_pid=""
+        if [[ -f "$target_lock/pid" ]]; then
+            lock_pid=$(cat "$target_lock/pid" 2>/dev/null || echo "")
+        fi
+
+        # If current process already owns lock on disk, increment depth
+        if [[ -n "$lock_pid" ]] && [[ "$lock_pid" == "$$" ]]; then
+            GITSETU_LOCK_DEPTH=$((GITSETU_LOCK_DEPTH + 1))
+            return 0
+        fi
+
+        # Case 1: Holding process is dead (stale lock recovery)
+        if [[ -n "$lock_pid" ]] && ! kill -0 "$lock_pid" 2>/dev/null; then
+            if mv "$target_lock" "${target_lock}.stale.$$" 2>/dev/null; then
+                rm -rf "${target_lock}.stale.$$" 2>/dev/null || true
+                continue
+            fi
+        fi
+
+        # Case 2: PID file missing or empty (process died before writing PID)
+        if [[ -z "$lock_pid" ]]; then
+            no_pid_count=$((no_pid_count + 1))
+            if [[ "$no_pid_count" -ge 50 ]]; then
+                if mv "$target_lock" "${target_lock}.stale.$$" 2>/dev/null; then
+                    rm -rf "${target_lock}.stale.$$" 2>/dev/null || true
+                    no_pid_count=0
+                    continue
+                fi
+            fi
+        else
+            no_pid_count=0
+        fi
+
+        # Case 3: 60-second timeout recovery for abandoned locks
+        local lock_time=""
+        if [[ -f "$target_lock/timestamp" ]]; then
+            lock_time=$(cat "$target_lock/timestamp" 2>/dev/null || echo "")
+        fi
+        if [[ -z "$lock_time" ]]; then
+            lock_time=$(stat -c '%Y' "$target_lock" 2>/dev/null || stat -f '%m' "$target_lock" 2>/dev/null || echo "")
+        fi
+        local now
+        now=$(date +%s 2>/dev/null || echo "")
+        if [[ -n "$lock_time" ]] && [[ -n "$now" ]] && [[ "$now" =~ ^[0-9]+$ ]] && [[ "$lock_time" =~ ^[0-9]+$ ]]; then
+            local age=$((now - lock_time))
+            if [[ "$age" -ge 60 ]]; then
+                if mv "$target_lock" "${target_lock}.stale.$$" 2>/dev/null; then
+                    rm -rf "${target_lock}.stale.$$" 2>/dev/null || true
+                    continue
+                fi
+            fi
+        fi
+
+        retry=$((retry + 1))
+        if [[ "$retry" -ge "$max_retries" ]]; then
+            print_error "Failed to acquire lock for profiles.conf after timeout. Is another gitsetu process running?"
+            return 1
+        fi
+        local sleep_dur=0.1
+        if [[ "${GITSETU_TEST:-0}" -eq 1 ]]; then
+            sleep_dur=0.02
+        fi
+        sleep "$sleep_dur"
+    done
+
+    # Lock acquired: write PID and creation timestamp
+    echo "$$" > "$target_lock/pid"
+    date +%s > "$target_lock/timestamp" 2>/dev/null || true
+    GITSETU_LOCK_DEPTH=1
+    GITSETU_CLEANUP_DIRS+=("$target_lock")
+    return 0
+}
+
+release_lock() {
+    local target_lock="${1:-${GITSETU_LOCK_DIR:-${GITSETU_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu}/profiles.lock}}"
+
+    if [[ "${GITSETU_LOCK_DEPTH:-0}" -gt 1 ]]; then
+        GITSETU_LOCK_DEPTH=$((GITSETU_LOCK_DEPTH - 1))
+        return 0
+    fi
+    GITSETU_LOCK_DEPTH=0
+
+    if [[ -d "$target_lock" ]]; then
+        local lock_pid=""
+        if [[ -f "$target_lock/pid" ]]; then
+            lock_pid=$(cat "$target_lock/pid" 2>/dev/null || echo "")
+        fi
+        if [[ -z "$lock_pid" ]] || [[ "$lock_pid" == "$$" ]]; then
+            rm -f "$target_lock/pid" "$target_lock/timestamp" 2>/dev/null || true
+            rmdir "$target_lock" 2>/dev/null || true
+        fi
+    fi
+    return 0
+}
+
+# ------------------------------------------------------------------------------
 # execute_blueprint
 # ------------------------------------------------------------------------------
 execute_blueprint() {
+    acquire_lock || return 1
+
     clear || printf '\033c'
     print_section "Executing Setup Blueprint"
     
@@ -232,6 +361,7 @@ execute_blueprint() {
                 generate_ssh_key "${PROFILE_LABELS[i]}" "${PROFILE_EMAILS[i]}" "$key_path"
             else
                 print_error "Setup aborted due to FIDO2 key generation failure."
+                release_lock
                 exit 1
             fi
         fi
@@ -282,6 +412,8 @@ execute_blueprint() {
 
     print_success "Setup complete! You're ready to go."
     printf >&2 '\n'
+
+    release_lock
 }
 
 # ------------------------------------------------------------------------------
@@ -452,54 +584,7 @@ cmd_profile() {
     fi
     label=$(to_lower "$label")
 
-    # Acquire POSIX directory lock for headless read-modify-write safety
-    local lock_dir="${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu/profiles.lock"
-    local max_retries=300
-    local retry=0
-    local no_pid_count=0
-    
-    # Ensure config directory exists before locking
-    mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu"
-    
-    while ! mkdir "$lock_dir" 2>/dev/null; do
-        if [[ -f "$lock_dir/pid" ]]; then
-            no_pid_count=0
-            local lock_pid
-            lock_pid=$(cat "$lock_dir/pid" 2>/dev/null || echo "")
-            if [[ -n "$lock_pid" ]] && ! kill -0 "$lock_pid" 2>/dev/null; then
-                # The process holding the lock is dead. Stale lock!
-                # Use atomic mv to prevent TOCTOU race conditions where multiple processes try to delete and acquire
-                if mv "$lock_dir" "${lock_dir}.stale.$$" 2>/dev/null; then
-                    rm -rf "${lock_dir}.stale.$$"
-                    continue # Immediately retry acquiring (only the process that successfully mv'd gets here without sleep)
-                fi
-            fi
-        else
-            # Phantom deadlock prover: the lock dir exists but has no PID file.
-            # This can happen legitimately for a microsecond while a healthy process
-            # is between mkdir and echo $$. Only reap after 50 consecutive observations
-            # (each separated by the 0.1s retry sleep) to definitively prove it's dead.
-            no_pid_count=$((no_pid_count + 1))
-            if [[ "$no_pid_count" -ge 50 ]]; then
-                if mv "$lock_dir" "${lock_dir}.stale.$$" 2>/dev/null; then
-                    rm -rf "${lock_dir}.stale.$$"
-                    no_pid_count=0
-                    continue
-                fi
-            fi
-        fi
-        
-        retry=$((retry+1))
-        if [[ "$retry" -ge "$max_retries" ]]; then
-            print_error "Failed to acquire lock for profiles.conf. Is another gitsetu process running?"
-            exit 1
-        fi
-        sleep 0.1
-    done
-
-    # Lock acquired. Write PID and register for cleanup.
-    echo $$ > "$lock_dir/pid"
-    GITSETU_CLEANUP_DIRS+=("$lock_dir")
+    acquire_lock || exit 1
 
     load_profiles
     if [[ "$PROFILE_COUNT" -eq 0 ]]; then
@@ -520,12 +605,14 @@ cmd_profile() {
 
             if [[ "$idx" -eq -1 ]] && [[ "$action" == "edit" ]]; then
                 print_error "Profile '$label' not found."
+                release_lock
                 exit 1
             fi
 
             if [[ "$idx" -eq -1 ]]; then
                 if ! validate_label "$label"; then
                     print_error "Invalid profile label: '$label'."
+                    release_lock
                     exit 1
                 fi
                 idx=$PROFILE_COUNT
@@ -555,6 +642,7 @@ cmd_profile() {
                     --no-sign) PROFILE_SIGNS[idx]="0" ;;
                     *)
                         print_error "Unknown flag: $1"
+                        release_lock
                         exit 1
                         ;;
                 esac
@@ -568,6 +656,7 @@ cmd_profile() {
                     PROFILE_EMAILS[idx]="$REPLY"
                 else
                     print_error "--email is required in headless mode."
+                    release_lock
                     exit 1
                 fi
             fi
@@ -585,10 +674,12 @@ cmd_profile() {
             done
             if [[ "$idx" -eq -1 ]]; then
                 print_error "Profile '$label' not found."
+                release_lock
                 exit 1
             fi
             if [[ "$idx" -eq 0 ]]; then
                 print_error "Cannot remove the global/default profile."
+                release_lock
                 exit 1
             fi
 
@@ -601,7 +692,9 @@ cmd_profile() {
             ;;
         *)
             print_error "Unknown profile action: $action"
+            release_lock
             exit 1
             ;;
     esac
+    release_lock
 }

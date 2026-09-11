@@ -22,6 +22,30 @@ GITSETU_BACKUP_DIR="$GITSETU_CONFIG_DIR/backups"
 GITSETU_PROFILES_DIR="$GITSETU_CONFIG_DIR/profiles"
 GITSETU_HOOKS_DIR="$GITSETU_CONFIG_DIR/hooks"
 GITSETU_PROFILES_CONF="$GITSETU_CONFIG_DIR/profiles.conf"
+GITSETU_LOCK_DIR="$GITSETU_CONFIG_DIR/profiles.lock"
+GITSETU_LOCK_DEPTH=0
+
+# ------------------------------------------------------------------------------
+# Secure Temporary File & Directory Helpers
+# Creates temporary files/directories with restrictive permissions (0600 / 0700)
+# under umask 077, and registers them for automated process cleanup.
+# ------------------------------------------------------------------------------
+secure_mktemp() {
+    local template="${1:-${TMPDIR:-/tmp}/gitsetu.XXXXXX}"
+    local tmp_file
+    tmp_file=$(umask 077 && mktemp "$template") || return 1
+    GITSETU_CLEANUP_FILES+=("$tmp_file")
+    printf '%s\n' "$tmp_file"
+}
+
+secure_mktemp_dir() {
+    local template="${1:-${TMPDIR:-/tmp}/gitsetu.XXXXXX}"
+    local tmp_dir
+    tmp_dir=$(umask 077 && mktemp -d "$template") || return 1
+    GITSETU_CLEANUP_DIRS+=("$tmp_dir")
+    printf '%s\n' "$tmp_dir"
+}
+
 
 # ------------------------------------------------------------------------------
 # Managed block markers
