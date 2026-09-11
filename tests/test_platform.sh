@@ -77,15 +77,89 @@ test_get_gitdir_keyword_not_empty() {
     assert_contains "$keyword" "gitdir" "keyword contains gitdir"
 }
 
+test_get_gitdir_keyword_platforms() {
+    local orig_os="${GITSETU_OS:-}"
+    
+    GITSETU_OS="macos"
+    assert_equals "gitdir/i:" "$(get_gitdir_keyword)" "macos returns gitdir/i:"
+    
+    GITSETU_OS="gitbash"
+    assert_equals "gitdir/i:" "$(get_gitdir_keyword)" "gitbash returns gitdir/i:"
+    
+    GITSETU_OS="linux"
+    assert_equals "gitdir:" "$(get_gitdir_keyword)" "linux returns gitdir:"
+
+    GITSETU_OS="wsl"
+    assert_equals "gitdir:" "$(get_gitdir_keyword)" "wsl returns gitdir:"
+    
+    GITSETU_OS="$orig_os"
+}
+
+test_normalize_path_all_windows_drive_formats() {
+    local orig_os="${GITSETU_OS:-}"
+    GITSETU_OS="gitbash"
+
+    # Drive roots: must consistently normalize to uppercase drive letter with trailing slash "C:/"
+    assert_equals "C:/" "$(normalize_path "C:\\")" "C:\\ normalizes to C:/"
+    assert_equals "C:/" "$(normalize_path "c:\\")" "c:\\ normalizes to C:/"
+    assert_equals "C:/" "$(normalize_path 'C:/')" "C:/ normalizes to C:/"
+    assert_equals "C:/" "$(normalize_path 'c:/')" "c:/ normalizes to C:/"
+    assert_equals "C:/" "$(normalize_path '/c/')" "/c/ normalizes to C:/"
+    assert_equals "C:/" "$(normalize_path '/c')" "/c normalizes to C:/"
+    assert_equals "C:/" "$(normalize_path 'c:')" "c: normalizes to C:/"
+    assert_equals "C:/" "$(normalize_path 'C:')" "C: normalizes to C:/"
+
+    # Subpaths: uppercase drive letter, forward slashes, no trailing slash
+    assert_equals "C:/Users/test" "$(normalize_path 'C:/Users/test/')" "Trailing slash removed on non-root"
+    assert_equals "C:/Users/test" "$(normalize_path '/c/Users/test')" "convert /c/ to C:/"
+    assert_equals "D:/dev/pro" "$(normalize_path "d:\\dev\\pro\\")" "Backslash and trailing slash on non-root"
+    assert_equals "D:/dev/pro" "$(normalize_path '/d/dev/pro/')" "MSYS path with trailing slash on non-root"
+
+    # WSL normalization
+    GITSETU_OS="wsl"
+    assert_equals "/mnt/c" "$(normalize_path "C:\\")" "WSL drive root C:\\ normalizes to /mnt/c"
+    assert_equals "/mnt/c" "$(normalize_path '/c')" "WSL drive root /c normalizes to /mnt/c"
+    assert_equals "/mnt/c/work" "$(normalize_path 'C:\work')" "WSL path C:\work normalizes to /mnt/c/work"
+    assert_equals "/mnt/c/work" "$(normalize_path '/c/work')" "WSL /c/work normalizes to /mnt/c/work"
+
+    GITSETU_OS="$orig_os"
+}
+
+test_is_shared_mount_detection() {
+    # Test helper that mocks mount command to simulate multiple mount points
+    mount() {
+        cat <<'EOF'
+sysfs on /sys type sysfs (rw,nosuid,nodev,noexec,relatime)
+/dev/sda1 on / type ext4 (rw,relatime)
+none on /media/sf_shared type vboxsf (rw,nodev,relatime)
+none on /mnt/hgfs/vmware_share type vmhgfs-fuse (rw,nosuid,nodev,relatime)
+C:\ on /mnt/c type 9p (rw,noatime,dirsync,aname=drvfs;path=C:\;uid=1000;gid=1000;symlinkroot=/mnt/)
+D:\ on /mnt/d type drvfs (rw,noatime,uid=1000,gid=1000)
+EOF
+    }
+    mount >/dev/null 2>&1 || true
+
+    assert_exit_code 0 is_shared_mount "/media/sf_shared/work"
+    assert_exit_code 0 is_shared_mount "/mnt/hgfs/vmware_share/keys"
+    assert_exit_code 0 is_shared_mount "/mnt/c/Users/dev"
+    assert_exit_code 0 is_shared_mount "/mnt/d/projects"
+    assert_exit_code 1 is_shared_mount "/home/dev/native_repo"
+
+    unset -f mount
+}
+
 # --- Run ---
 
 printf '\n%btest_platform.sh%b\n' "$T_BOLD" "$T_RESET"
 run_test "detect_os returns a known value" test_detect_os_returns_value
 run_test "normalize_path expands tilde" test_normalize_path_tilde
 run_test "normalize_path normalizes Windows drive paths" test_normalize_path_windows_drive
+run_test "normalize_path handles all Windows drive formats & WSL" test_normalize_path_all_windows_drive_formats
 run_test "normalize_path removes trailing slash" test_normalize_path_trailing_slash
 run_test "normalize_path collapses double slashes" test_normalize_path_double_slash
 run_test "normalize_path converts backslashes" test_normalize_path_backslash
 run_test "normalize_path preserves root /" test_normalize_path_root
 run_test "get_gitdir_keyword returns gitdir variant" test_get_gitdir_keyword_not_empty
+run_test "get_gitdir_keyword returns correct variant per OS" test_get_gitdir_keyword_platforms
+run_test "is_shared_mount detects multiple shared mounts" test_is_shared_mount_detection
 print_results "Platform tests"

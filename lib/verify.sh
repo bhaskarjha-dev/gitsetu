@@ -212,7 +212,9 @@ verify_all() {
         if [[ -f "$key_path" ]]; then
             local perms
             perms=$(stat -c '%a' "$key_path" 2>/dev/null || stat -f '%Lp' "$key_path" 2>/dev/null || echo "???")
-            if [[ "$perms" != "600" ]]; then
+            if [[ "$GITSETU_OS" == "gitbash" ]] && [[ "$perms" == "644" || "$perms" == "600" ]]; then
+                perm_status="${GREEN}${SYM_CHECK}${RESET}"
+            elif [[ "$perms" != "600" ]]; then
                 perm_status="${YELLOW}${SYM_WARN} ${perms}${RESET}"
                 total_issues=$((total_issues + 1))
             fi

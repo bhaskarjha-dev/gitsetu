@@ -69,6 +69,20 @@ EOF
     assert_equals "$HOME/random_work_folder" "$result" "extracted from includeIf" || return 1
 }
 
+test_discover_workspace_dir_includeif_case_insensitive() {
+    # Should parse from includeIf with gitdir/i: keyword (Windows and macOS)
+    rm -rf "$HOME/random_client_folder"
+    mkdir -p "$HOME/random_client_folder"
+    cat > "$HOME/.gitconfig" <<EOF
+[includeIf "gitdir/i:~/random_client_folder/"]
+    path = ~/.config/gitsetu/profiles/client.gitconfig
+EOF
+
+    local result
+    result=$(discover_workspace_dir "client")
+    assert_equals "$HOME/random_client_folder" "$result" "extracted from gitdir/i: includeIf" || return 1
+}
+
 test_discover_workspace_dir_ignores_global() {
     # Should return empty for "global"
     mkdir -p "$HOME/global"
@@ -78,11 +92,58 @@ test_discover_workspace_dir_ignores_global() {
     assert_equals "" "$result" "ignores global label" || return 1
 }
 
+test_discover_workspace_dir_multi_profile_substring_shadowing() {
+    rm -rf "$HOME/work" "$HOME/client_work_dir" "$HOME/work_dir"
+    mkdir -p "$HOME/client_work_dir" "$HOME/work_dir"
+    cat > "$HOME/.gitconfig" <<EOF
+[includeIf "gitdir/i:$(normalize_path "$HOME/client_work_dir")/"]
+    path = ~/.gitconfig-client
+[includeIf "gitdir/i:$(normalize_path "$HOME/work_dir")/"]
+    path = ~/.gitconfig-work
+EOF
+
+    local result
+    result=$(discover_workspace_dir "work")
+    assert_equals "$(normalize_path "$HOME/work_dir")" "$result" "matches work_dir without substring shadowing from client_work_dir" || return 1
+}
+
+test_discover_workspace_dir_exact_component_match() {
+    rm -rf "$HOME/work" "$HOME/client_work"
+    mkdir -p "$HOME/work" "$HOME/client_work"
+    cat > "$HOME/.gitconfig" <<EOF
+[includeIf "gitdir:~/work/"]
+    path = ~/.custom.inc
+[includeIf "gitdir:~/client_work/"]
+    path = ~/.custom2.inc
+EOF
+
+    local result
+    result=$(discover_workspace_dir "work")
+    assert_equals "$HOME/work" "$result" "matches exact directory component work over client_work" || return 1
+}
+
+test_discover_workspace_dir_no_false_positive_substring() {
+    rm -rf "$HOME/work" "$HOME/client_work_dir"
+    mkdir -p "$HOME/client_work_dir"
+    cat > "$HOME/.gitconfig" <<EOF
+[includeIf "gitdir/i:$(normalize_path "$HOME/client_work_dir")/"]
+    path = ~/.gitconfig-client
+EOF
+
+    local result
+    result=$(discover_workspace_dir "work")
+    assert_equals "" "$result" "does not match client_work_dir when searching for work" || return 1
+}
+
 printf '\n%btest_discovery.sh%b\n' "$T_BOLD" "$T_RESET"
 run_test "extracts email from ssh public key" test_discover_global_git_identity_from_ssh
 run_test "extracts identity from gitconfig" test_discover_global_git_identity_from_gitconfig
 run_test "discovers ssh keys with priority" test_discover_ssh_key
 run_test "discovers workspace fallback dirs" test_discover_workspace_dir_fallback
 run_test "discovers workspace from includeIf" test_discover_workspace_dir_includeif
+run_test "discovers workspace from gitdir/i: includeIf" test_discover_workspace_dir_includeif_case_insensitive
 run_test "ignores global/default labels" test_discover_workspace_dir_ignores_global
+run_test "resolves work_dir avoiding substring shadowing (Challenger 3.4)" test_discover_workspace_dir_multi_profile_substring_shadowing
+run_test "resolves exact directory component over prefix" test_discover_workspace_dir_exact_component_match
+run_test "rejects substring collision without profile match" test_discover_workspace_dir_no_false_positive_substring
 print_results "Discovery tests"

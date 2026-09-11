@@ -13,34 +13,104 @@
 # https://github.com/bhaskarjha-dev/gitsetu
 # MIT License — Bhaskar Jha
 
-# --- CRLF self-healing for VirtualBox shared folders ---
-# vboxsf injects \r into all files. Unconditionally re-exec through tr on first run.
-# tr -d '\r' is a no-op on clean files, so this is safe everywhere.
-# Exception: "credential" reads stdin (Git credential protocol) and "prompt" is
-# latency-sensitive — both must skip re-exec.
-# Uses a temp file instead of process substitution <(...) because bash 3.2
-# (macOS default) has unreliable fd handling with exec + process substitution.
-if [[ "${GITSETU_CRLF_CLEAN:-}" != "1" ]] && [[ "${1:-}" != "credential" ]] && [[ "${1:-}" != "prompt" ]]; then
-    # Only re-exec if carriage return actually exists in script header
-    if head -n 2 "${BASH_SOURCE[0]:-$0}" 2>/dev/null | grep -q $'\r'; then
-        if ! command -v tr >/dev/null 2>&1; then
-            echo "Error: 'tr' command is required to normalize CRLF line endings." >&2
-            exit 1
+# --- CRLF self-healing for VirtualBox shared folders & Windows clones ---
+# vboxsf injects \r into all files. Pure Bash 3.2 inspection detects \r with zero forks.
+_crlf_depth="${GITSETU_CRLF_DEPTH:-0}"
+
+# 1. Hard recursion guard: prevent runaway infinite exec loops
+if [[ "$_crlf_depth" -ge 2 ]]; then
+    echo "Error: CRLF self-healing recursion limit reached (depth=$_crlf_depth)." >&2
+    echo "Ensure temporary directories are not located on a CRLF-injecting shared mount." >&2
+    exit 1
+fi
+
+# 2. Inspect script header for carriage return using pure Bash (zero external process forks)
+_crlf_l1=""
+_crlf_l2=""
+{
+    read -r _crlf_l1 || true
+    read -r _crlf_l2 || true
+} < "${BASH_SOURCE[0]:-$0}" 2>/dev/null || true
+
+# 3. Loop detection on shared filesystems (vboxsf):
+# If already re-executed once but temporary script still contains \r, filesystem is re-injecting \r.
+if [[ "$_crlf_depth" -ge 1 ]] && { [[ "$_crlf_l1" == *$'\r'* ]] || [[ "$_crlf_l2" == *$'\r'* ]]; }; then
+    echo "Error: CRLF normalization loop detected." >&2
+    echo "The temporary execution script still contains carriage returns." >&2
+    echo "This occurs when TMPDIR is located on a VirtualBox shared folder (vboxsf)." >&2
+    echo "Please set TMPDIR to a native filesystem (e.g., export TMPDIR=/tmp) and re-run." >&2
+    exit 1
+fi
+
+# 4. Normalize and re-exec if carriage return is detected
+if [[ "${GITSETU_CRLF_CLEAN:-}" != "1" ]] && [[ "${1:-}" != "credential" ]] && [[ "${1:-}" != "prompt" ]] && { [[ "$_crlf_l1" == *$'\r'* ]] || [[ "$_crlf_l2" == *$'\r'* ]]; }; then
+    # Multi-directory fallback for temp file creation
+    _crlf_tmp=""
+    for _cand in "${TMPDIR:-}" "${TEMP:-}" "${TMP:-}" "/tmp" "/var/tmp" "${XDG_RUNTIME_DIR:-}" "${HOME:-}/.cache" "${HOME:-}" "."; do
+        [[ -n "$_cand" && -d "$_cand" && -w "$_cand" ]] || continue
+        _crlf_tmp=$(umask 077 && mktemp "${_cand%/}/.gitsetu_crlf.XXXXXX" 2>/dev/null || true)
+        if [[ -n "$_crlf_tmp" && -f "$_crlf_tmp" && -w "$_crlf_tmp" ]]; then
+            break
         fi
-        export GITSETU_CRLF_CLEAN=1
-        export GITSETU_ORIG_SCRIPT="${BASH_SOURCE[0]:-$0}"
-        _crlf_tmp=$(umask 077 && mktemp "${TMPDIR:-/tmp}/.gitsetu_crlf.XXXXXX")
-        export GITSETU_CRLF_TMP="$_crlf_tmp"
-        tr -d '\r' < "${BASH_SOURCE[0]:-$0}" > "$_crlf_tmp"
-        chmod 700 "$_crlf_tmp" 2>/dev/null || true
-        trap 'rm -f "$_crlf_tmp" 2>/dev/null || true' EXIT INT TERM
-        exec bash "$_crlf_tmp" "$@"
-        rm -f "$_crlf_tmp" 2>/dev/null || true
+        _crlf_tmp=""
+    done
+
+    if [[ -z "$_crlf_tmp" || ! -f "$_crlf_tmp" ]]; then
+        echo "Error: Failed to create temporary file for CRLF normalization." >&2
+        echo "Checked: \$TMPDIR, \$TEMP, \$TMP, /tmp, /var/tmp, \$HOME, and current directory." >&2
+        echo "Please ensure at least one temporary directory is writable and not full." >&2
         exit 1
     fi
+
+    # Stripping cascade: tr -> sed -> awk -> pure bash
+    _strip_status=1
+    if command -v tr >/dev/null 2>&1; then
+        tr -d '\r' < "${BASH_SOURCE[0]:-$0}" > "$_crlf_tmp" && _strip_status=0
+    elif command -v sed >/dev/null 2>&1; then
+        sed -e 's/\r$//' < "${BASH_SOURCE[0]:-$0}" > "$_crlf_tmp" && _strip_status=0
+    elif command -v awk >/dev/null 2>&1; then
+        awk '{ sub(/\r$/, ""); print }' "${BASH_SOURCE[0]:-$0}" > "$_crlf_tmp" && _strip_status=0
+    else
+        # Pure bash fallback (zero dependencies)
+        while IFS= read -r _s_line || [[ -n "$_s_line" ]]; do
+            printf '%s\n' "${_s_line%$'\r'}"
+        done < "${BASH_SOURCE[0]:-$0}" > "$_crlf_tmp" && _strip_status=0
+    fi
+
+    if [[ "$_strip_status" -ne 0 ]]; then
+        rm -f "$_crlf_tmp" 2>/dev/null || true
+        echo "Error: Failed to strip carriage returns from script." >&2
+        exit 1
+    fi
+
+    chmod 700 "$_crlf_tmp" 2>/dev/null || chmod 600 "$_crlf_tmp" 2>/dev/null || true
+    export GITSETU_CRLF_CLEAN=1
+    export GITSETU_CRLF_DEPTH=$(( _crlf_depth + 1 ))
+    export GITSETU_CRLF_TMP="$_crlf_tmp"
+
+    # Make ORIG_SCRIPT absolute before exec
+    _orig_src="${BASH_SOURCE[0]:-$0}"
+    if [[ "$_orig_src" != /* ]] && [[ "$_orig_src" != [a-zA-Z]:/* ]] && [[ "$_orig_src" != [a-zA-Z]:\\* ]]; then
+        _orig_src="$(pwd)/$_orig_src"
+    fi
+    export GITSETU_ORIG_SCRIPT="$_orig_src"
+
+    trap 'rm -f "$_crlf_tmp" 2>/dev/null || true' EXIT INT TERM
+    exec "${BASH:-bash}" "$_crlf_tmp" "$@"
+    rm -f "$_crlf_tmp" 2>/dev/null || true
+    exit 1
 fi
 
 set -euo pipefail
+
+# Register early cleanup trap for CRLF temporary file in child process
+if [[ -n "${GITSETU_CRLF_TMP:-}" ]]; then
+    trap 'rm -f "$GITSETU_CRLF_TMP" 2>/dev/null || true' EXIT INT TERM
+fi
+
+# Global cleanup tracking arrays
+GITSETU_CLEANUP_FILES=()
+GITSETU_CLEANUP_DIRS=()
 
 # ------------------------------------------------------------------------------
 # Resolve script directory (handles symlinks, $0 fallback, vboxsf CRLF re-exec)
@@ -49,8 +119,8 @@ resolve_script_dir() {
     # When re-executed for CRLF cleaning, BASH_SOURCE is /dev/fd/N.
     # Use GITSETU_ORIG_SCRIPT (set before re-exec) to find the real script.
     # Strip \r because the env var was set from a CRLF-contaminated line.
-    local source
-    source=$(printf '%s' "${GITSETU_ORIG_SCRIPT:-${BASH_SOURCE[0]:-$0}}" | tr -d '\r')
+    local source="${GITSETU_ORIG_SCRIPT:-${BASH_SOURCE[0]:-$0}}"
+    source="${source//$'\r'/}"
 
     # If source is empty or just a basename, try $0
     if [[ -z "$source" ]] || [[ "$source" == "bash" ]]; then
@@ -74,10 +144,20 @@ resolve_script_dir() {
 
     local dir
     dir=$(cd -P "$(dirname "$source")" 2>/dev/null && pwd)
+    if [[ ! -f "$dir/lib/core.sh" ]]; then
+        if [[ -n "${GITSETU_DIR:-}" && -f "${GITSETU_DIR}/lib/core.sh" ]]; then
+            dir="$GITSETU_DIR"
+        elif [[ -f "$(pwd)/lib/core.sh" ]]; then
+            dir="$(pwd)"
+        elif [[ -f "$HOME/.local/share/gitsetu/lib/core.sh" ]]; then
+            dir="$HOME/.local/share/gitsetu"
+        fi
+    fi
     printf '%s' "$dir"
 }
 
-GITSETU_SCRIPT_DIR=$(resolve_script_dir | tr -d '\r')
+GITSETU_SCRIPT_DIR="$(resolve_script_dir)"
+GITSETU_SCRIPT_DIR="${GITSETU_SCRIPT_DIR//$'\r'/}"
 
 # ------------------------------------------------------------------------------
 # cmd_prompt — Zero-latency profile detection for PS1 integration
@@ -89,7 +169,7 @@ cmd_prompt() {
 
     # Normalize PWD like we do for dirs
     local current_pwd="${PWD%/}"
-    if [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]]; then
+    if [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "mingw"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]]; then
         current_pwd=$(pwd -W 2>/dev/null || echo "$current_pwd")
     fi
     current_pwd="${current_pwd//\\//}"
@@ -105,6 +185,18 @@ cmd_prompt() {
         current_pwd="${drive}:/${rest}"
     fi
     
+    local is_ci=0
+    case "${GITSETU_OS:-${OSTYPE:-}}" in
+        gitbash|macos|msys*|mingw*|cygwin*|darwin*) is_ci=1 ;;
+        *)
+            local u
+            u=$(uname -s 2>/dev/null || true)
+            case "$u" in
+                MSYS*|MINGW*|CYGWIN*|Darwin*) is_ci=1 ;;
+            esac
+            ;;
+    esac
+
     local matched_profile=""
     local max_len=0
 
@@ -137,7 +229,7 @@ cmd_prompt() {
 
         local check_pwd="$current_pwd"
         local check_dir="$dir"
-        if [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]]; then
+        if [[ "$is_ci" -eq 1 ]]; then
             check_pwd=$(printf '%s' "$check_pwd" | tr '[:upper:]' '[:lower:]')
             check_dir=$(printf '%s' "$check_dir" | tr '[:upper:]' '[:lower:]')
         fi
@@ -517,14 +609,44 @@ normalize_path() {
         elif [[ "$path" =~ ^/([a-zA-Z])$ ]]; then
             local drive="${BASH_REMATCH[1]}"
             drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
-            path="${drive}:"
+            path="${drive}:/"
+        elif [[ "$path" =~ ^([a-zA-Z]):$ ]]; then
+            local drive="${BASH_REMATCH[1]}"
+            drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
+            path="${drive}:/"
         elif [[ "$path" =~ ^([a-zA-Z]):/(.*) ]]; then
             local drive="${BASH_REMATCH[1]}"
             local rest="${BASH_REMATCH[2]}"
             drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
             path="${drive}:/${rest}"
         fi
+    elif [[ "$GITSETU_OS" == "wsl" ]]; then
+        # On WSL, convert Windows drive paths to /mnt/<drive>
+        if command -v wslpath >/dev/null 2>&1 && [[ "$path" =~ ^([a-zA-Z]:|/[a-zA-Z]/) ]]; then
+            path=$(wslpath -u "$path" 2>/dev/null || echo "$path")
+        elif [[ "$path" =~ ^/([a-zA-Z])/(.*) ]]; then
+            local drive="${BASH_REMATCH[1]}"
+            local rest="${BASH_REMATCH[2]}"
+            drive=$(printf '%s' "$drive" | tr '[:upper:]' '[:lower:]')
+            path="/mnt/${drive}/${rest}"
+        elif [[ "$path" =~ ^/([a-zA-Z])$ ]]; then
+            local drive="${BASH_REMATCH[1]}"
+            drive=$(printf '%s' "$drive" | tr '[:upper:]' '[:lower:]')
+            path="/mnt/${drive}"
+        elif [[ "$path" =~ ^([a-zA-Z]):$ ]]; then
+            local drive="${BASH_REMATCH[1]}"
+            drive=$(printf '%s' "$drive" | tr '[:upper:]' '[:lower:]')
+            path="/mnt/${drive}"
+        elif [[ "$path" =~ ^([a-zA-Z]):/(.*) ]]; then
+            local drive="${BASH_REMATCH[1]}"
+            local rest="${BASH_REMATCH[2]}"
+            drive=$(printf '%s' "$drive" | tr '[:upper:]' '[:lower:]')
+            path="/mnt/${drive}/${rest}"
+        fi
     fi
+
+    # Collapse double slashes (tr -s avoids bash escaping ambiguity on Git Bash)
+    path=$(printf '%s' "$path" | tr -s '/')
 
     # Remove trailing slash (unless it's just "/" or "C:/")
     if [[ "${#path}" -gt 1 ]]; then
@@ -532,9 +654,6 @@ normalize_path() {
             path="${path%/}"
         fi
     fi
-
-    # Collapse double slashes (tr -s avoids bash escaping ambiguity on Git Bash)
-    path=$(printf '%s' "$path" | tr -s '/')
 
     printf '%s' "$path"
 }
@@ -554,7 +673,7 @@ get_gitdir_keyword() {
 }
 
 # ------------------------------------------------------------------------------
-# is_shared_mount — Detects if a path is on a VirtualBox/VMware shared folder
+# is_shared_mount — Detects if a path is on a VirtualBox/VMware/WSL shared folder
 #
 # These mounts have permission issues (everything is 0777) that prevent
 # SSH keys from having the required 0600 permissions.
@@ -564,22 +683,23 @@ get_gitdir_keyword() {
 is_shared_mount() {
     local path="$1"
 
-    # Check mount table for vboxsf (VirtualBox) or vmhgfs-fuse (VMware)
+    # Check mount table for vboxsf (VirtualBox), vmhgfs-fuse (VMware), drvfs/9p (WSL)
     if command -v mount >/dev/null 2>&1; then
         local mount_output
         mount_output=$(mount 2>/dev/null) || true
 
-        # Check if any vboxsf/vmhgfs mount contains this path
-        if printf '%s' "$mount_output" | grep -E "vboxsf|vmhgfs-fuse" | grep -q "${path%/}"; then
+        # Check if any shared mount contains this path
+        if printf '%s\n' "$mount_output" | grep -E "vboxsf|vmhgfs-fuse|drvfs|9p" | grep -q "${path%/}"; then
             return 0
         fi
 
-        # Broader check: is the path under any vboxsf mount point?
-        local mount_point
-        mount_point=$(printf '%s' "$mount_output" | grep -E "vboxsf|vmhgfs-fuse" | awk '{print $3}' | head -n1)
-        if [[ -n "$mount_point" ]] && [[ "$path" == "$mount_point"* ]]; then
-            return 0
-        fi
+        # Broader check: check all shared mount points (not just head -n1)
+        local mp
+        while read -r mp; do
+            if [[ -n "$mp" && "$path" == "$mp"* ]]; then
+                return 0
+            fi
+        done < <(printf '%s\n' "$mount_output" | grep -E "vboxsf|vmhgfs-fuse|drvfs|9p" | awk '{print $3}')
     fi
 
     return 1
@@ -1718,7 +1838,7 @@ Host ${prefix}-${label}
     AddKeysToAgent yes
 EOF
 
-    if [[ "$OSTYPE" == "darwin"* ]]; then
+    if [[ "${GITSETU_OS:-}" == "macos" || "${OSTYPE:-}" == "darwin"* ]]; then
         echo "    UseKeychain yes"
     fi
 }
@@ -1933,12 +2053,7 @@ EOF
     for (( i=0; i<PROFILE_COUNT; i++ )); do
         local dir="${PROFILE_DIRS[$i]}"
         if [[ -n "$dir" ]]; then
-            if [[ "$GITSETU_OS" == "gitbash" ]] && [[ "$dir" =~ ^/([a-zA-Z])/(.*) ]]; then
-                local drive="${BASH_REMATCH[1]}"
-                local rest="${BASH_REMATCH[2]}"
-                drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
-                dir="${drive}:/${rest}"
-            fi
+            dir=$(normalize_path "$dir")
             if [[ "$dir" != */ ]]; then
                 dir="${dir}/"
             fi
@@ -1963,12 +2078,7 @@ EOF
         local dir="${PROFILE_DIRS[$i]}"
 
         if [[ -n "$dir" ]]; then
-            if [[ "$GITSETU_OS" == "gitbash" ]] && [[ "$dir" =~ ^/([a-zA-Z])/(.*) ]]; then
-                local drive="${BASH_REMATCH[1]}"
-                local rest="${BASH_REMATCH[2]}"
-                drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
-                dir="${drive}:/${rest}"
-            fi
+            dir=$(normalize_path "$dir")
             # Ensure trailing slash for gitdir matching
             if [[ "$dir" != */ ]]; then
                 dir="${dir}/"
@@ -2510,12 +2620,24 @@ run_doctor() {
 
     # 1. Determine active profile based on PWD
     local current_dir="$PWD"
-    if [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]]; then
+    if [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "mingw"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]]; then
         current_dir=$(pwd -W 2>/dev/null || echo "$current_dir")
     fi
     current_dir="$(normalize_path "$current_dir")"
     local active_profile="global"
     local active_dir="[Global Fallback]"
+
+    local is_ci=0
+    case "${GITSETU_OS:-${OSTYPE:-}}" in
+        gitbash|macos|msys*|mingw*|cygwin*|darwin*) is_ci=1 ;;
+        *)
+            local u
+            u=$(uname -s 2>/dev/null || true)
+            case "$u" in
+                MSYS*|MINGW*|CYGWIN*|Darwin*) is_ci=1 ;;
+            esac
+            ;;
+    esac
     
     local i
     # Iterate backwards so more specific (later) profiles win
@@ -2523,7 +2645,7 @@ run_doctor() {
         local dir="${PROFILE_DIRS[$i]}"
         local check_pwd="$current_dir"
         local check_dir="$dir"
-        if [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]]; then
+        if [[ "$is_ci" -eq 1 ]]; then
             check_pwd=$(printf '%s' "$check_pwd" | tr '[:upper:]' '[:lower:]')
             check_dir=$(printf '%s' "$check_dir" | tr '[:upper:]' '[:lower:]')
         fi
@@ -2829,7 +2951,9 @@ verify_all() {
         if [[ -f "$key_path" ]]; then
             local perms
             perms=$(stat -c '%a' "$key_path" 2>/dev/null || stat -f '%Lp' "$key_path" 2>/dev/null || echo "???")
-            if [[ "$perms" != "600" ]]; then
+            if [[ "$GITSETU_OS" == "gitbash" ]] && [[ "$perms" == "644" || "$perms" == "600" ]]; then
+                perm_status="${GREEN}${SYM_CHECK}${RESET}"
+            elif [[ "$perms" != "600" ]]; then
                 perm_status="${YELLOW}${SYM_WARN} ${perms}${RESET}"
                 total_issues=$((total_issues + 1))
             fi
@@ -3264,28 +3388,130 @@ discover_workspace_dir() {
         return
     fi
 
-    # 1. Parse existing ~/.gitconfig for includeIf paths containing the label
+    # 1. Parse existing ~/.gitconfig for includeIf sections matching the label
     if [[ -f "$HOME/.gitconfig" ]]; then
-        local extracted
-        extracted=$(grep -i "includeIf.*gitdir:.*${label}" "$HOME/.gitconfig" | head -n1 | sed 's/.*gitdir:\([^"]*\)".*/\1/' || true)
-        if [[ -n "$extracted" ]]; then
-            extracted="${extracted/#\~/$HOME}"
-            extracted="${extracted%/}"
-            if [[ -d "$extracted" ]]; then
-                echo "$extracted"
-                return
+        local label_lower
+        label_lower=$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')
+
+        local current_gitdir=""
+        local current_path=""
+        local tier1_candidate=""
+        local tier2_candidate=""
+        local tier3_candidate=""
+
+        check_section() {
+            local gdir="$1"
+            local ppath="$2"
+            [[ -z "$gdir" ]] && return 0
+
+            # Strip leading/trailing quotes and trailing wildcards/slashes
+            gdir="${gdir%\"}"
+            gdir="${gdir#\"}"
+            gdir="${gdir%\'}"
+            gdir="${gdir#\'}"
+            gdir="${gdir%/\*\*}"
+            gdir="${gdir%/\*}"
+            gdir="${gdir%/}"
+
+            ppath="${ppath%\"}"
+            ppath="${ppath#\"}"
+            ppath="${ppath%\'}"
+            ppath="${ppath#\'}"
+
+            local ppath_clean="${ppath//\\//}"
+            local ppath_base
+            ppath_base=$(basename "$ppath_clean" 2>/dev/null || echo "$ppath_clean")
+            local ppath_base_lower
+            ppath_base_lower=$(printf '%s' "$ppath_base" | tr '[:upper:]' '[:lower:]')
+
+            local gdir_clean="${gdir//\\//}"
+            local gdir_base
+            gdir_base=$(basename "$gdir_clean" 2>/dev/null || echo "$gdir_clean")
+            local gdir_base_lower
+            gdir_base_lower=$(printf '%s' "$gdir_base" | tr '[:upper:]' '[:lower:]')
+
+            # Normalize candidate directory to verify existence
+            local norm_dir
+            norm_dir=$(normalize_path "$gdir")
+
+            # Tier 1: Target profile path matches label
+            # e.g., work.gitconfig, .gitconfig-work, gitconfig-work, *-work.gitconfig, *-work
+            if [[ -z "$tier1_candidate" ]]; then
+                if [[ "$ppath_base_lower" == "${label_lower}.gitconfig" ]] || \
+                   [[ "$ppath_base_lower" == ".gitconfig-${label_lower}" ]] || \
+                   [[ "$ppath_base_lower" == "gitconfig-${label_lower}" ]] || \
+                   [[ "$ppath_base_lower" == *"-${label_lower}.gitconfig" ]] || \
+                   [[ "$ppath_base_lower" == *"_${label_lower}.gitconfig" ]] || \
+                   [[ "$ppath_base_lower" == *"-${label_lower}" ]] || \
+                   [[ "$ppath_base_lower" == *"_${label_lower}" ]] || \
+                   [[ "$ppath_base_lower" == "${label_lower}" ]]; then
+                    if [[ -d "$norm_dir" ]]; then
+                        tier1_candidate="$norm_dir"
+                        return 0
+                    fi
+                fi
             fi
+
+            # Tier 2: gitdir exact directory segment match
+            # e.g. .../work or .../work/
+            if [[ -z "$tier2_candidate" ]]; then
+                if [[ "$gdir_base_lower" == "$label_lower" ]]; then
+                    if [[ -d "$norm_dir" ]]; then
+                        tier2_candidate="$norm_dir"
+                        return 0
+                    fi
+                fi
+            fi
+
+            # Tier 3: gitdir base starts or ends with label + delimiter
+            # e.g. work_dir, work-dir, dev-work (excluding middle substring like client_work_dir)
+            if [[ -z "$tier3_candidate" ]]; then
+                if [[ "$gdir_base_lower" == "${label_lower}_"* ]] || \
+                   [[ "$gdir_base_lower" == "${label_lower}-"* ]] || \
+                   [[ "$gdir_base_lower" == *"_${label_lower}" ]] || \
+                   [[ "$gdir_base_lower" == *"-${label_lower}" ]]; then
+                    if [[ -d "$norm_dir" ]]; then
+                        tier3_candidate="$norm_dir"
+                    fi
+                fi
+            fi
+        }
+
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            line="${line#"${line%%[![:space:]]*}"}"
+            line="${line%"${line##*[![:space:]]}"}"
+            [[ -z "$line" || "$line" == "#"* || "$line" == ";"* ]] && continue
+
+            if [[ "$line" =~ ^\[includeIf[[:space:]]+\"gitdir(/i)?:(.*)\"\]$ ]] || \
+               [[ "$line" =~ ^\[includeIf[[:space:]]+\'gitdir(/i)?:(.*)\'\]$ ]] || \
+               [[ "$line" =~ ^\[includeIf[[:space:]]+gitdir(/i)?:(.*)\]$ ]]; then
+                check_section "$current_gitdir" "$current_path"
+                current_gitdir="${BASH_REMATCH[2]}"
+                current_path=""
+            elif [[ "$line" =~ ^\[ ]]; then
+                check_section "$current_gitdir" "$current_path"
+                current_gitdir=""
+                current_path=""
+            elif [[ -n "$current_gitdir" ]] && [[ "$line" =~ ^path[[:space:]]*=[[:space:]]*(.*)$ ]]; then
+                current_path="${BASH_REMATCH[1]}"
+            fi
+        done < "$HOME/.gitconfig"
+
+        check_section "$current_gitdir" "$current_path"
+
+        if [[ -n "$tier1_candidate" ]]; then
+            echo "$tier1_candidate"
+            return
         fi
-        
-        # Or look for exact match if label is something else
-        extracted=$(grep -i "includeIf.*gitdir" "$HOME/.gitconfig" | grep -i "$label" | head -n1 | sed 's/.*gitdir:\([^"]*\)".*/\1/' || true)
-        if [[ -n "$extracted" ]]; then
-            extracted="${extracted/#\~/$HOME}"
-            extracted="${extracted%/}"
-            if [[ -d "$extracted" ]]; then
-                echo "$extracted"
-                return
-            fi
+
+        if [[ -n "$tier2_candidate" ]]; then
+            echo "$tier2_candidate"
+            return
+        fi
+
+        if [[ -n "$tier3_candidate" ]]; then
+            echo "$tier3_candidate"
+            return
         fi
     fi
 
@@ -4287,8 +4513,6 @@ keychain_erase() {
 
 # Unified Global Cleanup Architecture
 # ------------------------------------------------------------------------------
-GITSETU_CLEANUP_FILES=()
-GITSETU_CLEANUP_DIRS=()
 
 gitsetu_global_cleanup() {
     # Restore terminal cursor visibility and echo if interrupted
