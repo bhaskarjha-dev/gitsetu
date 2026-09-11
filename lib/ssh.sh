@@ -87,45 +87,39 @@ generate_ssh_key() {
         print_info "Hardware Security Key detected. Please TOUCH YOUR YUBIKEY when prompted."
     fi
 
-    if [[ "${GITSETU_USE_PASSPHRASE:-0}" -eq 1 ]] || [[ "$key_type" == "ed25519-sk" ]]; then
-        # Prompt user for passphrase or FIDO2 touch interactively
-        ssh-keygen -t "$key_type" "${fido_args[@]}" -C "$email" -f "$key_path"
+    if [[ "${GITSETU_USE_PASSPHRASE:-0}" -eq 1 ]]; then
+        # Prompt user for passphrase interactively
+        ssh-keygen -t "$key_type" ${fido_args[@]+"${fido_args[@]}"} -C "$email" -f "$key_path"
         local status=$?
-        
-        # FIDO2 Fallback Mechanism
-        if [[ "$status" -ne 0 ]] && [[ "$key_type" == "ed25519-sk" ]]; then
-            print_warning "Hardware Security Key enrollment failed (missing device or libfido2 unsupported)."
-            print_info "Falling back to standard ed25519 software key generation..."
-            
-            key_type="ed25519"
-            fido_args=()
-            if [[ "${GITSETU_USE_PASSPHRASE:-0}" -eq 1 ]]; then
-                ssh-keygen -t "$key_type" -C "$email" -f "$key_path"
-                status=$?
-            else
-                ssh-keygen -t "$key_type" -C "$email" -f "$key_path" -N "" -q
-                status=$?
-            fi
-        fi
+    elif [[ "$key_type" == "ed25519-sk" ]]; then
+        # FIDO2 touch without passphrase prompt
+        ssh-keygen -t "$key_type" ${fido_args[@]+"${fido_args[@]}"} -C "$email" -f "$key_path" -N ""
+        local status=$?
     else
-        # Password-less key (background with spinner)
-        ssh-keygen -t "$key_type" "${fido_args[@]}" -C "$email" -f "$key_path" -N "" -q >/dev/null 2>&1 &
-        local pid=$!
-        local spin='-\|/'
-        local i=0
-        while kill -0 $pid 2>/dev/null; do
-            i=$(( (i+1) %4 ))
-            printf "\r  ${BOLD}Generating...${RESET} %s " "${spin:$i:1}" >&2
-            sleep 0.1
-        done
-        wait $pid
+        # Password-less standard key (instant, synchronous, Bash 3.2+ compatible)
+        ssh-keygen -t "$key_type" -C "$email" -f "$key_path" -N "" -q
         local status=$?
-        printf "\r\033[K" >&2 # Clear the spinner line
+    fi
+
+    # FIDO2 Fallback Mechanism
+    if [[ "$status" -ne 0 ]] && [[ "$key_type" == "ed25519-sk" ]]; then
+        print_warning "Hardware Security Key enrollment failed (missing device or libfido2 unsupported)."
+        print_info "Falling back to standard ed25519 software key generation..."
+        
+        key_type="ed25519"
+        fido_args=()
+        if [[ "${GITSETU_USE_PASSPHRASE:-0}" -eq 1 ]]; then
+            ssh-keygen -t "$key_type" -C "$email" -f "$key_path"
+            status=$?
+        else
+            ssh-keygen -t "$key_type" -C "$email" -f "$key_path" -N "" -q
+            status=$?
+        fi
     fi
 
     if [[ "$status" -eq 0 ]]; then
-        chmod 600 "$key_path"
-        chmod 644 "${key_path}.pub"
+        chmod 600 "$key_path" 2>/dev/null || true
+        chmod 644 "${key_path}.pub" 2>/dev/null || true
         print_success "Created: $key_path"
         return 0
     else

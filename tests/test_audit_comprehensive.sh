@@ -170,11 +170,14 @@ test_f05_xdg_config_home_support() {
     assert_file_contains "$ssh_config" "custom_xdg" "SSH config Include directive must reference XDG_CONFIG_HOME"
 
     # 2. Test Keychain fallback token storage
+    local saved_os="${GITSETU_OS:-}"
+    GITSETU_OS="unknown"
     keychain_store "test_label" "github.com" "test_user" "secret_token_123"
     assert_file_exists "$custom_xdg/gitsetu/.tokens" "Tokens must be saved under custom XDG_CONFIG_HOME"
     local loaded
     loaded=$(keychain_get "test_label" "github.com" | grep "password=" | cut -d= -f2)
     assert_equals "secret_token_123" "$loaded" "Token loaded from custom XDG_CONFIG_HOME"
+    GITSETU_OS="$saved_os"
 
     # 3. Test Teardown dynamic Include cleanup
     teardown_all 0

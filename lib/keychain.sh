@@ -18,7 +18,7 @@ keychain_store() {
 
     case "$GITSETU_OS" in
         macos)
-            if command -v security >/dev/null 2>&1; then
+            if [[ -z "${CI:-}" && -z "${GITSETU_TEST:-}" ]] && command -v security >/dev/null 2>&1; then
                 # Delete existing to prevent duplication errors
                 security delete-internet-password -s "$service_name" >/dev/null 2>&1 || true
                 security add-internet-password -s "$service_name" -a "$username" -w "$token" >/dev/null 2>&1
@@ -26,7 +26,7 @@ keychain_store() {
             fi
             ;;
         linux)
-            if command -v secret-tool >/dev/null 2>&1; then
+            if [[ -z "${CI:-}" && -z "${GITSETU_TEST:-}" ]] && command -v secret-tool >/dev/null 2>&1; then
                 printf "%s" "$token" | secret-tool store --label="GitSetu ($profile) $host" gitsetu "$profile" host "$host" user "$username" >/dev/null 2>&1
                 return $?
             fi
@@ -67,7 +67,7 @@ keychain_get() {
 
     case "$GITSETU_OS" in
         macos)
-            if command -v security >/dev/null 2>&1; then
+            if [[ -z "${CI:-}" && -z "${GITSETU_TEST:-}" ]] && command -v security >/dev/null 2>&1; then
                 local out pass user
                 # Fetch password and attributes
                 if out=$(security find-internet-password -s "$service_name" -g 2>&1); then
@@ -82,7 +82,7 @@ keychain_get() {
             fi
             ;;
         linux)
-            if command -v secret-tool >/dev/null 2>&1; then
+            if [[ -z "${CI:-}" && -z "${GITSETU_TEST:-}" ]] && command -v secret-tool >/dev/null 2>&1; then
                 # On Linux, secret-tool lookup only returns the password. 
                 # We need the username. But we didn't store the username as an output of lookup, 
                 # wait, secret-tool lookup searches by attributes. 
@@ -136,13 +136,13 @@ keychain_erase() {
 
     case "$GITSETU_OS" in
         macos)
-            if command -v security >/dev/null 2>&1; then
+            if [[ -z "${CI:-}" && -z "${GITSETU_TEST:-}" ]] && command -v security >/dev/null 2>&1; then
                 security delete-internet-password -s "$service_name" >/dev/null 2>&1 || true
                 return 0
             fi
             ;;
         linux)
-            if command -v secret-tool >/dev/null 2>&1; then
+            if [[ -z "${CI:-}" && -z "${GITSETU_TEST:-}" ]] && command -v secret-tool >/dev/null 2>&1; then
                 secret-tool clear gitsetu "$profile" host "$host" >/dev/null 2>&1 || true
                 return 0
             fi

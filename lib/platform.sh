@@ -282,20 +282,33 @@ EOF
 # copy_to_clipboard — Opportunistically copies text to the system clipboard
 # ------------------------------------------------------------------------------
 copy_to_clipboard() {
+    # Skip clipboard in headless CI or test environments
+    if [[ -n "${CI:-}" || -n "${GITSETU_TEST:-}" ]]; then
+        return 1
+    fi
+
     local text="$1"
     
     if command -v pbcopy >/dev/null 2>&1; then
-        printf "%s" "$text" | pbcopy
-        return 0
+        if printf "%s" "$text" | pbcopy >/dev/null 2>&1; then
+            return 0
+        fi
+        return 1
     elif command -v clip.exe >/dev/null 2>&1; then
-        printf "%s" "$text" | clip.exe
-        return 0
+        if printf "%s" "$text" | clip.exe >/dev/null 2>&1; then
+            return 0
+        fi
+        return 1
     elif command -v xclip >/dev/null 2>&1; then
-        printf "%s" "$text" | xclip -selection clipboard
-        return 0
+        if printf "%s" "$text" | xclip -selection clipboard >/dev/null 2>&1; then
+            return 0
+        fi
+        return 1
     elif command -v xsel >/dev/null 2>&1; then
-        printf "%s" "$text" | xsel --clipboard --input
-        return 0
+        if printf "%s" "$text" | xsel --clipboard --input >/dev/null 2>&1; then
+            return 0
+        fi
+        return 1
     fi
     
     return 1

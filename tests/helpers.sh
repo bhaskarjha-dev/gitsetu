@@ -241,6 +241,7 @@ ORIGINAL_HOME=""
 TEST_HOME=""
 
 setup_test_home() {
+    export GITSETU_TEST=1
     ORIGINAL_HOME="$HOME"
     TEST_HOME=$(mktemp -d "${TMPDIR:-/tmp}/gitsetu-test.XXXXXX")
     if [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]]; then
@@ -261,6 +262,7 @@ teardown_test_home() {
     if [[ -n "$ORIGINAL_HOME" ]]; then
         export HOME="$ORIGINAL_HOME"
     fi
+    unset GITSETU_TEST
     TEST_HOME=""
     ORIGINAL_HOME=""
 }

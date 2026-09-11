@@ -21,7 +21,13 @@ fail() {
 echo "=== Running tests/test_auto_discovery.sh ==="
 
 # 1. Setup isolated sandbox environment
+export GITSETU_TEST=1
 SANDBOX=$(mktemp -d "${TMPDIR:-/tmp}/gitsetu-auto-test.XXXXXX")
+if [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]]; then
+    SANDBOX=$(cd "$SANDBOX" && pwd -W)
+else
+    SANDBOX=$(cd "$SANDBOX" && pwd -P)
+fi
 export HOME="$SANDBOX"
 export XDG_CONFIG_HOME="$SANDBOX/.config"
 
@@ -101,6 +107,11 @@ fi
 
 # 7. Test init alias with --auto
 SANDBOX2=$(mktemp -d "${TMPDIR:-/tmp}/gitsetu-init-test.XXXXXX")
+if [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]]; then
+    SANDBOX2=$(cd "$SANDBOX2" && pwd -W)
+else
+    SANDBOX2=$(cd "$SANDBOX2" && pwd -P)
+fi
 export HOME="$SANDBOX2"
 export XDG_CONFIG_HOME="$SANDBOX2/.config"
 git config --file "$SANDBOX2/.gitconfig" user.name "Init Tester"

@@ -32,7 +32,7 @@ test_atomic_registry_writes() {
     
     # Verify the file is not corrupted (should have exactly 2 lines)
     local line_count
-    line_count=$(wc -l < "$GITSETU_PROFILES_CONF" | tr -d ' ')
+    line_count=$(wc -l < "$GITSETU_PROFILES_CONF" | tr -d ' \t\r\n')
     # Actually, the file has a 3-line header. 3 header + 2 profiles = 5 lines.
     assert_equals "5" "$line_count" "profiles.conf has exactly 5 lines (no data dropped or interleaved)" || return 1
     
@@ -59,7 +59,7 @@ test_atomic_headless_add() {
     
     # Verify the registry contains exactly 6 profile entries (plus 3 header lines = 9 lines)
     local line_count
-    line_count=$(wc -l < "$GITSETU_PROFILES_CONF" | tr -d ' ')
+    line_count=$(wc -l < "$GITSETU_PROFILES_CONF" | tr -d ' \t\r\n')
     assert_equals "9" "$line_count" "profiles.conf has exactly 9 lines (global + 5 parallel profiles)" || return 1
     
     assert_file_contains "$GITSETU_PROFILES_CONF" "global:" "contains global profile" || return 1
