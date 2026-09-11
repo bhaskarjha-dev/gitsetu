@@ -38,7 +38,7 @@ The following architectural hardening milestones established our enterprise base
 - **Bash 3.2 Array Panic Prevention**: Native C-style POSIX loop structures replacing fragile subshell bounds.
 - **Path Injection Prevention**: Strict newline sanitization preventing INI boundary corruption.
 - **Encrypted State Export**: AES-256 OpenSSL vault packaging (`gitsetu backup` / `gitsetu restore`).
-- **Empirical Sandbox Verification Matrix**: 32 automated regression test suites and isolated Windows Sandbox test harness (32/32 suites passing 100% green, 70/70 sandbox audit checks passed).
+- **Empirical Sandbox Verification Matrix**: 33 automated regression test suites and isolated Windows Sandbox test harness (33/33 suites passing 100% green, 70/70 sandbox audit checks passed).
 
 ---
 
