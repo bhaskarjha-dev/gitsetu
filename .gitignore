@@ -32,3 +32,4 @@ dist/*.exe
 
 # Agentic Development
 .agents/
+TEST_READY.md
