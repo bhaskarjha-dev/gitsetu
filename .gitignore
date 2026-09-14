@@ -1,35 +1,67 @@
-# Backups created during testing
+# ============================================
+# GitSetu .gitignore — Pre-Launch Production
+# ============================================
+
+# --- Security: SSH keys & secrets ---
+# Never commit private keys, public keys, or encrypted vaults
+id_rsa*
+id_ed25519*
+ed25519
+ed25519.pub
+*.pem
+*.key
+*.enc
+!docs/guides/vault-backups.md
+.tokens
+gitsetu_vault_pre_restore_*.tar.gz.enc.password
+
+# --- Node.js ---
+node_modules/
+npm-debug.log*
+package-lock.json
+*.tgz
+
+# --- Backups & temporaries ---
 *.bak
 *.tmp
 *.log
+*.orig
+*.rej
 
-# macOS
+# --- OS files ---
 .DS_Store
+Thumbs.db
+Desktop.ini
+ehthumbs.db
 
-# Temporary test directories
+# --- Temporary test directories ---
 tmp/
 test_tmp/
 test_dir/
-sandbox/results/
 
-# Editor files
+# --- Sandbox ---
+sandbox/results/
+sandbox/new_phases.sh
+sandbox_results/
+*.wsb
+
+# --- Editors & IDEs ---
 *.swp
 *.swo
 *~
 .vscode/
 .idea/
+*.iml
 
-# One-time scripts
-commit_plan.sh
-gitsetu_vault_pre_restore_*.tar.gz.enc.password
-
-# Website (separate git repo)
-gitsetu-web/
-
-# Distribution binary executables
+# --- Distribution ---
 dist/*.exe
 
+# --- One-off & generated ---
+commit_plan.sh
 
-# Agentic Development
+# --- Separate repos ---
+gitsetu-web/
+
+# --- Agentic development ---
 .agents/
 TEST_READY.md
