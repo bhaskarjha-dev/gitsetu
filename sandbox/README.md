@@ -8,7 +8,7 @@ This directory provides an isolated, disposable **Windows Sandbox** test harness
 - **`gitsetu_test.wsb`**: Windows Sandbox definition mapping the repository source and Git for Windows read-only.
 - **`bootstrap.ps1`**: Automated 8-dimension test harness running upon Sandbox login.
 - **`live_test.sh`**: Real multi-profile end-to-end simulation (creates profiles, initializes repos, runs commits, tests identity switching).
-- **`comprehensive_audit.sh`**: 24-phase zero-trust empirical audit script running 70 checks across all CLI commands, edge cases, and packaging channels.
+- **`comprehensive_audit.sh`**: 31-phase zero-trust empirical audit script running ~110 checks across all CLI commands, security hardening, concurrency locking, CRLF self-healing, backup/restore round-trips, edge cases, and packaging channels.
 
 ## Usage
 

@@ -12,8 +12,9 @@
 [![ShellCheck](https://img.shields.io/badge/ShellCheck-passing-brightgreen?logo=gnu-bash&logoColor=white)](https://www.shellcheck.net/)
 [![License: MIT](https://img.shields.io/github/license/bhaskarjha-dev/gitsetu?color=blue)](LICENSE)
 [![Bash 3.2+](https://img.shields.io/badge/bash-3.2%2B-orange?logo=gnubash&logoColor=white)](https://www.gnu.org/software/bash/)
-[![Tests](https://img.shields.io/badge/tests-32%20suites%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-33%20suites%20passing-brightgreen)]()
 [![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey)]()
+[![Website](https://img.shields.io/badge/website-gitsetu.bhaskarjha.dev-00c4cc)](https://gitsetu.bhaskarjha.dev)
 
 </div>
 
@@ -58,6 +59,8 @@ irm https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.ps1 | 
 > Want to test risk-free in an isolated VM? Check out the [Windows Sandbox Test Harness](sandbox/README.md).
 
 ## Documentation
+
+> **📘 [Official Website & Full Documentation →](https://gitsetu.bhaskarjha.dev)**
 
 - 🚀 **[Getting Started & Quickstart](docs/getting-started/quickstart.md)**
 - 📥 **[Installation Guide](docs/getting-started/installation.md)**

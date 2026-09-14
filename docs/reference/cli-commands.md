@@ -8,13 +8,14 @@ GitSetu exposes a highly targeted, heavily validated command palette designed ex
 
 ## Provisioning & Setup
 
-### `gitsetu setup`
+### `gitsetu setup [--auto] [--dry-run]`
+Alias: `gitsetu init [--auto] [--dry-run]`
 The primary interactive compilation wizard. Use this command to provision entirely new workspace profiles or seamlessly update existing configuration paths.
 - Natively prompts for distinct Profile Labels, Developer Names, Emails, and Target Directories.
 - Prompts for Zero-Trust SSH Key generation (ED25519 or FIDO2 hardware tokens).
 - Safely injects atomic managed blocks directly into `~/.gitconfig` and OpenSSH configuration files.
 
-### `gitsetu add <label> "<name>" <email> <dir>`
+### `gitsetu add <label> <name> <email> <dir>`
 Add a new profile non-interactively via positional arguments.
 - Example: `gitsetu add work "Dev Name" dev@company.com ~/work`
 - Generates SSH keys, registers the profile in `profiles.conf`, and updates `~/.gitconfig` automatically.
@@ -92,7 +93,7 @@ Executes the native OTA (Over-The-Air) update sequence.
 - Pulls verified binary payloads exclusively via standard TLS/HTTPS domains.
 - Atomically hot-swaps the local `~/.local/share/gitsetu` executable binary.
 
-### `gitsetu guard --install` / `gitsetu guard --uninstall`
+### `gitsetu guard --install` | `gitsetu guard --uninstall`
 Toggles the fail-closed Pre-Commit Identity interceptor bounds inside the global `core.hooksPath` configuration matrix:
 - `--install`: Installs and activates the global pre-commit hook in `~/.config/gitsetu/guard.sh` and configures `core.hooksPath`.
 - `--uninstall`: Deactivates the global pre-commit hook and unsets `core.hooksPath`.
@@ -103,3 +104,9 @@ Toggles the fail-closed Pre-Commit Identity interceptor bounds inside the global
 - Restores the host Git environments to their pristine, pre-installation state without deleting your private SSH keys.
 - `--deep`: Recursively strips matched local repository identity overrides.
 - `--force`: Bypasses the confirmation prompt.
+
+### `gitsetu --help, -h`
+Displays the quick-reference help dialog in your terminal.
+
+### `gitsetu --version, -v`
+Prints the current version of the GitSetu CLI.

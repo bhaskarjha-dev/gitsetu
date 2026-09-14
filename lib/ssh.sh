@@ -160,7 +160,7 @@ Host ${prefix}-${label}
     AddKeysToAgent yes
 EOF
 
-    if [[ "$OSTYPE" == "darwin"* ]]; then
+    if [[ "${GITSETU_OS:-}" == "macos" || "${OSTYPE:-}" == "darwin"* ]]; then
         echo "    UseKeychain yes"
     fi
 }

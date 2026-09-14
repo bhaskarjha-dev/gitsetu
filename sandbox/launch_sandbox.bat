@@ -38,16 +38,43 @@ if not exist "C:\Program Files\Git\bin\bash.exe" (
 
 set "WSB_FILE=%SANDBOX_DIR%\gitsetu_test.wsb"
 
-if not exist "%WSB_FILE%" (
-    echo [ERROR] %WSB_FILE% not found.
-    pause
-    exit /b 1
-)
+:: Generate WSB config with dynamic paths for portability
+set "WSB_GENERATED=%TEMP%\gitsetu_test_dynamic.wsb"
+set "RESULTS_DIR=%ROOT_DIR%\..\sandbox_results"
+if not exist "%RESULTS_DIR%" mkdir "%RESULTS_DIR%"
+
+(
+echo ^<Configuration^>
+echo   ^<VGpu^>Disable^</VGpu^>
+echo   ^<Networking^>Default^</Networking^>
+echo   ^<MappedFolders^>
+echo     ^<MappedFolder^>
+echo       ^<HostFolder^>%ROOT_DIR%^</HostFolder^>
+echo       ^<SandboxFolder^>C:\gitsetu_source^</SandboxFolder^>
+echo       ^<ReadOnly^>true^</ReadOnly^>
+echo     ^</MappedFolder^>
+echo     ^<MappedFolder^>
+echo       ^<HostFolder^>C:\Program Files\Git^</HostFolder^>
+echo       ^<SandboxFolder^>C:\Git_Host^</SandboxFolder^>
+echo       ^<ReadOnly^>true^</ReadOnly^>
+echo     ^</MappedFolder^>
+echo     ^<MappedFolder^>
+echo       ^<HostFolder^>%RESULTS_DIR%^</HostFolder^>
+echo       ^<SandboxFolder^>C:\results^</SandboxFolder^>
+echo       ^<ReadOnly^>false^</ReadOnly^>
+echo     ^</MappedFolder^>
+echo   ^</MappedFolders^>
+echo   ^<LogonCommand^>
+echo     ^<Command^>powershell.exe -ExecutionPolicy Bypass -Command "^&amp; { for ($i=0; $i -lt 60; $i++^) { if (Test-Path 'C:\gitsetu_source\sandbox\bootstrap.ps1'^) { ^&amp; 'C:\gitsetu_source\sandbox\bootstrap.ps1'; break } if (Test-Path 'C:\Users\WDAGUtilityAccount\Desktop\gitsetu\sandbox\bootstrap.ps1'^) { ^&amp; 'C:\Users\WDAGUtilityAccount\Desktop\gitsetu\sandbox\bootstrap.ps1'; break } Start-Sleep -Seconds 1 } }"^</Command^>
+echo   ^</LogonCommand^>
+echo ^</Configuration^>
+) > "%WSB_GENERATED%"
 
 echo Launching Windows Sandbox with:
-echo   %WSB_FILE%
+echo   Source: %ROOT_DIR%
+echo   Results: %RESULTS_DIR%
 echo.
-start "" "%SANDBOX_EXE%" "%WSB_FILE%"
+start "" "%SANDBOX_EXE%" "%WSB_GENERATED%"
 
 echo.
 echo Windows Sandbox has been started!

@@ -155,9 +155,11 @@ cmd_backup() {
         out_file="gitsetu_vault_${timestamp}.tar.gz.enc"
     fi
 
-    # Tar the state safely
-    local temp_tar="${TMPDIR:-/tmp}/gitsetu_vault_$$_${RANDOM}.tar.gz"
-    GITSETU_CLEANUP_FILES+=("$temp_tar")
+    # Secure temporary directory created with mode 0700 under umask 077
+    local temp_dir
+    temp_dir=$(umask 077 && mktemp -d "${TMPDIR:-/tmp}/gitsetu_vault.XXXXXX")
+    GITSETU_CLEANUP_DIRS+=("$temp_dir")
+    local temp_tar="$temp_dir/gitsetu_vault.tar.gz"
 
     # Bundle: config directory + individual SSH key files from registry
     local tar_args=()
@@ -182,13 +184,13 @@ cmd_backup() {
 
     if [[ ${#tar_args[@]} -eq 0 ]]; then
         print_error "No state files found to backup."
-        rm -f "$temp_tar"
+        rm -rf "$temp_dir"
         return 1
     fi
 
-    if ! tar -czf "$temp_tar" -C "$HOME" "${tar_args[@]}" 2>/dev/null; then
+    if ! (umask 077 && tar -czf "$temp_tar" -C "$HOME" "${tar_args[@]}" 2>/dev/null); then
         print_error "Failed to compress state directories."
-        rm -f "$temp_tar"
+        rm -rf "$temp_dir"
         return 1
     fi
 
@@ -205,7 +207,7 @@ cmd_backup() {
 
         if [[ "$password" != "$confirm" ]]; then
             print_error "Passwords do not match. Backup aborted."
-            rm -f "$temp_tar"
+            rm -rf "$temp_dir"
             return 1
         fi
     fi
@@ -215,18 +217,17 @@ cmd_backup() {
     read -r -a extra_ssl_args <<< "$(get_openssl_args)"
     ssl_args+=("${extra_ssl_args[@]}")
 
-    export GITSETU_VAULT_PASS="$password"
-    if openssl enc "${ssl_args[@]}" -in "$temp_tar" -out "$out_file" -pass env:GITSETU_VAULT_PASS 2>/dev/null; then
+    # Pass password directly via stdin to prevent process environment or table leakage
+    if (umask 077 && printf '%s\n' "$password" | openssl enc "${ssl_args[@]}" -in "$temp_tar" -out "$out_file" -pass stdin 2>/dev/null); then
+        chmod 600 "$out_file" 2>/dev/null || true
         print_success "Vault created successfully: $out_file"
     else
         print_error "Encryption failed."
-        unset GITSETU_VAULT_PASS
-        rm -f "$temp_tar"
+        rm -rf "$temp_dir"
         return 1
     fi
 
-    unset GITSETU_VAULT_PASS
-    rm -f "$temp_tar"
+    rm -rf "$temp_dir"
     return 0
 }
 
@@ -255,48 +256,91 @@ cmd_restore() {
     read -r -a extra_ssl_args <<< "$(get_openssl_args)"
     ssl_args+=("${extra_ssl_args[@]}")
 
-    local temp_tar="${TMPDIR:-/tmp}/gitsetu_vault_$$_${RANDOM}.tar.gz"
-    GITSETU_CLEANUP_FILES+=("$temp_tar")
+    # Secure temporary directory created with mode 0700 under umask 077
+    local temp_dir
+    temp_dir=$(umask 077 && mktemp -d "${TMPDIR:-/tmp}/gitsetu_vault.XXXXXX")
+    GITSETU_CLEANUP_DIRS+=("$temp_dir")
+    local temp_tar="$temp_dir/gitsetu_vault.tar.gz"
 
-    export GITSETU_VAULT_PASS="$password"
-    if ! openssl enc "${ssl_args[@]}" -in "$in_file" -out "$temp_tar" -pass env:GITSETU_VAULT_PASS 2>/dev/null; then
+    # Pass password via stdin to prevent process environment leakage
+    if ! (umask 077 && printf '%s\n' "$password" | openssl enc "${ssl_args[@]}" -in "$in_file" -out "$temp_tar" -pass stdin 2>/dev/null); then
         print_error "Decryption failed. Incorrect password or corrupted vault."
-        unset GITSETU_VAULT_PASS
-        rm -f "$temp_tar"
+        rm -rf "$temp_dir"
         return 1
     fi
-    unset GITSETU_VAULT_PASS
+
+    if type acquire_lock >/dev/null 2>&1; then
+        acquire_lock || { rm -rf "$temp_dir"; return 1; }
+    fi
 
     # Pre-Flight Safety Net
-    if [[ -d "$GITSETU_CONFIG_DIR" ]]; then
+    local has_active_state=0
+    if [[ -f "$GITSETU_PROFILES_CONF" ]] || [[ -d "$GITSETU_CONFIG_DIR/profiles" ]]; then
+        has_active_state=1
+    elif [[ -d "$GITSETU_CONFIG_DIR" ]]; then
+        local item
+        for item in "$GITSETU_CONFIG_DIR"/*; do
+            if [[ -e "$item" ]] && [[ "$item" != *.lock ]]; then
+                has_active_state=1
+                break
+            fi
+        done
+    fi
+
+    if [[ "$has_active_state" -eq 1 ]]; then
         print_warning "Active state detected. Creating pre-restore safety backup..."
         local safety_pass
         safety_pass=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c 32)
         local safety_file
         safety_file="gitsetu_vault_pre_restore_$(date +%Y%m%d_%H%M%S).tar.gz.enc"
+        local saved_test_pass="${GITSETU_TEST_VAULT_PASS:-}"
         export GITSETU_TEST_VAULT_PASS="$safety_pass"
-        cmd_backup "$safety_file" >/dev/null 2>&1 || return 1
-        unset GITSETU_TEST_VAULT_PASS
-        # Store password adjacent to vault so user can recover if needed
-        printf '%s\n' "$safety_pass" > "${safety_file}.password"
-        chmod 600 "${safety_file}.password"
+        cmd_backup "$safety_file" >/dev/null 2>&1 || {
+            rm -rf "$temp_dir"
+            if type release_lock >/dev/null 2>&1; then release_lock; fi
+            return 1
+        }
+        if [[ -n "$saved_test_pass" ]]; then
+            export GITSETU_TEST_VAULT_PASS="$saved_test_pass"
+        else
+            unset GITSETU_TEST_VAULT_PASS
+        fi
+        # Store password adjacent to vault with mode 0600 from inception
+        (umask 077 && printf '%s\n' "$safety_pass" > "${safety_file}.password")
+        chmod 600 "${safety_file}.password" 2>/dev/null || true
         print_info "Safety vault: $safety_file (password in ${safety_file}.password)"
         
         # Teardown current global configs to avoid duplicate block drift
         if type teardown_all >/dev/null 2>&1; then
             teardown_all >/dev/null 2>&1 || true
         fi
-        rm -rf "$GITSETU_CONFIG_DIR"
+        local f
+        for f in "$GITSETU_CONFIG_DIR"/*; do
+            if [[ "$f" != *.lock ]]; then
+                rm -rf "$f" 2>/dev/null || true
+            fi
+        done
+    fi
+
+    # Validate archive members against path traversal before extraction
+    local bad_paths
+    bad_paths=$(tar -tzf "$temp_tar" 2>/dev/null | grep -E '^/|\.\./' || true)
+    if [[ -n "$bad_paths" ]]; then
+        print_error "Security violation: backup archive contains prohibited path traversal entries."
+        rm -rf "$temp_dir"
+        if type release_lock >/dev/null 2>&1; then release_lock; fi
+        return 1
     fi
 
     mkdir -p "$HOME/.config" "$HOME/.ssh"
     if ! tar -xzf "$temp_tar" -C "$HOME" 2>/dev/null; then
         print_error "Failed to extract vault."
-        rm -f "$temp_tar"
+        rm -rf "$temp_dir"
+        if type release_lock >/dev/null 2>&1; then release_lock; fi
         return 1
     fi
 
-    rm -f "$temp_tar"
+    rm -rf "$temp_dir"
     print_success "State successfully extracted."
 
     # Regenerate global Git and SSH state from the restored profiles
@@ -322,6 +366,10 @@ cmd_restore() {
 
         # Regenerate SSH config (one call writes all host blocks)
         write_ssh_config
+    fi
+
+    if type release_lock >/dev/null 2>&1; then
+        release_lock
     fi
 
     print_success "Restore complete. Your identity is active."

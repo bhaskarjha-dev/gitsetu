@@ -68,12 +68,7 @@ EOF
     for (( i=0; i<PROFILE_COUNT; i++ )); do
         local dir="${PROFILE_DIRS[$i]}"
         if [[ -n "$dir" ]]; then
-            if [[ "$GITSETU_OS" == "gitbash" ]] && [[ "$dir" =~ ^/([a-zA-Z])/(.*) ]]; then
-                local drive="${BASH_REMATCH[1]}"
-                local rest="${BASH_REMATCH[2]}"
-                drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
-                dir="${drive}:/${rest}"
-            fi
+            dir=$(normalize_path "$dir")
             if [[ "$dir" != */ ]]; then
                 dir="${dir}/"
             fi
@@ -98,12 +93,7 @@ EOF
         local dir="${PROFILE_DIRS[$i]}"
 
         if [[ -n "$dir" ]]; then
-            if [[ "$GITSETU_OS" == "gitbash" ]] && [[ "$dir" =~ ^/([a-zA-Z])/(.*) ]]; then
-                local drive="${BASH_REMATCH[1]}"
-                local rest="${BASH_REMATCH[2]}"
-                drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
-                dir="${drive}:/${rest}"
-            fi
+            dir=$(normalize_path "$dir")
             # Ensure trailing slash for gitdir matching
             if [[ "$dir" != */ ]]; then
                 dir="${dir}/"

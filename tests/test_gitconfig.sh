@@ -172,7 +172,7 @@ test_write_profiles_conf() {
 }
 
 test_path_escaping() {
-    # Test that GitConfig paths are properly escaped for double quotes and backslashes
+    # Test that GitConfig paths are properly escaped for double quotes and normalized
     PROFILE_LABELS=("global" "hacker")
     PROFILE_NAMES=("Global" "Hacker")
     PROFILE_EMAILS=("g@t.com" "hacker@test.com")
@@ -183,16 +183,15 @@ test_path_escaping() {
     local block
     block=$(build_global_gitconfig_block)
 
-    # The original path is: C:\Users\John"Doe\work/ (with trailing slash added)
-    # The escaped path should be: C:\\Users\\John\"Doe\\work/
-    local expected_escaped_dir='C:\\Users\\John\"Doe\\work/'
+    # Backslashes are normalized to forward slashes, quotes are escaped
+    local expected_escaped_dir='C:/Users/John\"Doe/work/'
     local keyword
     keyword=$(get_gitdir_keyword)
     
     assert_contains "$block" "[includeIf \"${keyword}${expected_escaped_dir}\"]" "path is properly escaped in includeIf" || return 1
     
     # Check that [safe] directory is also escaped
-    local expected_safe_dir='C:\\Users\\John\"Doe\\work/*'
+    local expected_safe_dir='C:/Users/John\"Doe/work/*'
     assert_contains "$block" "directory = \"${expected_safe_dir}\"" "path is properly escaped in safe directory" || return 1
 }
 

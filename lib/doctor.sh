@@ -11,12 +11,24 @@ run_doctor() {
 
     # 1. Determine active profile based on PWD
     local current_dir="$PWD"
-    if [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]]; then
+    if [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "mingw"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]]; then
         current_dir=$(pwd -W 2>/dev/null || echo "$current_dir")
     fi
     current_dir="$(normalize_path "$current_dir")"
     local active_profile="global"
     local active_dir="[Global Fallback]"
+
+    local is_ci=0
+    case "${GITSETU_OS:-${OSTYPE:-}}" in
+        gitbash|macos|msys*|mingw*|cygwin*|darwin*) is_ci=1 ;;
+        *)
+            local u
+            u=$(uname -s 2>/dev/null || true)
+            case "$u" in
+                MSYS*|MINGW*|CYGWIN*|Darwin*) is_ci=1 ;;
+            esac
+            ;;
+    esac
     
     local i
     # Iterate backwards so more specific (later) profiles win
@@ -24,7 +36,7 @@ run_doctor() {
         local dir="${PROFILE_DIRS[$i]}"
         local check_pwd="$current_dir"
         local check_dir="$dir"
-        if [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]]; then
+        if [[ "$is_ci" -eq 1 ]]; then
             check_pwd=$(printf '%s' "$check_pwd" | tr '[:upper:]' '[:lower:]')
             check_dir=$(printf '%s' "$check_dir" | tr '[:upper:]' '[:lower:]')
         fi

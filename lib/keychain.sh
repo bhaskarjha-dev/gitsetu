@@ -21,6 +21,17 @@ keychain_store() {
             if [[ -z "${CI:-}" && -z "${GITSETU_TEST:-}" ]] && command -v security >/dev/null 2>&1; then
                 # Delete existing to prevent duplication errors
                 security delete-internet-password -s "$service_name" >/dev/null 2>&1 || true
+                local escaped_token="${token//\\/\\\\}"
+                escaped_token="${escaped_token//\"/\\\"}"
+                local escaped_user="${username//\\/\\\\}"
+                escaped_user="${escaped_user//\"/\\\"}"
+                local escaped_srv="${service_name//\\/\\\\}"
+                escaped_srv="${escaped_srv//\"/\\\"}"
+                if printf 'add-internet-password -s "%s" -a "%s" -w "%s"\n' "$escaped_srv" "$escaped_user" "$escaped_token" | security -i >/dev/null 2>&1; then
+                    if security find-internet-password -s "$service_name" >/dev/null 2>&1; then
+                        return 0
+                    fi
+                fi
                 security add-internet-password -s "$service_name" -a "$username" -w "$token" >/dev/null 2>&1
                 return $?
             fi
@@ -34,21 +45,29 @@ keychain_store() {
     esac
 
     # Fallback to local file if OS tools are missing or unsupported (WSL/GitBash)
-    local tokens_file="${GITSETU_CONFIG_DIR:-$HOME/.config/gitsetu}/.tokens"
-    touch "$tokens_file"
+    local tokens_dir="${GITSETU_CONFIG_DIR:-$HOME/.config/gitsetu}"
+    mkdir -p "$tokens_dir" 2>/dev/null || true
+    local tokens_file="$tokens_dir/.tokens"
+    (umask 077 && touch "$tokens_file")
+    chmod 600 "$tokens_file" 2>/dev/null || true
     
     # Remove existing entry
     if [[ -f "$tokens_file" ]]; then
-        local tmp_file="${TMPDIR:-/tmp}/gitsetu_tokens_$$_${RANDOM}"
+        local tmp_file
+        tmp_file=$(umask 077 && mktemp "${tokens_file}.tmp.XXXXXX" 2>/dev/null || true)
+        if [[ -z "$tmp_file" ]]; then
+            tmp_file=$(umask 077 && mktemp "${TMPDIR:-/tmp}/gitsetu_tokens.XXXXXX")
+        fi
         GITSETU_CLEANUP_FILES+=("$tmp_file")
         awk -v s="$service_name" -F':' '$1":"$2":"$3 != s' "$tokens_file" > "$tmp_file"
+        chmod 600 "$tmp_file" 2>/dev/null || true
         mv "$tmp_file" "$tokens_file"
+        chmod 600 "$tokens_file" 2>/dev/null || true
     fi
     
-    # Append new entry (service_name:username:token)
+    # Append new entry (service_name:username:token) under mode 0600
     echo "${service_name}:${username}:${token}" >> "$tokens_file"
-    # Set restrictive permissions AFTER all writes (mv replaces inode, so chmod must come last)
-    chmod 600 "$tokens_file"
+    chmod 600 "$tokens_file" 2>/dev/null || true
     return 0
 }
 
@@ -150,12 +169,19 @@ keychain_erase() {
     esac
 
     # Fallback to local file
-    local tokens_file="${GITSETU_CONFIG_DIR:-$HOME/.config/gitsetu}/.tokens"
+    local tokens_dir="${GITSETU_CONFIG_DIR:-$HOME/.config/gitsetu}"
+    local tokens_file="$tokens_dir/.tokens"
     if [[ -f "$tokens_file" ]]; then
-        local tmp_file="${TMPDIR:-/tmp}/gitsetu_tokens_$$_${RANDOM}"
+        local tmp_file
+        tmp_file=$(umask 077 && mktemp "${tokens_file}.tmp.XXXXXX" 2>/dev/null || true)
+        if [[ -z "$tmp_file" ]]; then
+            tmp_file=$(umask 077 && mktemp "${TMPDIR:-/tmp}/gitsetu_tokens.XXXXXX")
+        fi
         GITSETU_CLEANUP_FILES+=("$tmp_file")
         awk -v s="$service_name" -F':' '$1":"$2":"$3 != s' "$tokens_file" > "$tmp_file"
+        chmod 600 "$tmp_file" 2>/dev/null || true
         mv "$tmp_file" "$tokens_file"
+        chmod 600 "$tokens_file" 2>/dev/null || true
     fi
     return 0
 }

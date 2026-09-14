@@ -60,8 +60,8 @@ The inaugural General Availability (GA) production release of GitSetu — a zero
   - **Nix Flake (`flake.nix`):** Zero-dependency hermetic execution via `nix run github:bhaskarjha-dev/gitsetu`.
   - **GitHub CLI Extension (`packaging/gh-extension/`):** Executable extension wrapper (`gh gitsetu`).
 - **Installer Regression Pipeline:** Added automated end-to-end testing for both POSIX and Windows PowerShell installer/uninstaller pipelines in `tests/test_installer.sh`.
-- **32 Comprehensive Regression Test Suites:** Full test suite covering core logic, CLI, SSH, gitconfig, guard, credential broker, backup/restore, concurrency, teardown, validation, platform detection, discovery, doctor, prompt, resilience, installer, keychain, manual mode, bundler, npm wrapper, winget, AUR, Nix flake, GH extension, and audit regressions.
-- **Unified Test Runner:** Added `tests/run_all.sh` providing aggregated status and colored summaries across all 32 test suites.
+- **33 Comprehensive Regression Test Suites:** Full test suite covering core logic, CLI, SSH, gitconfig, guard, credential broker, backup/restore, concurrency, teardown, validation, platform detection, discovery, doctor, prompt, resilience, installer, keychain, manual mode, bundler, npm wrapper, winget, AUR, Nix flake, GH extension, CRLF self-healing, and audit regressions.
+- **Unified Test Runner:** Added `tests/run_all.sh` providing aggregated status and colored summaries across all 33 test suites.
 - **Developer Makefile:** Targets for `make test`, `make lint` (ShellCheck), `make check`, and `make hooks`.
 - **Shell Autocompletion:** TAB autocompletion for subcommands and profile labels in Bash and Zsh.
 - **Diagnostic Doctor (`gitsetu doctor`):** Multi-point diagnostic scanner for registry validity, OpenSSH include directives, SSH agent status, and local repository configuration drift.

@@ -45,25 +45,45 @@ if (-not $gitCmd) {
     exit 1
 }
 
-# 2. Prerequisite: Check for Bash
-$bashExe = $null
-$bashCmd = Get-Command bash.exe -ErrorAction SilentlyContinue
-if ($bashCmd) {
-    $bashExe = $bashCmd.Source
-} else {
-    $candidates = @(
-        "$env:ProgramFiles\Git\bin\bash.exe",
-        "${env:ProgramFiles(x86)}\Git\bin\bash.exe",
-        "$env:LOCALAPPDATA\Programs\Git\bin\bash.exe"
-    )
-    foreach ($c in $candidates) {
-        if (Test-Path $c) {
-            $bashExe = $c
-            break
+# 2. Prerequisite: Check for Git Bash (exclude WSL System32\bash.exe)
+function Find-GitBash {
+    param([string]$GitExePath)
+
+    # 1. Derive from git.exe path
+    if ($GitExePath) {
+        $gitDir = Split-Path (Split-Path $GitExePath -Parent) -Parent
+        $candidates = @(
+            (Join-Path $gitDir "bin\bash.exe"),
+            (Join-Path $gitDir "usr\bin\bash.exe")
+        )
+        foreach ($c in $candidates) {
+            if (Test-Path $c) { return $c }
         }
     }
+
+    # 2. Known installation locations
+    $knownLocations = @(
+        "$env:ProgramFiles\Git\bin\bash.exe",
+        "$env:ProgramFiles\Git\usr\bin\bash.exe",
+        "${env:ProgramFiles(x86)}\Git\bin\bash.exe",
+        "${env:ProgramFiles(x86)}\Git\usr\bin\bash.exe",
+        "$env:LOCALAPPDATA\Programs\Git\bin\bash.exe",
+        "$env:LOCALAPPDATA\Programs\Git\usr\bin\bash.exe"
+    )
+    foreach ($loc in $knownLocations) {
+        if (Test-Path $loc) { return $loc }
+    }
+
+    # 3. Check PATH bash.exe, strictly excluding System32 and SysWOW64 (WSL)
+    $bashCmd = Get-Command bash.exe -ErrorAction SilentlyContinue
+    if ($bashCmd -and ($bashCmd.Source -notmatch "(?i)System32|SysWOW64")) {
+        return $bashCmd.Source
+    }
+
+    return $null
 }
 
+$bashExe = Find-GitBash -GitExePath $gitCmd.Source
 if (-not $bashExe) {
     Write-StyledError "Git Bash (bash.exe) is required to run GitSetu, but was not found."
     Write-Host "  Please ensure Git for Windows is installed with Git Bash: https://git-scm.com/download/win" -ForegroundColor Yellow
@@ -117,11 +137,7 @@ Write-StyledInfo "Configuring Windows command shims in $binDir..."
 $cmdShim = @'
 @echo off
 setlocal
-where bash.exe >nul 2>&1
-if %ERRORLEVEL% equ 0 (
-    bash.exe "%~dp0..\share\gitsetu" %*
-    exit /b %ERRORLEVEL%
-)
+REM Look for Git for Windows bash explicitly; do NOT use System32\bash.exe
 if exist "%ProgramFiles%\Git\bin\bash.exe" (
     "%ProgramFiles%\Git\bin\bash.exe" "%~dp0..\share\gitsetu" %*
     exit /b %ERRORLEVEL%
@@ -134,6 +150,23 @@ if exist "%LOCALAPPDATA%\Programs\Git\bin\bash.exe" (
     "%LOCALAPPDATA%\Programs\Git\bin\bash.exe" "%~dp0..\share\gitsetu" %*
     exit /b %ERRORLEVEL%
 )
+for /f "tokens=*" %%i in ('where git.exe 2^>nul') do (
+    if exist "%%~dpi..\bin\bash.exe" (
+        "%%~dpi..\bin\bash.exe" "%~dp0..\share\gitsetu" %*
+        exit /b %ERRORLEVEL%
+    )
+    if exist "%%~dpi..\usr\bin\bash.exe" (
+        "%%~dpi..\usr\bin\bash.exe" "%~dp0..\share\gitsetu" %*
+        exit /b %ERRORLEVEL%
+    )
+)
+for /f "tokens=*" %%i in ('where bash.exe 2^>nul') do (
+    echo "%%i" | findstr /i "System32 SysWOW64" >nul
+    if errorlevel 1 (
+        "%%i" "%~dp0..\share\gitsetu" %*
+        exit /b %ERRORLEVEL%
+    )
+)
 echo Error: Git Bash is required to run GitSetu. Please install Git for Windows: https://git-scm.com >&2
 exit /b 1
 '@
@@ -144,15 +177,35 @@ Set-Content -Path (Join-Path $binDir "git-setu.cmd") -Value $cmdShim -Encoding A
 # 5b. gitsetu.ps1 (for native PowerShell execution with parameter forwarding)
 $psShim = @'
 $ErrorActionPreference = "Stop"
-$bash = (Get-Command bash.exe -ErrorAction SilentlyContinue).Source
-if (-not $bash) {
+$bash = $null
+$gitCmd = Get-Command git.exe -ErrorAction SilentlyContinue
+if ($gitCmd) {
+    $gitDir = Split-Path (Split-Path $gitCmd.Source -Parent) -Parent
     $candidates = @(
-        "$env:ProgramFiles\Git\bin\bash.exe",
-        "${env:ProgramFiles(x86)}\Git\bin\bash.exe",
-        "$env:LOCALAPPDATA\Programs\Git\bin\bash.exe"
+        (Join-Path $gitDir "bin\bash.exe"),
+        (Join-Path $gitDir "usr\bin\bash.exe")
     )
     foreach ($c in $candidates) {
         if (Test-Path $c) { $bash = $c; break }
+    }
+}
+if (-not $bash) {
+    $knownLocations = @(
+        "$env:ProgramFiles\Git\bin\bash.exe",
+        "$env:ProgramFiles\Git\usr\bin\bash.exe",
+        "${env:ProgramFiles(x86)}\Git\bin\bash.exe",
+        "${env:ProgramFiles(x86)}\Git\usr\bin\bash.exe",
+        "$env:LOCALAPPDATA\Programs\Git\bin\bash.exe",
+        "$env:LOCALAPPDATA\Programs\Git\usr\bin\bash.exe"
+    )
+    foreach ($loc in $knownLocations) {
+        if (Test-Path $loc) { $bash = $loc; break }
+    }
+}
+if (-not $bash) {
+    $bashCmd = Get-Command bash.exe -ErrorAction SilentlyContinue
+    if ($bashCmd -and ($bashCmd.Source -notmatch "(?i)System32|SysWOW64")) {
+        $bash = $bashCmd.Source
     }
 }
 if (-not $bash) {

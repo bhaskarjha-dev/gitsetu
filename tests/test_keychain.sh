@@ -144,6 +144,92 @@ test_keychain_file_permissions() {
 }
 
 # ==============================================================================
+# Verify permissions from inception (umask 077 even if chmod is mocked)
+# ==============================================================================
+test_keychain_tokens_permissions_from_inception() {
+    _keychain_setup
+    local tokens_file="$HOME/.config/gitsetu/.tokens"
+    rm -f "$tokens_file"
+
+    # Execute in a subshell where chmod is mocked to a no-op and umask is permissive (0000)
+    (
+        chmod() {
+            echo "CHMOD_CALLED:$*" >> "$HOME/.chmod_calls"
+            return 0
+        }
+        chmod "$tokens_file" >/dev/null 2>&1 || true
+        export -f chmod 2>/dev/null || true
+        umask 0000
+
+        keychain_store "prod" "github.com" "deploy_user" "secret_token_123"
+    )
+
+    assert_file_exists "$tokens_file" "tokens file created" || return 1
+
+    # On POSIX systems, verify file mode is 600 despite chmod being a no-op
+    if can_chmod_600; then
+        local perms
+        perms=$(stat -c '%a' "$tokens_file" 2>/dev/null || stat -f '%Lp' "$tokens_file" 2>/dev/null || echo "???")
+        assert_equals "600" "$perms" "tokens file is born with 600 perms (umask 077 enforced at inception)" || return 1
+    fi
+
+    # Verify content is intact
+    local output
+    output=$(keychain_get "prod" "github.com")
+    assert_contains "$output" "password=secret_token_123" "credential stored properly"
+}
+
+# ==============================================================================
+# Verify permissions maintained after keychain_erase
+# ==============================================================================
+test_keychain_erase_maintains_600_permissions() {
+    _keychain_setup
+    local tokens_file="$HOME/.config/gitsetu/.tokens"
+
+    # Store two credentials
+    keychain_store "profile1" "github.com" "user1" "pass1"
+    keychain_store "profile2" "github.com" "user2" "pass2"
+
+    # Erase profile1
+    keychain_erase "profile1" "github.com"
+
+    assert_file_exists "$tokens_file" "tokens file still exists after partial erase" || return 1
+
+    # Verify profile1 is gone, profile2 remains
+    local result=0
+    keychain_get "profile1" "github.com" || result=$?
+    assert_equals 1 "$result" "profile1 erased" || return 1
+
+    local p2_out
+    p2_out=$(keychain_get "profile2" "github.com")
+    assert_contains "$p2_out" "password=pass2" "profile2 retained" || return 1
+
+    # Check permissions on POSIX
+    if can_chmod_600; then
+        local perms
+        perms=$(stat -c '%a' "$tokens_file" 2>/dev/null || stat -f '%Lp' "$tokens_file" 2>/dev/null || echo "???")
+        assert_equals "600" "$perms" "tokens file retains 600 permissions after keychain_erase" || return 1
+    fi
+}
+
+# ==============================================================================
+# Verify no predictable temp files in /tmp
+# ==============================================================================
+test_keychain_no_tmp_predictable_files() {
+    _keychain_setup
+    local initial_tmp_count
+    initial_tmp_count=$(find "${TMPDIR:-/tmp}" -maxdepth 1 -name "*gitsetu_tokens_*" 2>/dev/null | wc -l)
+
+    keychain_store "work" "github.com" "user" "token"
+    keychain_erase "work" "github.com"
+
+    local final_tmp_count
+    final_tmp_count=$(find "${TMPDIR:-/tmp}" -maxdepth 1 -name "*gitsetu_tokens_*" 2>/dev/null | wc -l)
+
+    assert_equals "$initial_tmp_count" "$final_tmp_count" "no predictable tokens temp files created in /tmp"
+}
+
+# ==============================================================================
 # Run
 # ==============================================================================
 printf '\n%btest_keychain.sh%b\n' "$T_BOLD" "$T_RESET"
@@ -154,4 +240,7 @@ run_test "erase removes credential" test_keychain_erase
 run_test "profiles are isolated" test_keychain_profile_isolation
 run_test "erase one doesn't affect another" test_keychain_erase_isolation
 run_test "tokens file has 600 permissions" test_keychain_file_permissions
+run_test "tokens file permissions from inception" test_keychain_tokens_permissions_from_inception
+run_test "erase maintains 600 permissions" test_keychain_erase_maintains_600_permissions
+run_test "no predictable tokens temp files in /tmp" test_keychain_no_tmp_predictable_files
 print_results "Keychain tests"

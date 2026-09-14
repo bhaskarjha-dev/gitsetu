@@ -107,14 +107,44 @@ normalize_path() {
         elif [[ "$path" =~ ^/([a-zA-Z])$ ]]; then
             local drive="${BASH_REMATCH[1]}"
             drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
-            path="${drive}:"
+            path="${drive}:/"
+        elif [[ "$path" =~ ^([a-zA-Z]):$ ]]; then
+            local drive="${BASH_REMATCH[1]}"
+            drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
+            path="${drive}:/"
         elif [[ "$path" =~ ^([a-zA-Z]):/(.*) ]]; then
             local drive="${BASH_REMATCH[1]}"
             local rest="${BASH_REMATCH[2]}"
             drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
             path="${drive}:/${rest}"
         fi
+    elif [[ "$GITSETU_OS" == "wsl" ]]; then
+        # On WSL, convert Windows drive paths to /mnt/<drive>
+        if command -v wslpath >/dev/null 2>&1 && [[ "$path" =~ ^([a-zA-Z]:|/[a-zA-Z]/) ]]; then
+            path=$(wslpath -u "$path" 2>/dev/null || echo "$path")
+        elif [[ "$path" =~ ^/([a-zA-Z])/(.*) ]]; then
+            local drive="${BASH_REMATCH[1]}"
+            local rest="${BASH_REMATCH[2]}"
+            drive=$(printf '%s' "$drive" | tr '[:upper:]' '[:lower:]')
+            path="/mnt/${drive}/${rest}"
+        elif [[ "$path" =~ ^/([a-zA-Z])$ ]]; then
+            local drive="${BASH_REMATCH[1]}"
+            drive=$(printf '%s' "$drive" | tr '[:upper:]' '[:lower:]')
+            path="/mnt/${drive}"
+        elif [[ "$path" =~ ^([a-zA-Z]):$ ]]; then
+            local drive="${BASH_REMATCH[1]}"
+            drive=$(printf '%s' "$drive" | tr '[:upper:]' '[:lower:]')
+            path="/mnt/${drive}"
+        elif [[ "$path" =~ ^([a-zA-Z]):/(.*) ]]; then
+            local drive="${BASH_REMATCH[1]}"
+            local rest="${BASH_REMATCH[2]}"
+            drive=$(printf '%s' "$drive" | tr '[:upper:]' '[:lower:]')
+            path="/mnt/${drive}/${rest}"
+        fi
     fi
+
+    # Collapse double slashes (tr -s avoids bash escaping ambiguity on Git Bash)
+    path=$(printf '%s' "$path" | tr -s '/')
 
     # Remove trailing slash (unless it's just "/" or "C:/")
     if [[ "${#path}" -gt 1 ]]; then
@@ -122,9 +152,6 @@ normalize_path() {
             path="${path%/}"
         fi
     fi
-
-    # Collapse double slashes (tr -s avoids bash escaping ambiguity on Git Bash)
-    path=$(printf '%s' "$path" | tr -s '/')
 
     printf '%s' "$path"
 }
@@ -136,14 +163,15 @@ normalize_path() {
 # Everything else uses case-sensitive: gitdir:
 # ------------------------------------------------------------------------------
 get_gitdir_keyword() {
+    # Note: lib/guard.sh also handles macos case-insensitivity consistently
     case "$GITSETU_OS" in
-        gitbash) printf 'gitdir/i:' ;;
-        *)       printf 'gitdir:' ;;
+        gitbash|macos) printf 'gitdir/i:' ;;
+        *)             printf 'gitdir:' ;;
     esac
 }
 
 # ------------------------------------------------------------------------------
-# is_shared_mount — Detects if a path is on a VirtualBox/VMware shared folder
+# is_shared_mount — Detects if a path is on a VirtualBox/VMware/WSL shared folder
 #
 # These mounts have permission issues (everything is 0777) that prevent
 # SSH keys from having the required 0600 permissions.
@@ -153,22 +181,23 @@ get_gitdir_keyword() {
 is_shared_mount() {
     local path="$1"
 
-    # Check mount table for vboxsf (VirtualBox) or vmhgfs-fuse (VMware)
+    # Check mount table for vboxsf (VirtualBox), vmhgfs-fuse (VMware), drvfs/9p (WSL)
     if command -v mount >/dev/null 2>&1; then
         local mount_output
         mount_output=$(mount 2>/dev/null) || true
 
-        # Check if any vboxsf/vmhgfs mount contains this path
-        if printf '%s' "$mount_output" | grep -E "vboxsf|vmhgfs-fuse" | grep -q "${path%/}"; then
+        # Check if any shared mount contains this path
+        if printf '%s\n' "$mount_output" | grep -E "vboxsf|vmhgfs-fuse|drvfs|9p" | grep -q "${path%/}"; then
             return 0
         fi
 
-        # Broader check: is the path under any vboxsf mount point?
-        local mount_point
-        mount_point=$(printf '%s' "$mount_output" | grep -E "vboxsf|vmhgfs-fuse" | awk '{print $3}' | head -n1)
-        if [[ -n "$mount_point" ]] && [[ "$path" == "$mount_point"* ]]; then
-            return 0
-        fi
+        # Broader check: check all shared mount points (not just head -n1)
+        local mp
+        while read -r mp; do
+            if [[ -n "$mp" && "$path" == "$mp"* ]]; then
+                return 0
+            fi
+        done < <(printf '%s\n' "$mount_output" | grep -E "vboxsf|vmhgfs-fuse|drvfs|9p" | awk '{print $3}')
     fi
 
     return 1
