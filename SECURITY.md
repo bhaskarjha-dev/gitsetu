@@ -15,7 +15,7 @@ Security is the absolute highest priority for GitSetu. As an identity-bootstrapp
 
 **DO NOT** report security vulnerabilities through public GitHub issues. 
 
-Please report all security vulnerabilities privately to the maintainers via email or through the GitHub Security Advisory private reporting feature (if enabled).
+Please report all security vulnerabilities privately to **security@bhaskarjha.dev** or through [GitHub Security Advisories](https://github.com/bhaskarjha-dev/gitsetu/security/advisories/new).
 
 ### What to include in your report:
 - A description of the vulnerability.

@@ -21,16 +21,17 @@ Add a new profile non-interactively via positional arguments.
 - Generates SSH keys, registers the profile in `profiles.conf`, and updates `~/.gitconfig` automatically.
 - Automatically creates the workspace directory (`mkdir -p`) if it does not already exist.
 
-### `gitsetu remove <label>`
-Remove an existing profile non-interactively.
+### `gitsetu remove <label> [--force|-y]`
+Remove an existing profile non-interactively or interactively.
 - Safely unmounts the profile's conditional `includeIf` from `~/.gitconfig`.
 - Prunes the profile configuration file `~/.config/gitsetu/profiles/<label>.gitconfig` and any orphaned configs.
 - Removes profile SSH host blocks from `~/.config/gitsetu/profiles/ssh_config` and updates `profiles.conf`.
+- `--force`, `-y`: Bypasses the interactive confirmation prompt for scripting and headless automation.
 
 ### `gitsetu profile <subcommand>`
 Manage profiles programmatically:
 - `gitsetu profile add <label> --email=<email> [--dir=<dir>] [--name=<name>] [--key=<key>] [--sign] [--provider=<provider>]`
-- `gitsetu profile remove <label>`: Removes specified profile and updates all managed configurations.
+- `gitsetu profile remove <label> [--force|-y]`: Removes specified profile and updates all managed configurations.
 
 ### `gitsetu credential <action>`
 Standard Git credential helper broker protocol implementation:

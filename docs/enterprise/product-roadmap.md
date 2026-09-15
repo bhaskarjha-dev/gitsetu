@@ -22,7 +22,7 @@ Our target is a flawless **100/100**. A developer using GitSetu should never hav
 
 ## Foundation: Completed in v1.0.0
 
-The following architectural hardening milestones established our enterprise baseline, backed by 32 automated regression test suites (200+ assertions) and a 24-phase live Windows Sandbox empirical audit (70/70 checks passed):
+The following architectural hardening milestones established our enterprise baseline, backed by 36 automated regression and empirical test suites (250+ assertions) and a 31-phase live Windows Sandbox empirical audit (107/107 checks passed):
 - **Zero-Trust Identity Guard**: Hard pre-commit intercepts preventing dual-state leaks with longest-prefix directory matching, Windows/macOS case-insensitivity, and dynamic email re-reading.
 - **Single Source of Truth (SSOT)**: Dynamic resolution via isolated `.gitconfig` files without registry polling.
 - **Native Windows PowerShell Distribution**: Shipped native `install.ps1` & `uninstall.ps1` installers, automated Command Prompt (`gitsetu.cmd`) and PowerShell (`gitsetu.ps1`) shims in `%LOCALAPPDATA%\gitsetu\bin`, and User `PATH` environment management.
@@ -38,7 +38,7 @@ The following architectural hardening milestones established our enterprise base
 - **Bash 3.2 Array Panic Prevention**: Native C-style POSIX loop structures replacing fragile subshell bounds.
 - **Path Injection Prevention**: Strict newline sanitization preventing INI boundary corruption.
 - **Encrypted State Export**: AES-256 OpenSSL vault packaging (`gitsetu backup` / `gitsetu restore`).
-- **Empirical Sandbox Verification Matrix**: 33 automated regression test suites and isolated Windows Sandbox test harness (33/33 suites passing 100% green, 70/70 sandbox audit checks passed).
+- **Empirical Sandbox Verification Matrix**: 36 automated regression test suites and isolated Windows Sandbox test harness (36/36 suites passing 100% green, 107/107 sandbox audit checks passed).
 
 ---
 

@@ -44,9 +44,10 @@ The inaugural General Availability (GA) production release of GitSetu — a zero
 #### Windows Platform Support & Sandbox Testing
 - **Native Windows PowerShell Distribution:** Added native `install.ps1` and `uninstall.ps1` scripts with automated generation of `gitsetu.cmd` and `gitsetu.ps1` command shims in `%LOCALAPPDATA%\gitsetu\bin`, and User `PATH` environment management.
 - **Canonical Windows Path Normalization:** Standardizes paths to `C:/path` canonical format, resolving impedance between native Win32 `git.exe` and MSYS / Git Bash.
+- **WSL Hijack Protection:** Both the native C# launcher (`packaging/windows/gitsetu.cs`) and the Node wrapper (`bin/gitsetu.js`) prioritize Git for Windows binaries over System32 WSL bash to prevent environment hijacking.
 - **7-Field Windows Drive Compatibility:** Colon collision protection (`IFS=:`) for Windows drive letters across registry parsing, backup bundling, and CLI operations.
 - **NTFS Permission Handling:** Tolerates `644` permissions on NTFS filesystems under Git Bash without false-positive verification errors.
-- **Windows Sandbox Test Harness:** Fully automated, disposable test harness in `sandbox/` featuring `launch_sandbox.bat`, `gitsetu_test.wsb`, `bootstrap.ps1`, and `comprehensive_audit.sh` (24 phases, 70 empirical checks) for host-isolated zero-trust validation.
+- **Windows Sandbox Test Harness:** Fully automated, disposable test harness in `sandbox/` featuring `launch_sandbox.ps1`, `launch_sandbox.bat`, `gitsetu_test.wsb`, `bootstrap.ps1`, and `comprehensive_audit.sh` (31 phases, 107 empirical checks) for host-isolated zero-trust validation.
 
 #### Distribution, Quality Assurance & Tooling
 - **Multi-Platform Packaging Ecosystem:** Complete distribution support across all developer platforms:
@@ -59,10 +60,13 @@ The inaugural General Availability (GA) production release of GitSetu — a zero
   - **Arch Linux AUR (`packaging/aur/`):** Validated `PKGBUILD` and `.SRCINFO` package specification.
   - **Nix Flake (`flake.nix`):** Zero-dependency hermetic execution via `nix run github:bhaskarjha-dev/gitsetu`.
   - **GitHub CLI Extension (`packaging/gh-extension/`):** Executable extension wrapper (`gh gitsetu`).
-- **Installer Regression Pipeline:** Added automated end-to-end testing for both POSIX and Windows PowerShell installer/uninstaller pipelines in `tests/test_installer.sh`.
-- **33 Comprehensive Regression Test Suites:** Full test suite covering core logic, CLI, SSH, gitconfig, guard, credential broker, backup/restore, concurrency, teardown, validation, platform detection, discovery, doctor, prompt, resilience, installer, keychain, manual mode, bundler, npm wrapper, winget, AUR, Nix flake, GH extension, CRLF self-healing, and audit regressions.
-- **Unified Test Runner:** Added `tests/run_all.sh` providing aggregated status and colored summaries across all 33 test suites.
+- **Multi-OS GitHub Actions CI Matrix:** Continuous delivery matrix running automated validation across 5 platforms: Ubuntu Linux 24.04, Arch Linux container (`makepkg`), Alpine Linux container (Musl/BusyBox), macOS Apple Silicon (native `/bin/bash` 3.2), and Windows Native (PowerShell, WinGet, Scoop).
+- **Installer Regression Pipeline:** Added automated end-to-end testing for both POSIX and Windows PowerShell installer/uninstaller pipelines in `tests/test_installer.sh` with `$GITSETU_INSTALL_DIR` non-destructive test isolation.
+- **36 Comprehensive Regression & E2E Test Suites:** Full test suite covering core logic, CLI, SSH, gitconfig, guard, credential broker, backup/restore, concurrency, teardown, validation, platform detection, discovery, doctor, prompt, resilience, installer, keychain, manual mode, bundler, npm wrapper, winget, AUR, Nix flake, GH extension, CRLF self-healing, audit regressions, clean-room npm E2E (`test_npm_cleanroom_e2e.sh`), and adversarial & concurrency stress (`test_adversarial_stress.sh`).
+- **Unified Test Runner:** Added `tests/run_all.sh` providing aggregated status and colored summaries across all 36 test suites.
 - **Developer Makefile:** Targets for `make test`, `make lint` (ShellCheck), `make check`, and `make hooks`.
 - **Shell Autocompletion:** TAB autocompletion for subcommands and profile labels in Bash and Zsh.
 - **Diagnostic Doctor (`gitsetu doctor`):** Multi-point diagnostic scanner for registry validity, OpenSSH include directives, SSH agent status, and local repository configuration drift.
 - **Native Auto-Updater (`gitsetu update`):** Zero-dependency OTA updater fetching updates directly from GitHub over HTTPS.
+
+[1.0.0]: https://github.com/bhaskarjha-dev/gitsetu/releases/tag/v1.0.0

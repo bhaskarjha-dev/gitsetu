@@ -90,10 +90,14 @@ Under Linux/macOS, OpenSSH strictly demands `chmod 600` for private keys. On Win
 
 ### Isolated Verification via Windows Sandbox
 If you want to verify GitSetu, test adding profiles, or debug configurations in total isolation from your host:
-```cmd
+```powershell
+# Native PowerShell:
+powershell -ExecutionPolicy Bypass -File .\sandbox\launch_sandbox.ps1
+
+# Or via Command Prompt / Explorer:
 .\sandbox\launch_sandbox.bat
 ```
-This boots a clean, disposable Windows Sandbox container, runs the entire regression test suite (all 32 test suites), and simulates multi-profile Git commits without any risk to your host setup.
+This boots a clean, disposable Windows Sandbox container, runs the entire regression test suite (all 36 test suites), and simulates multi-profile Git commits without any risk to your host setup.
 
 ---
 

@@ -30,11 +30,11 @@ No. GitSetu contains zero tracking dependencies, zero background daemon listener
 ### Windows & WSL
 
 **Does GitSetu operate properly on native Windows environments?**
-Yes! GitSetu provides first-class support for Windows via **Git Bash** (included by default with Git for Windows) or **WSL**:
-1. **CLI Execution**: You run the `gitsetu` commands inside Git Bash (or WSL).
+Yes! GitSetu provides first-class support for Windows. When installed via `install.ps1`, WinGet, Scoop, or npm, GitSetu creates native command shims (`gitsetu.cmd`, `gitsetu.ps1`) so you can run `gitsetu` directly from **PowerShell**, **Command Prompt**, **Windows Terminal**, or **VS Code** — no need to open Git Bash.
+1. **CLI Execution**: Run `gitsetu` commands from any Windows shell — PowerShell, CMD, Git Bash, or WSL.
 2. **Native Windows Experience**: Because GitSetu compiles canonical Windows paths (`C:/path`) and case-insensitive `gitdir/i:` rules into `~/.gitconfig` and OpenSSH `~/.ssh/config`, the automatic identity switching and SSH key routing work natively everywhere across Windows—including **PowerShell**, **Command Prompt (CMD)**, **Windows Terminal**, **VS Code**, and GUI Git clients.
 3. **Git Credential Manager (GCM)**: GitSetu automatically integrates with Microsoft's native Git Credential Manager on Windows.
-4. **Isolated Testing**: Want to test without touching your machine? Run `.\sandbox\launch_sandbox.bat` to test GitSetu safely inside a disposable Windows Sandbox VM.
+4. **Isolated Testing**: Want to test without touching your machine? Run `.\sandbox\launch_sandbox.ps1` (or `launch_sandbox.bat`) to test GitSetu safely inside a disposable Windows Sandbox VM.
 
 **How does credential brokering work inside headless WSL or minimal Linux containers?**
 If native DBus secret tools (`secret-tool`) or GUI keychains are unavailable inside standard headless environments, GitSetu securely falls back to provisioning an isolated, restricted permissions vault file located at `~/.config/gitsetu/.tokens`. This file is strictly set to POSIX `600` permissions upon creation to guarantee containment.

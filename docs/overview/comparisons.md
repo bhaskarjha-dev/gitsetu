@@ -12,7 +12,7 @@ Scores reflect a balanced evaluation of feature breadth, zero-trust reliability,
 
 | Tool | Approach / Runtime | Composite Score | Feature Breadth | Ease of Use | Reliability | Community Stars | Portability |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| 🏆 **GitSetu** | **Zero-Dependency Bash Core** | **82 / 100** | **95%** | **80%** | **70%** | **★ 0** | **75%** |
+| 🏆 **GitSetu** | **Zero-Dependency Bash Core** | **86 / 100** | **95%** | **80%** | **90%** | **★ 0** | **75%** |
 | **gitego** | Go Binary Switcher | **76 / 100** | 75% | 85% | 78% | ★ ~20 | 90% |
 | **karn** | Mature YAML Switcher (Go) | **68 / 100** | 40% | 85% | 85% | ★ 306 | 90% |
 | **gitch** | Feature-Rich TUI (Go) | **72 / 100** | 88% | 72% | 55% | ★ 5 | 90% |
@@ -61,7 +61,7 @@ Scores reflect a balanced evaluation of feature breadth, zero-trust reliability,
 ### 🏆 Best Overall: GitSetu
 GitSetu covers the widest operational scope end-to-end. It is the only platform evaluated that seamlessly combines **automated SSH key generation**, directory-scoped multi-key routing, native OS credential brokering, fail-closed pre-commit guard enforcement, encrypted state backups, and interactive diagnostics into a single, cohesive engine. 
 
-**The Trade-off:** Currently distributed via automated POSIX (`install.sh`) and PowerShell (`install.ps1`) one-liners, with Homebrew and Scoop package definitions packaged in `packaging/` for Phase 1 of the [2026 Roadmap](../enterprise/product-roadmap.md).
+**The Trade-off:** As a new entrant (★ 0 stars), GitSetu has a smaller community footprint than mature Go-based tools. However, it ships with the widest distribution coverage at launch: npm, Homebrew, Scoop, WinGet, AUR, Nix, GitHub CLI extension, and native shell installers for both POSIX and PowerShell.
 
 ### 🪟 Windows Environments
 While tools like `gitego` compile native `.exe` binaries, GitSetu provides first-class, production-grade Windows support under Git Bash with native integration across PowerShell, CMD, Windows Terminal, and VS Code. GitSetu automatically compiles canonical Windows paths (`C:/path`), configures case-insensitive `gitdir/i:` directives, binds natively to **Windows Credential Manager (GCM)** via DPAPI, and provides a host-isolated **Windows Sandbox Test Harness** (`sandbox/`) for zero-risk verification.

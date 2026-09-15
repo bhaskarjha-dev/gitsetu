@@ -13,5 +13,15 @@ gitsetu text eol=lf
 *.yaml text eol=lf
 .gitignore text eol=lf
 .gitattributes text eol=lf
-.shellcheckrc text eol=lf
 LICENSE text eol=lf
+
+# Export ignore rules for clean, deterministic release archives
+.github export-ignore
+.gitattributes export-ignore
+.gitignore export-ignore
+.shellcheckrc export-ignore
+tests export-ignore
+sandbox export-ignore
+packaging export-ignore
+dist export-ignore
+docs export-ignore

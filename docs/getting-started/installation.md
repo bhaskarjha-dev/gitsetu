@@ -53,6 +53,7 @@ winget install BhaskarJha.GitSetu
 ### Windows — Scoop
 Install via Scoop bucket:
 ```powershell
+scoop bucket add gitsetu https://github.com/bhaskarjha-dev/scoop-gitsetu
 scoop install gitsetu
 ```
 
