@@ -1,0 +1,180 @@
+name: Distribution Matrix Verification
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  macos-native:
+    name: macOS Apple Silicon (Native Bash 3.2)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Environment Diagnostics
+        run: |
+          echo "OS: $(uname -a)"
+          echo "Native Bash: $(/bin/bash --version | head -n 1)"
+          echo "Git: $(git --version)"
+          echo "SSH: $(ssh -V 2>&1 || true)"
+          echo "Node: $(node --version)"
+          echo "npm: $(npm --version)"
+
+      - name: Verify Native /bin/bash 3.2 Execution
+        run: |
+          /bin/bash gitsetu --version
+          /bin/bash gitsetu --help
+
+      - name: Run Full Regression Suite via Native /bin/bash
+        run: |
+          /bin/bash tests/run_all.sh
+
+      - name: Verify POSIX Installer E2E
+        run: |
+          /bin/bash tests/test_posix_installer_e2e.sh
+
+      - name: Verify npm / npx Clean-Room E2E
+        run: |
+          /bin/bash tests/test_npm_cleanroom_e2e.sh
+
+      - name: Validate Homebrew Formula Syntax
+        run: |
+          ruby -c packaging/homebrew/gitsetu.rb
+          brew audit --formula packaging/homebrew/gitsetu.rb || true
+
+  linux-ubuntu:
+    name: Ubuntu Linux (Monolith & Core Channels)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Environment Diagnostics
+        run: |
+          echo "OS: $(uname -a)"
+          echo "Bash: ${BASH_VERSION}"
+          echo "Git: $(git --version)"
+          echo "SSH: $(ssh -V 2>&1 || true)"
+
+      - name: Compile Standalone Monolithic Executable
+        run: |
+          bash scripts/bundle.sh
+          ./dist/gitsetu --version
+          ./dist/gitsetu status
+
+      - name: Run Full Regression Suite
+        run: |
+          bash tests/run_all.sh
+
+      - name: Verify POSIX Installer E2E
+        run: |
+          bash tests/test_posix_installer_e2e.sh
+
+      - name: Verify npm / npx Clean-Room E2E
+        run: |
+          bash tests/test_npm_cleanroom_e2e.sh
+
+      - name: Verify GitHub CLI Extension Wrapper
+        run: |
+          bash tests/test_gh_extension.sh
+
+  archlinux-aur:
+    name: Arch Linux AUR (makepkg & Pacman)
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Install Build Prerequisites
+        run: |
+          pacman -Syu --noconfirm base-devel git sudo openssh bash
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Verify AUR Definition & Metadata
+        run: |
+          bash tests/test_aur.sh
+
+      - name: Test AUR Package Build (makepkg)
+        run: |
+          # Create unprivileged build user (makepkg cannot run as root)
+          useradd -m -d /home/builder -s /bin/bash builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          
+          # Prepare clean build workspace
+          mkdir -p /home/builder/build/gitsetu-1.0.0
+          cp -r gitsetu lib LICENSE README.md /home/builder/build/gitsetu-1.0.0/
+          
+          # Create source tarball
+          tar -czf /home/builder/build/gitsetu-1.0.0.tar.gz -C /home/builder/build gitsetu-1.0.0
+          SHA=$(sha256sum /home/builder/build/gitsetu-1.0.0.tar.gz | awk '{print $1}')
+          
+          # Copy PKGBUILD and update source to use local archive for test
+          cp packaging/aur/PKGBUILD /home/builder/build/
+          sed -i 's|^source=(.*)|source=("gitsetu-1.0.0.tar.gz")|g' /home/builder/build/PKGBUILD
+          sed -i "s|sha256sums=('.*')|sha256sums=('$SHA')|g" /home/builder/build/PKGBUILD
+          
+          chown -R builder:builder /home/builder/build
+          
+          # Run makepkg as builder
+          su builder -c "cd /home/builder/build && makepkg --noconfirm"
+          
+          # Install and test the built package
+          pacman -U --noconfirm /home/builder/build/gitsetu-*.pkg.tar.zst
+          gitsetu --version
+          git-setu --version
+
+  alpine-posix:
+    name: Alpine Linux (Minimal POSIX Container)
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    steps:
+      - name: Install Minimal Runtime Packages
+        run: |
+          apk add --no-cache bash git openssh openssl coreutils curl sed gawk
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Run Full Regression Suite in Alpine
+        run: |
+          bash tests/run_all.sh
+
+      - name: Verify POSIX Installer in Alpine
+        run: |
+          bash tests/test_posix_installer_e2e.sh
+
+  windows-native:
+    name: Windows Native (PowerShell, WinGet C#, Scoop)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Run Full Regression Suite via Git Bash
+        shell: bash
+        run: |
+          bash tests/run_all.sh
+
+      - name: Verify PowerShell Installer E2E
+        shell: powershell
+        run: |
+          powershell -ExecutionPolicy Bypass -File tests/test_powershell_installer_e2e.ps1
+
+      - name: Build & Test WinGet Native C# Launcher
+        shell: powershell
+        run: |
+          powershell -ExecutionPolicy Bypass -File packaging/windows/build_launcher.ps1
+          & .\dist\gitsetu.exe --version
+
+      - name: Verify Scoop Distribution Channel
+        shell: powershell
+        run: |
+          powershell -ExecutionPolicy Bypass -File tests/test_scoop_e2e.ps1
+
+      - name: Verify GitHub CLI Extension E2E
+        shell: powershell
+        run: |
+          powershell -ExecutionPolicy Bypass -File tests/test_gh_extension_e2e.ps1
