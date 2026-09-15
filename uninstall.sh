@@ -7,8 +7,12 @@
 
 set -euo pipefail
 
-SHARE_DIR="$HOME/.local/share/gitsetu"
-BIN_DIR="$HOME/.local/bin"
+SHARE_DIR="${GITSETU_SHARE_DIR:-$HOME/.local/share/gitsetu}"
+BIN_DIR="${GITSETU_BIN_DIR:-$HOME/.local/bin}"
+if [[ -n "${GITSETU_INSTALL_DIR:-}" ]]; then
+    SHARE_DIR="$GITSETU_INSTALL_DIR/share/gitsetu"
+    BIN_DIR="$GITSETU_INSTALL_DIR/bin"
+fi
 
 BOLD="\033[1m"
 GREEN="\033[32m"
@@ -22,15 +26,26 @@ echo -e "\n${BOLD}─── Uninstalling GitSetu ───${RESET}\n"
 echo -e "  ${BOLD}Wait!${RESET} If you have active GitSetu configurations in your global ~/.gitconfig,"
 echo -e "  you should run ${CYAN}gitsetu teardown --deep${RESET} before proceeding to remove them safely."
 echo ""
-if [[ -n "${CI:-}" ]] || [[ ! -t 0 ]]; then
-    echo "  Non-interactive environment detected. Proceeding..."
-else
+if [[ -n "${CI:-}" ]] || [[ "${1:-}" == "-y" ]] || [[ "${1:-}" == "--force" ]]; then
+    # Headless / force mode: proceed without prompting
+    :
+elif [[ ! -t 0 ]] && [[ -f "${BASH_SOURCE[0]:-}" ]]; then
+    # Script invoked with piped stdin (e.g., echo "y" | bash uninstall.sh in tests)
+    read -r response || true
+    if [[ ! "$response" =~ ^[Yy]$ ]]; then
+        echo -e "  ${RED}Uninstallation aborted.${RESET}\n"
+        exit 0
+    fi
+elif [[ -r /dev/tty ]]; then
+    # Interactive terminal or curl | bash with real TTY attached
     echo -n "  Are you sure you want to remove the GitSetu executables? [y/N] "
     read -r response </dev/tty || true
     if [[ ! "$response" =~ ^[Yy]$ ]]; then
         echo -e "  ${RED}Uninstallation aborted.${RESET}\n"
         exit 0
     fi
+else
+    echo "  Non-interactive environment detected. Proceeding..."
 fi
 
 # 1. Remove symlinks

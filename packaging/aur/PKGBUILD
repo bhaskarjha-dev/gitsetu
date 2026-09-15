@@ -1,4 +1,4 @@
-# Maintainer: Bhaskar Jha <contact@bhaskarjha.dev>
+# Maintainer: Bhaskar Jha <me@bhaskarjha.dev>
 pkgname=gitsetu
 pkgver=1.0.0
 pkgrel=1
@@ -10,8 +10,8 @@ depends=('bash>=4.0' 'git' 'openssh')
 optdepends=(
   'libfido2: FIDO2 / YubiKey hardware key support'
 )
-source=("$pkgname-$pkgver.tar.gz::https://github.com/bhaskarjha-dev/gitsetu/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/bhaskarjha-dev/gitsetu/releases/download/v$pkgver/gitsetu-$pkgver.tar.gz")
+sha256sums=('af0a75748e5c55a71bf8007daff4966b56db6fab0ce3d201ed06e5737f9a28a5')
 
 package() {
   cd "$pkgname-$pkgver"

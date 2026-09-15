@@ -3,15 +3,15 @@
   "description": "Zero-trust multi-account Git identity orchestrator",
   "homepage": "https://gitsetu.bhaskarjha.dev",
   "license": "MIT",
-  "url": "https://github.com/bhaskarjha-dev/gitsetu/archive/refs/tags/v1.0.0.zip",
-  "extract_dir": "gitsetu-1.0.0",
+  "depends": "git",
+  "url": "https://github.com/bhaskarjha-dev/gitsetu/releases/download/v1.0.0/gitsetu-windows-x64.zip",
+  "hash": "24a29b06a35d1b152b31fd42002ac382561c2a7296de3bdc0d10e8a3e35bc123",
   "bin": [
-    "gitsetu",
-    ["gitsetu", "git-setu"]
+    "gitsetu.exe",
+    ["gitsetu.exe", "git-setu"]
   ],
   "checkver": "github",
   "autoupdate": {
-    "url": "https://github.com/bhaskarjha-dev/gitsetu/archive/refs/tags/v$version.zip",
-    "extract_dir": "gitsetu-$version"
+    "url": "https://github.com/bhaskarjha-dev/gitsetu/releases/download/v$version/gitsetu-windows-x64.zip"
   }
 }

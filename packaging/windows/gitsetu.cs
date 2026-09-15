@@ -38,7 +38,7 @@ namespace GitSetuLauncher {
             }
 
             StringBuilder sb = new StringBuilder();
-            sb.Append("\"").Append(script).Append("\"");
+            sb.Append("\"").Append(script.Replace('\\', '/')).Append("\"");
             for (int i = 0; i < args.Length; i++) {
                 sb.Append(" ");
                 string a = args[i];
@@ -70,6 +70,7 @@ namespace GitSetuLauncher {
             string custom = Environment.GetEnvironmentVariable("GITSETU_BASH");
             if (!string.IsNullOrEmpty(custom) && File.Exists(custom)) return custom;
 
+            string[] whereLines = null;
             try {
                 ProcessStartInfo wpsi = new ProcessStartInfo {
                     FileName = "where.exe",
@@ -83,14 +84,13 @@ namespace GitSetuLauncher {
                     string output = wp.StandardOutput.ReadToEnd();
                     wp.WaitForExit();
                     if (wp.ExitCode == 0) {
-                        string[] lines = output.Split(new char[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-                        for (int i = 0; i < lines.Length; i++) {
-                            string trimmed = lines[i].Trim();
+                        whereLines = output.Split(new char[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                        for (int i = 0; i < whereLines.Length; i++) {
+                            string trimmed = whereLines[i].Trim();
                             if (trimmed.IndexOf("git", StringComparison.OrdinalIgnoreCase) >= 0 && File.Exists(trimmed)) {
                                 return trimmed;
                             }
                         }
-                        if (lines.Length > 0 && File.Exists(lines[0].Trim())) return lines[0].Trim();
                     }
                 }
             } catch {}
@@ -106,6 +106,18 @@ namespace GitSetuLauncher {
             string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             string p3 = Path.Combine(local, "Programs", "Git", "bin", "bash.exe");
             if (File.Exists(p3)) return p3;
+
+            // Fallback: any non-System32/SysWOW64 bash found by where.exe
+            if (whereLines != null) {
+                for (int i = 0; i < whereLines.Length; i++) {
+                    string trimmed = whereLines[i].Trim();
+                    if (trimmed.IndexOf("system32", StringComparison.OrdinalIgnoreCase) < 0 &&
+                        trimmed.IndexOf("syswow64", StringComparison.OrdinalIgnoreCase) < 0 &&
+                        File.Exists(trimmed)) {
+                        return trimmed;
+                    }
+                }
+            }
 
             return null;
         }

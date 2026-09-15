@@ -21,3 +21,8 @@ disable=SC2034
 # strings in generated OpenSSH and Git configs because Git and OpenSSH natively expand
 # tildes at runtime.
 disable=SC2088
+
+# SC2119 / SC2120: Helper functions (such as acquire_lock/release_lock) accept optional
+# arguments with defaults; callers do not need to pass arguments.
+disable=SC2119
+disable=SC2120

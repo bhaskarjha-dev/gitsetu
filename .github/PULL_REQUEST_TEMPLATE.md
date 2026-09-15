@@ -7,11 +7,12 @@
 
 ## How Has This Been Tested?
 <!-- Please describe in detail how you tested your changes. -->
-<!-- Did you run `for f in tests/test_*.sh; do bash "$f"; done` locally? -->
+<!-- Run `make test` or `bash tests/run_all.sh` to execute all 33 test suites. -->
 
 ## Checklist:
 <!-- Go over all the following points, and put an `x` in all the boxes that apply. -->
 - [ ] My code follows the Bash 3.2+ compatibility standard.
-- [ ] I have verified that tests pass across different environments (Linux/macOS).
+- [ ] I have run `make lint` (ShellCheck) with zero warnings.
+- [ ] I have verified that tests pass across different environments (Linux/macOS/Windows).
 - [ ] I have updated the documentation accordingly.
 - [ ] I have added tests to cover my changes.

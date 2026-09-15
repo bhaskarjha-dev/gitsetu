@@ -3,6 +3,10 @@
 # Usage: gh gitsetu <subcommand> [flags...]
 set -euo pipefail
 
+GITSETU_VERSION="1.0.0"
+GITSETU_SHA256="01da016ba2259502bef6b7a3144ba73d732807a8e83cf72369b2a3a33e035f7d"
+DOWNLOAD_URL="https://github.com/bhaskarjha-dev/gitsetu/releases/download/v${GITSETU_VERSION}/gitsetu"
+
 # 1. If gitsetu is already installed on the system, delegate directly
 if command -v gitsetu >/dev/null 2>&1; then
     exec gitsetu "$@"
@@ -17,22 +21,44 @@ if [ -f "$SCRIPT_DIR/gitsetu" ]; then
     exec "$SCRIPT_DIR/gitsetu" "$@"
 fi
 
-# 3. Fallback: Download/cache standalone gitsetu release runner
-CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/gitsetu"
+# 3. Fallback: Download/cache versioned standalone gitsetu release runner
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/gitsetu/v${GITSETU_VERSION}"
 RUNNER="$CACHE_DIR/gitsetu"
 
 if [ ! -f "$RUNNER" ]; then
     mkdir -p "$CACHE_DIR"
-    echo "Downloading GitSetu standalone runner..." >&2
+    echo "Downloading GitSetu v${GITSETU_VERSION} standalone runner..." >&2
+    TMPFILE="$CACHE_DIR/.gitsetu.download.$$"
+    trap 'rm -f "$TMPFILE"' EXIT INT TERM
     if command -v curl >/dev/null 2>&1; then
-        curl -sL "https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/dist/gitsetu" -o "$RUNNER"
+        curl -fsSL "$DOWNLOAD_URL" -o "$TMPFILE"
     elif command -v wget >/dev/null 2>&1; then
-        wget -q "https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/dist/gitsetu" -O "$RUNNER"
+        wget -q "$DOWNLOAD_URL" -O "$TMPFILE"
     else
         echo "Error: curl or wget is required to fetch GitSetu standalone runner." >&2
         exit 1
     fi
+
+    # Verify SHA-256 checksum
+    ACTUAL_SHA256=""
+    if command -v sha256sum >/dev/null 2>&1; then
+        ACTUAL_SHA256=$(sha256sum "$TMPFILE" | awk '{print $1}')
+    elif command -v shasum >/dev/null 2>&1; then
+        ACTUAL_SHA256=$(shasum -a 256 "$TMPFILE" | awk '{print $1}')
+    fi
+
+    if [ -n "$ACTUAL_SHA256" ] && [ "$ACTUAL_SHA256" != "$GITSETU_SHA256" ]; then
+        echo "Error: SHA-256 checksum verification failed!" >&2
+        echo "  Expected: $GITSETU_SHA256" >&2
+        echo "  Actual:   $ACTUAL_SHA256" >&2
+        rm -f "$TMPFILE"
+        exit 1
+    fi
+
+    mv "$TMPFILE" "$RUNNER"
     chmod +x "$RUNNER"
+    trap - EXIT INT TERM
+    echo "GitSetu v${GITSETU_VERSION} installed and verified." >&2
 fi
 
 exec "$RUNNER" "$@"

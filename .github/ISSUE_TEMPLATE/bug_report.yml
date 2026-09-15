@@ -8,18 +8,35 @@ body:
       value: |
         Thanks for taking the time to fill out this bug report!
   - type: input
-    id: bash-version
+    id: gitsetu-version
     attributes:
-      label: Bash Version
-      description: Please provide your Bash version (`bash --version`). GitSetu requires Bash 3.2+.
-      placeholder: "e.g., GNU bash, version 5.1.16(1)-release"
+      label: GitSetu Version
+      description: Please provide your GitSetu version (`gitsetu --version`).
+      placeholder: "e.g., gitsetu v1.0.0"
     validations:
       required: true
   - type: input
     id: os
     attributes:
       label: Operating System
-      description: What operating system and version are you using? (e.g., macOS 14.2, Ubuntu 22.04, Windows WSL2)
+      description: What operating system and version are you using?
+      placeholder: "e.g., macOS 14.2, Ubuntu 22.04, Windows 11 (PowerShell), Windows 11 (Git Bash)"
+    validations:
+      required: true
+  - type: input
+    id: bash-version
+    attributes:
+      label: Bash Version
+      description: If applicable, provide your Bash version (`bash --version`). Not required for Windows PowerShell/CMD users.
+      placeholder: "e.g., GNU bash, version 5.1.16(1)-release"
+    validations:
+      required: false
+  - type: input
+    id: git-version
+    attributes:
+      label: Git Version
+      description: Please provide your Git version (`git --version`).
+      placeholder: "e.g., git version 2.43.0"
     validations:
       required: true
   - type: textarea

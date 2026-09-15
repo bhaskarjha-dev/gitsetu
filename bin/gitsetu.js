@@ -13,18 +13,16 @@ function findWindowsBash() {
     return process.env.GITSETU_BASH;
   }
 
-  // 1. Check PATH via where.exe
+  // 1. Check PATH via where.exe specifically for Git for Windows bash
+  let whereCandidates = [];
   try {
     const res = spawnSync('where.exe', ['bash.exe'], { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
     if (res.status === 0 && res.stdout) {
-      const lines = res.stdout.trim().split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-      for (const line of lines) {
+      whereCandidates = res.stdout.trim().split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      for (const line of whereCandidates) {
         if (line.toLowerCase().includes('git') && fs.existsSync(line)) {
           return line;
         }
-      }
-      if (lines[0] && fs.existsSync(lines[0])) {
-        return lines[0];
       }
     }
   } catch (e) {
@@ -53,7 +51,7 @@ function findWindowsBash() {
     }
   }
 
-  // 3. Query git --exec-path
+  // 3. Query git --exec-path (finds bash relative to git.exe)
   try {
     const res = spawnSync('git', ['--exec-path'], { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
     if (res.status === 0 && res.stdout) {
@@ -69,6 +67,14 @@ function findWindowsBash() {
     }
   } catch (e) {
     // Ignore
+  }
+
+  // 4. Fallback: Any valid bash from where.exe that is NOT WSL System32/SysWOW64
+  for (const line of whereCandidates) {
+    const lower = line.toLowerCase();
+    if (!lower.includes('system32') && !lower.includes('syswow64') && fs.existsSync(line)) {
+      return line;
+    }
   }
 
   return null;
@@ -87,7 +93,8 @@ if (!fs.existsSync(targetScript)) {
 
 const args = process.argv.slice(2);
 let shellCmd = 'bash';
-let spawnArgs = [targetScript, ...args];
+let normalizedScript = targetScript.replace(/\\/g, '/');
+let spawnArgs = [normalizedScript, ...args];
 
 if (process.platform === 'win32') {
   const bashExe = findWindowsBash();
@@ -103,7 +110,10 @@ if (process.platform === 'win32') {
 
 const child = spawnSync(shellCmd, spawnArgs, {
   stdio: 'inherit',
-  env: process.env
+  env: {
+    ...process.env,
+    GITSETU_DIR: rootDir.replace(/\\/g, '/')
+  }
 });
 
 if (child.error) {

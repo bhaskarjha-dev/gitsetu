@@ -55,6 +55,8 @@ sandbox_results/
 
 # --- Distribution ---
 dist/*.exe
+dist/*.zip
+dist/*.tar.gz
 
 # --- One-off & generated ---
 commit_plan.sh

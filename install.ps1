@@ -96,6 +96,9 @@ if ($env:GITSETU_REPO_URL) {
     $repoUrl = $env:GITSETU_REPO_URL
 }
 $rootDir = Join-Path $env:LOCALAPPDATA "gitsetu"
+if ($env:GITSETU_INSTALL_DIR) {
+    $rootDir = $env:GITSETU_INSTALL_DIR
+}
 $shareDir = Join-Path $rootDir "share"
 $binDir = Join-Path $rootDir "bin"
 
@@ -108,7 +111,9 @@ if (Test-Path (Join-Path $shareDir ".git")) {
     Push-Location $shareDir
     try {
         & git fetch --quiet origin
+        if ($LASTEXITCODE -ne 0) { throw "git fetch failed with exit code $LASTEXITCODE" }
         & git reset --quiet --hard origin/main
+        if ($LASTEXITCODE -ne 0) { throw "git reset failed with exit code $LASTEXITCODE" }
     } catch {
         Write-StyledError "Failed to update existing checkout from origin."
         Pop-Location
@@ -123,6 +128,7 @@ if (Test-Path (Join-Path $shareDir ".git")) {
     Write-StyledInfo "Cloning GitSetu into $shareDir..."
     try {
         & git clone --quiet $repoUrl $shareDir
+        if ($LASTEXITCODE -ne 0) { throw "git clone failed with exit code $LASTEXITCODE" }
     } catch {
         Write-StyledError "Failed to clone $repoUrl. Check your internet connection and GitHub access."
         exit 1
@@ -140,31 +146,31 @@ setlocal
 REM Look for Git for Windows bash explicitly; do NOT use System32\bash.exe
 if exist "%ProgramFiles%\Git\bin\bash.exe" (
     "%ProgramFiles%\Git\bin\bash.exe" "%~dp0..\share\gitsetu" %*
-    exit /b %ERRORLEVEL%
+    exit /b
 )
 if exist "%ProgramFiles(x86)%\Git\bin\bash.exe" (
     "%ProgramFiles(x86)%\Git\bin\bash.exe" "%~dp0..\share\gitsetu" %*
-    exit /b %ERRORLEVEL%
+    exit /b
 )
 if exist "%LOCALAPPDATA%\Programs\Git\bin\bash.exe" (
     "%LOCALAPPDATA%\Programs\Git\bin\bash.exe" "%~dp0..\share\gitsetu" %*
-    exit /b %ERRORLEVEL%
+    exit /b
 )
 for /f "tokens=*" %%i in ('where git.exe 2^>nul') do (
     if exist "%%~dpi..\bin\bash.exe" (
         "%%~dpi..\bin\bash.exe" "%~dp0..\share\gitsetu" %*
-        exit /b %ERRORLEVEL%
+        exit /b
     )
     if exist "%%~dpi..\usr\bin\bash.exe" (
         "%%~dpi..\usr\bin\bash.exe" "%~dp0..\share\gitsetu" %*
-        exit /b %ERRORLEVEL%
+        exit /b
     )
 )
 for /f "tokens=*" %%i in ('where bash.exe 2^>nul') do (
     echo "%%i" | findstr /i "System32 SysWOW64" >nul
     if errorlevel 1 (
         "%%i" "%~dp0..\share\gitsetu" %*
-        exit /b %ERRORLEVEL%
+        exit /b
     )
 )
 echo Error: Git Bash is required to run GitSetu. Please install Git for Windows: https://git-scm.com >&2

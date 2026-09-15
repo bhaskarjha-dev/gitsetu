@@ -1,4 +1,4 @@
-name: SLSA Provenance Signing
+name: Sigstore Release Signing
 
 on:
   release:
@@ -15,15 +15,17 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Sign install.sh with Sigstore
-        uses: sigstore/gh-action-sigstore-python@v2.1.1
-        with:
-          inputs: install.sh
-          upload-signing-artifacts: true
+      - name: Install sigstore-python
+        run: pip install sigstore
 
-      - name: Upload Cryptographic Signature to Release
-        uses: softprops/action-gh-release@v1
+      - name: Sign release artifacts with Sigstore
+        run: |
+          sigstore sign install.sh
+          sigstore sign install.ps1
+
+      - name: Upload Sigstore Bundles to Release
+        uses: softprops/action-gh-release@v2
         with:
           files: |
-            install.sh.sig
-            install.sh.crt
+            install.sh.sigstore.json
+            install.ps1.sigstore.json

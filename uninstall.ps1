@@ -36,6 +36,9 @@ function Write-StyledWarning {
 Write-StyledHeader
 
 $rootDir = Join-Path $env:LOCALAPPDATA "gitsetu"
+if ($env:GITSETU_INSTALL_DIR) {
+    $rootDir = $env:GITSETU_INSTALL_DIR
+}
 $binDir = Join-Path $rootDir "bin"
 
 # 1. Teardown Notice

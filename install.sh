@@ -9,8 +9,12 @@
 set -euo pipefail
 
 REPO_URL="${GITSETU_REPO_URL:-https://github.com/bhaskarjha-dev/gitsetu.git}"
-SHARE_DIR="$HOME/.local/share/gitsetu"
-BIN_DIR="$HOME/.local/bin"
+SHARE_DIR="${GITSETU_SHARE_DIR:-$HOME/.local/share/gitsetu}"
+BIN_DIR="${GITSETU_BIN_DIR:-$HOME/.local/bin}"
+if [[ -n "${GITSETU_INSTALL_DIR:-}" ]]; then
+    SHARE_DIR="$GITSETU_INSTALL_DIR/share/gitsetu"
+    BIN_DIR="$GITSETU_INSTALL_DIR/bin"
+fi
 
 die() {
     printf 'Error: %s\n' "$1" >&2
@@ -49,7 +53,11 @@ if [[ -d "$SHARE_DIR/.git" ]]; then
     if ! git fetch --quiet origin; then
         die "could not fetch updates from origin. Check your internet connection and GitHub access, then rerun the installer."
     fi
-    if ! git reset --quiet --hard origin/main; then
+    target_branch="origin/main"
+    if ! git rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
+        target_branch="origin/HEAD"
+    fi
+    if ! git reset --quiet --hard "$target_branch" 2>/dev/null && ! git reset --quiet --hard HEAD; then
         die "could not update the local GitSetu checkout to origin/main."
     fi
 else
@@ -64,7 +72,7 @@ EOF
     fi
 
     echo -e "  Cloning repository to ${CYAN}$SHARE_DIR${RESET}..."
-    mkdir -p "$HOME/.local/share" || die "could not create $HOME/.local/share"
+    mkdir -p "$(dirname "$SHARE_DIR")" "$HOME/.local/share" 2>/dev/null || true
     if ! git clone --quiet "$REPO_URL" "$SHARE_DIR"; then
         die "could not clone $REPO_URL. Check your internet connection and GitHub access, then rerun the installer."
     fi
