@@ -76,7 +76,7 @@ test_crlf_temp_fallbacks() {
     local cand
     for cand in "/nonexistent/invalid/dir" "${TMPDIR:-}" "/tmp" "/var/tmp" "${TEST_HOME}" "."; do
         [[ -n "$cand" && -d "$cand" && -w "$cand" ]] || continue
-        created_tmp=$(umask 077 && mktemp "${cand%/}/.gitsetu_test_crlf.XXXXXX" 2>/dev/null || true)
+        created_tmp=$(umask 077; mktemp "${cand%/}/.gitsetu_test_crlf.XXXXXX" 2>/dev/null || true)
         if [[ -n "$created_tmp" && -f "$created_tmp" && -w "$created_tmp" ]]; then
             break
         fi
@@ -94,31 +94,21 @@ test_crlf_loop_detection_vboxsf() {
     local runner="$TEST_HOME/test_loop_runner.sh"
     cat << 'EOF' > "$runner"
 #!/usr/bin/env bash
-_crlf_depth="${GITSETU_CRLF_DEPTH:-0}"
-
-_l1="" _l2=""
-{ read -r _l1 || true; read -r _l2 || true; } < "${BASH_SOURCE[0]:-$0}" 2>/dev/null || true
-
-if [[ "$_crlf_depth" -ge 2 ]]; then
-    echo "ERROR: recursion limit reached depth=$_crlf_depth" >&2
-    exit 1
-fi
-
-if [[ "$_crlf_depth" -ge 1 ]] && { [[ "$_l1" == *$'\r'* ]] || [[ "$_l2" == *$'\r'* ]]; }; then
-    echo "Error: CRLF normalization loop detected." >&2
-    echo "This occurs when TMPDIR is located on a VirtualBox shared folder (vboxsf)." >&2
-    exit 1
-fi
-
-if [[ "$_l1" == *$'\r'* ]] || [[ "$_l2" == *$'\r'* ]]; then
-    export GITSETU_CRLF_DEPTH=$(( _crlf_depth + 1 ))
-    export GITSETU_CRLF_CLEAN=1
-    _tmp=$(mktemp "${TMPDIR:-/tmp}/test_loop_tmp.XXXXXX")
-    # Simulate vboxsf re-injecting \r
-    sed -e 's/$/\r/' "${BASH_SOURCE[0]:-$0}" > "$_tmp"
-    exec bash "$_tmp" "$@"
-fi
-echo "SUCCESS"
+_crlf_depth="${GITSETU_CRLF_DEPTH:-0}" #
+_l1="" #
+read -r _l1 < "${BASH_SOURCE[0]:-$0}" 2>/dev/null || true #
+[[ "$_crlf_depth" -ge 2 ]] && { echo "ERROR: recursion limit reached depth=$_crlf_depth" >&2; exit 1; } #
+[[ "$_crlf_depth" -ge 1 && "$_l1" == *$'\r'* ]] && { echo "Error: CRLF normalization loop detected." >&2; exit 1; } #
+[[ "$_l1" == *$'\r'* ]] && { #
+    export GITSETU_CRLF_DEPTH=$(( _crlf_depth + 1 )) #
+    export GITSETU_CRLF_CLEAN=1 #
+    _tmp=$(mktemp "${TMPDIR:-/tmp}/test_loop_tmp.XXXXXX") #
+    tr -d '\r' < "${BASH_SOURCE[0]:-$0}" > "$_tmp" #
+    sed -i -e 's/$/\r/' "$_tmp" 2>/dev/null || (sed -e 's/$/\r/' "$_tmp" > "${_tmp}.crlf" && mv "${_tmp}.crlf" "$_tmp" 2>/dev/null) || true #
+    exec bash "$_tmp" "$@" #
+    exit 1 #
+} #
+echo "SUCCESS" #
 EOF
 
     # Add CRLF to initial script
@@ -184,16 +174,17 @@ test_crlf_stdin_preservation() {
     local test_script="$TEST_HOME/test_stdin.sh"
     cat << 'EOF' > "$test_script"
 #!/usr/bin/env bash
-_crlf_depth="${GITSETU_CRLF_DEPTH:-0}"
-_l1="" _l2=""
-{ read -r _l1 || true; read -r _l2 || true; } < "${BASH_SOURCE[0]:-$0}" 2>/dev/null || true
-if [[ "${GITSETU_CRLF_CLEAN:-}" != "1" ]] && { [[ "$_l1" == *$'\r'* ]] || [[ "$_l2" == *$'\r'* ]]; }; then
-    export GITSETU_CRLF_CLEAN=1
-    _tmp=$(mktemp "${TMPDIR:-/tmp}/test_stdin_tmp.XXXXXX")
-    tr -d '\r' < "${BASH_SOURCE[0]:-$0}" > "$_tmp"
-    trap 'rm -f "$_tmp" 2>/dev/null || true' EXIT
-    exec bash "$_tmp" "$@"
-fi
+_crlf_depth="${GITSETU_CRLF_DEPTH:-0}" #
+_l1="" #
+read -r _l1 < "${BASH_SOURCE[0]:-$0}" 2>/dev/null || true #
+[[ "${GITSETU_CRLF_CLEAN:-}" != "1" && "$_l1" == *$'\r'* ]] && { #
+    export GITSETU_CRLF_CLEAN=1 #
+    _tmp=$(mktemp "${TMPDIR:-/tmp}/test_stdin_tmp.XXXXXX") #
+    tr -d '\r' < "${BASH_SOURCE[0]:-$0}" > "$_tmp" #
+    trap 'rm -f "$_tmp" 2>/dev/null || true' EXIT INT TERM #
+    exec bash "$_tmp" "$@" #
+    exit 1 #
+} #
 read -r stdin_line
 echo "RECEIVED: $stdin_line"
 EOF
@@ -239,18 +230,20 @@ test_crlf_execution_without_tr() {
 
     local mock_bin="$TEST_HOME/mock_bin_no_tr"
     mkdir -p "$mock_bin"
-    local b
-    for b in /usr/bin/*; do
-        local base
-        base="$(basename "$b")"
-        if [[ "$base" != "tr" && "$base" != "tr.exe" ]]; then
-            ln -s "$b" "$mock_bin/$base" 2>/dev/null || true
-        fi
-    done
+    cat << 'EOF' > "$mock_bin/tr"
+#!/usr/bin/env bash
+exit 127
+EOF
+    chmod +x "$mock_bin/tr"
+    cat << 'EOF' > "$mock_bin/tr.exe"
+#!/usr/bin/env bash
+exit 127
+EOF
+    chmod +x "$mock_bin/tr.exe" 2>/dev/null || true
 
     # 1. Clean LF execution without tr
     local out="" rc=0
-    out=$(PATH="$mock_bin" bash "$gitsetu_exe" --version 2>&1) || rc=$?
+    out=$(PATH="$mock_bin:$PATH" bash "$gitsetu_exe" --version 2>&1) || rc=$?
     assert_equals "0" "$rc" "Clean LF gitsetu executes without tr in PATH"
     assert_contains "$out" "gitsetu v1.0.0" "Version displayed without tr"
 
@@ -259,7 +252,7 @@ test_crlf_execution_without_tr() {
     sed -e 's/$/\r/' "$gitsetu_exe" > "$crlf_exe"
     chmod +x "$crlf_exe"
     out="" rc=0
-    out=$(PATH="$mock_bin" bash "$crlf_exe" --version 2>&1) || rc=$?
+    out=$(PATH="$mock_bin:$PATH" bash "$crlf_exe" --version 2>&1) || rc=$?
     rm -f "$crlf_exe"
     assert_equals "0" "$rc" "CRLF gitsetu executes without tr in PATH"
     assert_contains "$out" "gitsetu v1.0.0" "Version displayed for CRLF script without tr"

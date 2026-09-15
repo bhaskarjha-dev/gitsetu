@@ -54,9 +54,9 @@ keychain_store() {
     # Remove existing entry
     if [[ -f "$tokens_file" ]]; then
         local tmp_file
-        tmp_file=$(umask 077 && mktemp "${tokens_file}.tmp.XXXXXX" 2>/dev/null || true)
+        tmp_file=$(umask 077; mktemp "${tokens_file}.tmp.XXXXXX" 2>/dev/null || true)
         if [[ -z "$tmp_file" ]]; then
-            tmp_file=$(umask 077 && mktemp "${TMPDIR:-/tmp}/gitsetu_tokens.XXXXXX")
+            tmp_file=$(umask 077; mktemp "${TMPDIR:-/tmp}/gitsetu_tokens.XXXXXX")
         fi
         GITSETU_CLEANUP_FILES+=("$tmp_file")
         awk -v s="$service_name" -F':' '$1":"$2":"$3 != s' "$tokens_file" > "$tmp_file"
@@ -173,9 +173,9 @@ keychain_erase() {
     local tokens_file="$tokens_dir/.tokens"
     if [[ -f "$tokens_file" ]]; then
         local tmp_file
-        tmp_file=$(umask 077 && mktemp "${tokens_file}.tmp.XXXXXX" 2>/dev/null || true)
+        tmp_file=$(umask 077; mktemp "${tokens_file}.tmp.XXXXXX" 2>/dev/null || true)
         if [[ -z "$tmp_file" ]]; then
-            tmp_file=$(umask 077 && mktemp "${TMPDIR:-/tmp}/gitsetu_tokens.XXXXXX")
+            tmp_file=$(umask 077; mktemp "${TMPDIR:-/tmp}/gitsetu_tokens.XXXXXX")
         fi
         GITSETU_CLEANUP_FILES+=("$tmp_file")
         awk -v s="$service_name" -F':' '$1":"$2":"$3 != s' "$tokens_file" > "$tmp_file"

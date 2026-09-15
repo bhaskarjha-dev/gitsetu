@@ -14,8 +14,14 @@
 GITSETU_VERSION="1.0.0"
 
 # ------------------------------------------------------------------------------
-# Directory layout (XDG-compliant)
+# Normalize environment paths on Windows (converts backslashes to forward slashes)
 # ------------------------------------------------------------------------------
+if [[ -n "${HOME:-}" ]]; then
+    HOME="${HOME//\\//}"
+fi
+if [[ -n "${XDG_CONFIG_HOME:-}" ]]; then
+    XDG_CONFIG_HOME="${XDG_CONFIG_HOME//\\//}"
+fi
 
 GITSETU_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu"
 GITSETU_BACKUP_DIR="$GITSETU_CONFIG_DIR/backups"

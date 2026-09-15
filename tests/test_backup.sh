@@ -231,13 +231,13 @@ EOF
         local arg
         for arg in "$@"; do
             if [[ "$arg" == *".tar.gz" ]]; then
-                captured_tar_path="$arg"
+                echo "$arg" > "$HOME/.captured_tar_path"
                 local tar_dir
                 tar_dir=$(dirname "$arg")
                 if can_chmod_600; then
-                    captured_tar_dir_perms=$(stat -c '%a' "$tar_dir" 2>/dev/null || stat -f '%Lp' "$tar_dir" 2>/dev/null || echo "")
+                    (stat -c '%a' "$tar_dir" 2>/dev/null || stat -f '%Lp' "$tar_dir" 2>/dev/null || echo "") > "$HOME/.captured_tar_perms"
                 else
-                    captured_tar_dir_perms="700"
+                    echo "700" > "$HOME/.captured_tar_perms"
                 fi
                 break
             fi
@@ -249,6 +249,9 @@ EOF
     export GITSETU_TEST_VAULT_PASS="testpass"
     cmd_backup "vault_check.enc" >/dev/null 2>&1
 
+    captured_tar_path=$(cat "$HOME/.captured_tar_path" 2>/dev/null || echo "")
+    captured_tar_dir_perms=$(cat "$HOME/.captured_tar_perms" 2>/dev/null || echo "")
+
     assert_not_contains "$captured_tar_path" "gitsetu_vault_$$" "intermediate tar does not use predictable name" || return 1
 
     if can_chmod_600; then
@@ -256,7 +259,7 @@ EOF
     fi
 
     assert_file_not_contains "$captured_tar_path" "" "intermediate tar deleted after backup"
-    rm -f "vault_check.enc"
+    rm -f "vault_check.enc" "$HOME/.captured_tar_path" "$HOME/.captured_tar_perms"
     unset GITSETU_TEST_VAULT_PASS
 }
 

@@ -1,4 +1,4 @@
-# sandbox/bootstrap.ps1 — Windows Sandbox automated initialization and test harness
+# sandbox/bootstrap.ps1 - Windows Sandbox automated initialization and test harness
 $Host.UI.RawUI.WindowTitle = "GitSetu - Windows Sandbox Test Environment"
 Clear-Host
 
@@ -108,6 +108,7 @@ $psInstallResult = $LASTEXITCODE
 $psShimTest = 1
 if ($psInstallResult -eq 0) {
     Write-Host "Verifying PowerShell and CMD shims..."
+    $env:PATH = "$env:LOCALAPPDATA\gitsetu\bin;$env:PATH"
     $vCmd = & cmd.exe /c "gitsetu --version"
     $vPs = & "$env:LOCALAPPDATA\gitsetu\bin\gitsetu.ps1" --version
     if ($vCmd -match "gitsetu v1.0.0" -and $vPs -match "gitsetu v1.0.0") {
@@ -178,7 +179,7 @@ if ($autoOut -match "Setup complete") {
 if ($resultsHost) {
     $reportFile = "$resultsHost\ULTIMATE_SANDBOX_AUDIT_REPORT.md"
     $overallSuccess = ($testResult -eq 0 -and $liveResult -eq 0 -and $auditResult -eq 0 -and $psShimTest -eq 0 -and $launcherTest -eq 0 -and $monolithTest -eq 0 -and $autoTest -eq 0)
-    $verdict = if ($overallSuccess) { "🟢 **PRODUCTION-READY DAY 1 GA (100% PASS)**" } else { "🔴 **FAILURES DETECTED**" }
+    $verdict = if ($overallSuccess) { "[PASS] **PRODUCTION-READY DAY 1 GA (100% PASS)**" } else { "[FAIL] **FAILURES DETECTED**" }
     
     $reportContent = @"
 # GitSetu Ultimate Windows Sandbox Verification Report

@@ -4,7 +4,8 @@ This directory provides an isolated, disposable **Windows Sandbox** test harness
 
 ## Files
 
-- **`launch_sandbox.bat`**: Single-click batch script to launch Windows Sandbox.
+- **`launch_sandbox.ps1`**: Native PowerShell launcher with environment auto-detection and execution policy bypass.
+- **`launch_sandbox.bat`**: Windows batch wrapper for `launch_sandbox.ps1`.
 - **`gitsetu_test.wsb`**: Windows Sandbox definition mapping the repository source and Git for Windows read-only.
 - **`bootstrap.ps1`**: Automated 8-dimension test harness running upon Sandbox login.
 - **`live_test.sh`**: Real multi-profile end-to-end simulation (creates profiles, initializes repos, runs commits, tests identity switching).
@@ -12,7 +13,13 @@ This directory provides an isolated, disposable **Windows Sandbox** test harness
 
 ## Usage
 
-Double-click `launch_sandbox.bat` or run:
+Run from PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\sandbox\launch_sandbox.ps1
+```
+
+Or double-click `launch_sandbox.bat` from Windows Explorer / Command Prompt:
 
 ```cmd
 .\sandbox\launch_sandbox.bat

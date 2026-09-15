@@ -80,6 +80,9 @@ esac
 
 # Normalize current directory
 current_norm="${current_dir//\\//}"
+if [[ "$current_norm" == "/tmp/"* ]] && command -v cygpath >/dev/null 2>&1; then
+    current_norm=$(cygpath -m "$current_norm")
+fi
 if [[ "$current_norm" =~ ^/([a-zA-Z])/(.*) ]]; then
     c_letter=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
     current_norm="${c_letter}:/${BASH_REMATCH[2]}"
@@ -117,6 +120,9 @@ while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
 
     # Normalize Windows drive letters and slashes
     dir_norm="${dir//\\//}"
+    if [[ "$dir_norm" == "/tmp/"* ]] && command -v cygpath >/dev/null 2>&1; then
+        dir_norm=$(cygpath -m "$dir_norm")
+    fi
     if [[ "$dir_norm" =~ ^/([a-zA-Z])/(.*) ]]; then
         d_letter=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
         dir_norm="${d_letter}:/${BASH_REMATCH[2]}"

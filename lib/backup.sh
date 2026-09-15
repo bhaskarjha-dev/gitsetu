@@ -171,6 +171,10 @@ cmd_backup() {
             rel_cfg="${norm_cfg#"$norm_home"/}"
         elif [[ "$GITSETU_CONFIG_DIR" == "$HOME/"* ]]; then
             rel_cfg="${GITSETU_CONFIG_DIR#"$HOME"/}"
+        elif [[ "$GITSETU_CONFIG_DIR" =~ (\.config/gitsetu.*)$ ]]; then
+            rel_cfg="${BASH_REMATCH[1]}"
+        elif [[ "$norm_cfg" =~ (\.config/gitsetu.*)$ ]]; then
+            rel_cfg="${BASH_REMATCH[1]}"
         else
             rel_cfg="$GITSETU_CONFIG_DIR"
         fi

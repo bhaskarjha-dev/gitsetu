@@ -14,92 +14,30 @@
 # MIT License — Bhaskar Jha
 
 # --- CRLF self-healing for VirtualBox shared folders & Windows clones ---
-# vboxsf injects \r into all files. Pure Bash 3.2 inspection detects \r with zero forks.
-_crlf_depth="${GITSETU_CRLF_DEPTH:-0}"
-
-# 1. Hard recursion guard: prevent runaway infinite exec loops
-if [[ "$_crlf_depth" -ge 2 ]]; then
-    echo "Error: CRLF self-healing recursion limit reached (depth=$_crlf_depth)." >&2
-    echo "Ensure temporary directories are not located on a CRLF-injecting shared mount." >&2
-    exit 1
-fi
-
-# 2. Inspect script header for carriage return using pure Bash (zero external process forks)
-_crlf_l1=""
-_crlf_l2=""
-{
-    read -r _crlf_l1 || true
-    read -r _crlf_l2 || true
-} < "${BASH_SOURCE[0]:-$0}" 2>/dev/null || true
-
-# 3. Loop detection on shared filesystems (vboxsf):
-# If already re-executed once but temporary script still contains \r, filesystem is re-injecting \r.
-if [[ "$_crlf_depth" -ge 1 ]] && { [[ "$_crlf_l1" == *$'\r'* ]] || [[ "$_crlf_l2" == *$'\r'* ]]; }; then
-    echo "Error: CRLF normalization loop detected." >&2
-    echo "The temporary execution script still contains carriage returns." >&2
-    echo "This occurs when TMPDIR is located on a VirtualBox shared folder (vboxsf)." >&2
-    echo "Please set TMPDIR to a native filesystem (e.g., export TMPDIR=/tmp) and re-run." >&2
-    exit 1
-fi
-
-# 4. Normalize and re-exec if carriage return is detected
-if [[ "${GITSETU_CRLF_CLEAN:-}" != "1" ]] && [[ "${1:-}" != "credential" ]] && [[ "${1:-}" != "prompt" ]] && { [[ "$_crlf_l1" == *$'\r'* ]] || [[ "$_crlf_l2" == *$'\r'* ]]; }; then
-    # Multi-directory fallback for temp file creation
-    _crlf_tmp=""
-    for _cand in "${TMPDIR:-}" "${TEMP:-}" "${TMP:-}" "/tmp" "/var/tmp" "${XDG_RUNTIME_DIR:-}" "${HOME:-}/.cache" "${HOME:-}" "."; do
-        [[ -n "$_cand" && -d "$_cand" && -w "$_cand" ]] || continue
-        _crlf_tmp=$(umask 077 && mktemp "${_cand%/}/.gitsetu_crlf.XXXXXX" 2>/dev/null || true)
-        if [[ -n "$_crlf_tmp" && -f "$_crlf_tmp" && -w "$_crlf_tmp" ]]; then
-            break
-        fi
-        _crlf_tmp=""
-    done
-
-    if [[ -z "$_crlf_tmp" || ! -f "$_crlf_tmp" ]]; then
-        echo "Error: Failed to create temporary file for CRLF normalization." >&2
-        echo "Checked: \$TMPDIR, \$TEMP, \$TMP, /tmp, /var/tmp, \$HOME, and current directory." >&2
-        echo "Please ensure at least one temporary directory is writable and not full." >&2
-        exit 1
-    fi
-
-    # Stripping cascade: tr -> sed -> awk -> pure bash
-    _strip_status=1
-    if command -v tr >/dev/null 2>&1; then
-        tr -d '\r' < "${BASH_SOURCE[0]:-$0}" > "$_crlf_tmp" && _strip_status=0
-    elif command -v sed >/dev/null 2>&1; then
-        sed -e 's/\r$//' < "${BASH_SOURCE[0]:-$0}" > "$_crlf_tmp" && _strip_status=0
-    elif command -v awk >/dev/null 2>&1; then
-        awk '{ sub(/\r$/, ""); print }' "${BASH_SOURCE[0]:-$0}" > "$_crlf_tmp" && _strip_status=0
-    else
-        # Pure bash fallback (zero dependencies)
-        while IFS= read -r _s_line || [[ -n "$_s_line" ]]; do
-            printf '%s\n' "${_s_line%$'\r'}"
-        done < "${BASH_SOURCE[0]:-$0}" > "$_crlf_tmp" && _strip_status=0
-    fi
-
-    if [[ "$_strip_status" -ne 0 ]]; then
-        rm -f "$_crlf_tmp" 2>/dev/null || true
-        echo "Error: Failed to strip carriage returns from script." >&2
-        exit 1
-    fi
-
-    chmod 700 "$_crlf_tmp" 2>/dev/null || chmod 600 "$_crlf_tmp" 2>/dev/null || true
-    export GITSETU_CRLF_CLEAN=1
-    export GITSETU_CRLF_DEPTH=$(( _crlf_depth + 1 ))
-    export GITSETU_CRLF_TMP="$_crlf_tmp"
-
-    # Make ORIG_SCRIPT absolute before exec
-    _orig_src="${BASH_SOURCE[0]:-$0}"
-    if [[ "$_orig_src" != /* ]] && [[ "$_orig_src" != [a-zA-Z]:/* ]] && [[ "$_orig_src" != [a-zA-Z]:\\* ]]; then
-        _orig_src="$(pwd)/$_orig_src"
-    fi
-    export GITSETU_ORIG_SCRIPT="$_orig_src"
-
-    trap 'rm -f "$_crlf_tmp" 2>/dev/null || true' EXIT INT TERM
-    exec "${BASH:-bash}" "$_crlf_tmp" "$@"
-    rm -f "$_crlf_tmp" 2>/dev/null || true
-    exit 1
-fi
+# Uses simple statements only to prevent Linux Bash parser errors on then\r / do\r.
+_crlf_probe="" #
+read -r _crlf_probe < "${BASH_SOURCE[0]:-$0}" 2>/dev/null || true #
+[[ -z "${GITSETU_CRLF_CLEAN:-}" && "${1:-}" != "credential" && "${1:-}" != "prompt" && "$_crlf_probe" == *$'\r'* ]] && { #
+    _crlf_depth="${GITSETU_CRLF_DEPTH:-0}" #
+    [[ "$_crlf_depth" -ge 2 ]] && { echo "Error: CRLF self-healing recursion limit reached (depth=$_crlf_depth)." >&2; exit 1; } #
+    [[ "$_crlf_depth" -ge 1 ]] && { echo "Error: CRLF normalization loop detected." >&2; exit 1; } #
+    _crlf_tmp=$(mktemp "${TMPDIR:-/tmp}/gitsetu_crlf.XXXXXX" 2>/dev/null || mktemp 2>/dev/null || echo "/tmp/gitsetu_crlf.$$") #
+    (command -v tr >/dev/null 2>&1 && tr -d '\r' < "${BASH_SOURCE[0]:-$0}" > "$_crlf_tmp") || \
+    (command -v sed >/dev/null 2>&1 && sed -e 's/\r$//' < "${BASH_SOURCE[0]:-$0}" > "$_crlf_tmp") || \
+    (command -v awk >/dev/null 2>&1 && awk '{ sub(/\r$/, ""); print }' "${BASH_SOURCE[0]:-$0}" > "$_crlf_tmp") #
+    chmod 700 "$_crlf_tmp" 2>/dev/null || chmod 600 "$_crlf_tmp" 2>/dev/null || true #
+    export GITSETU_CRLF_CLEAN=1 #
+    export GITSETU_CRLF_DEPTH=$(( _crlf_depth + 1 )) #
+    export GITSETU_CRLF_TMP="$_crlf_tmp" #
+    _orig_src="${BASH_SOURCE[0]:-$0}" #
+    [[ "$_orig_src" != /* && "$_orig_src" != [a-zA-Z]:/* && "$_orig_src" != [a-zA-Z]:\\* ]] && _orig_src="$(pwd)/$_orig_src" #
+    export GITSETU_ORIG_SCRIPT="$_orig_src" #
+    trap 'rm -f "$_crlf_tmp" 2>/dev/null || true' EXIT INT TERM #
+    # shellcheck disable=SC2093
+    exec "${BASH:-bash}" "$_crlf_tmp" "$@" #
+    rm -f "$_crlf_tmp" 2>/dev/null || true #
+    exit 1 #
+} #
 
 set -euo pipefail
 
@@ -121,6 +59,7 @@ resolve_script_dir() {
     # Strip \r because the env var was set from a CRLF-contaminated line.
     local source="${GITSETU_ORIG_SCRIPT:-${BASH_SOURCE[0]:-$0}}"
     source="${source//$'\r'/}"
+    source="${source//\\//}"
 
     # If source is empty or just a basename, try $0
     if [[ -z "$source" ]] || [[ "$source" == "bash" ]]; then
@@ -288,8 +227,14 @@ export GITSETU_STANDALONE=1
 GITSETU_VERSION="1.0.0"
 
 # ------------------------------------------------------------------------------
-# Directory layout (XDG-compliant)
+# Normalize environment paths on Windows (converts backslashes to forward slashes)
 # ------------------------------------------------------------------------------
+if [[ -n "${HOME:-}" ]]; then
+    HOME="${HOME//\\//}"
+fi
+if [[ -n "${XDG_CONFIG_HOME:-}" ]]; then
+    XDG_CONFIG_HOME="${XDG_CONFIG_HOME//\\//}"
+fi
 
 GITSETU_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu"
 GITSETU_BACKUP_DIR="$GITSETU_CONFIG_DIR/backups"
@@ -1139,6 +1084,11 @@ validate_email() {
         return 1
     fi
 
+    # Must not contain newlines or carriage returns (prevents INI injection)
+    if [[ "$email" == *$'\n'* ]] || [[ "$email" == *$'\r'* ]]; then
+        return 1
+    fi
+
     # Must contain @
     if [[ "$email" != *"@"* ]]; then
         return 1
@@ -1469,6 +1419,10 @@ cmd_backup() {
             rel_cfg="${norm_cfg#"$norm_home"/}"
         elif [[ "$GITSETU_CONFIG_DIR" == "$HOME/"* ]]; then
             rel_cfg="${GITSETU_CONFIG_DIR#"$HOME"/}"
+        elif [[ "$GITSETU_CONFIG_DIR" =~ (\.config/gitsetu.*)$ ]]; then
+            rel_cfg="${BASH_REMATCH[1]}"
+        elif [[ "$norm_cfg" =~ (\.config/gitsetu.*)$ ]]; then
+            rel_cfg="${BASH_REMATCH[1]}"
         else
             rel_cfg="$GITSETU_CONFIG_DIR"
         fi
@@ -2446,6 +2400,9 @@ esac
 
 # Normalize current directory
 current_norm="${current_dir//\\//}"
+if [[ "$current_norm" == "/tmp/"* ]] && command -v cygpath >/dev/null 2>&1; then
+    current_norm=$(cygpath -m "$current_norm")
+fi
 if [[ "$current_norm" =~ ^/([a-zA-Z])/(.*) ]]; then
     c_letter=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
     current_norm="${c_letter}:/${BASH_REMATCH[2]}"
@@ -2483,6 +2440,9 @@ while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
 
     # Normalize Windows drive letters and slashes
     dir_norm="${dir//\\//}"
+    if [[ "$dir_norm" == "/tmp/"* ]] && command -v cygpath >/dev/null 2>&1; then
+        dir_norm=$(cygpath -m "$dir_norm")
+    fi
     if [[ "$dir_norm" =~ ^/([a-zA-Z])/(.*) ]]; then
         d_letter=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
         dir_norm="${d_letter}:/${BASH_REMATCH[2]}"
@@ -3829,6 +3789,7 @@ ensure_workspace_dirs() {
 # verification, stale lock recovery, 60s timeout handling, re-entrancy depth
 # tracking, and explicit release.
 # ------------------------------------------------------------------------------
+# shellcheck disable=SC2120
 acquire_lock() {
     local target_lock="${1:-${GITSETU_LOCK_DIR:-${GITSETU_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu}/profiles.lock}}"
     local config_dir
@@ -3844,6 +3805,7 @@ acquire_lock() {
     fi
     local retry=0
     local no_pid_count=0
+    local dead_pid_count=0
 
     # Re-entrancy: If current process already holds the lock, increment depth
     if [[ "${GITSETU_LOCK_DEPTH:-0}" -gt 0 ]]; then
@@ -3858,6 +3820,7 @@ acquire_lock() {
         local lock_pid=""
         if [[ -f "$target_lock/pid" ]]; then
             lock_pid=$(cat "$target_lock/pid" 2>/dev/null || echo "")
+            lock_pid="${lock_pid%$'\r'}"
         fi
 
         # If current process already owns lock on disk, increment depth
@@ -3867,11 +3830,18 @@ acquire_lock() {
         fi
 
         # Case 1: Holding process is dead (stale lock recovery)
+        # Require 3 consecutive confirmations to avoid transient false-positives
         if [[ -n "$lock_pid" ]] && ! kill -0 "$lock_pid" 2>/dev/null; then
-            if mv "$target_lock" "${target_lock}.stale.$$" 2>/dev/null; then
-                rm -rf "${target_lock}.stale.$$" 2>/dev/null || true
-                continue
+            dead_pid_count=$((dead_pid_count + 1))
+            if [[ "$dead_pid_count" -ge 3 ]]; then
+                if mv "$target_lock" "${target_lock}.stale.$$" 2>/dev/null; then
+                    rm -rf "${target_lock}.stale.$$" 2>/dev/null || true
+                    dead_pid_count=0
+                    continue
+                fi
             fi
+        else
+            dead_pid_count=0
         fi
 
         # Case 2: PID file missing or empty (process died before writing PID)
@@ -3892,9 +3862,11 @@ acquire_lock() {
         local lock_time=""
         if [[ -f "$target_lock/timestamp" ]]; then
             lock_time=$(cat "$target_lock/timestamp" 2>/dev/null || echo "")
+            lock_time="${lock_time%$'\r'}"
         fi
         if [[ -z "$lock_time" ]]; then
             lock_time=$(stat -c '%Y' "$target_lock" 2>/dev/null || stat -f '%m' "$target_lock" 2>/dev/null || echo "")
+            lock_time="${lock_time%$'\r'}"
         fi
         local now
         now=$(date +%s 2>/dev/null || echo "")
@@ -3920,18 +3892,25 @@ acquire_lock() {
         sleep "$sleep_dur"
     done
 
-    # Lock acquired: write PID and creation timestamp
-    echo "$$" > "$target_lock/pid"
+    # Lock acquired: atomically write PID (via temp file rename) and creation timestamp
+    echo "$$" > "$target_lock/pid.tmp.$$" 2>/dev/null || echo "$$" > "$target_lock/pid"
+    mv -f "$target_lock/pid.tmp.$$" "$target_lock/pid" 2>/dev/null || true
     date +%s > "$target_lock/timestamp" 2>/dev/null || true
     GITSETU_LOCK_DEPTH=1
     GITSETU_CLEANUP_DIRS+=("$target_lock")
     return 0
 }
 
+# shellcheck disable=SC2120
 release_lock() {
     local target_lock="${1:-${GITSETU_LOCK_DIR:-${GITSETU_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu}/profiles.lock}}"
 
-    if [[ "${GITSETU_LOCK_DEPTH:-0}" -gt 1 ]]; then
+    # If current process does not hold the lock, do nothing
+    if [[ "${GITSETU_LOCK_DEPTH:-0}" -le 0 ]]; then
+        return 0
+    fi
+
+    if [[ "$GITSETU_LOCK_DEPTH" -gt 1 ]]; then
         GITSETU_LOCK_DEPTH=$((GITSETU_LOCK_DEPTH - 1))
         return 0
     fi
@@ -3941,10 +3920,18 @@ release_lock() {
         local lock_pid=""
         if [[ -f "$target_lock/pid" ]]; then
             lock_pid=$(cat "$target_lock/pid" 2>/dev/null || echo "")
+            lock_pid="${lock_pid%$'\r'}"
         fi
-        if [[ -z "$lock_pid" ]] || [[ "$lock_pid" == "$$" ]]; then
-            rm -f "$target_lock/pid" "$target_lock/timestamp" 2>/dev/null || true
-            rmdir "$target_lock" 2>/dev/null || true
+        # Only release if current process strictly owns the lock on disk
+        if [[ "$lock_pid" == "$$" ]]; then
+            # Atomic release: rename lock dir away so competing processes can immediately acquire
+            local releasing_dir="${target_lock}.rel.$$"
+            if mv "$target_lock" "$releasing_dir" 2>/dev/null; then
+                rm -rf "$releasing_dir" 2>/dev/null || true
+            else
+                rm -f "$target_lock/pid" "$target_lock/timestamp" 2>/dev/null || true
+                rmdir "$target_lock" 2>/dev/null || true
+            fi
         fi
     fi
     return 0
@@ -4283,6 +4270,12 @@ cmd_profile() {
                 fi
             fi
 
+            if ! validate_email "${PROFILE_EMAILS[idx]}"; then
+                print_error "Invalid email address: '${PROFILE_EMAILS[idx]}'."
+                release_lock
+                exit 1
+            fi
+
             execute_blueprint
             ;;
         remove)
@@ -4379,9 +4372,9 @@ keychain_store() {
     # Remove existing entry
     if [[ -f "$tokens_file" ]]; then
         local tmp_file
-        tmp_file=$(umask 077 && mktemp "${tokens_file}.tmp.XXXXXX" 2>/dev/null || true)
+        tmp_file=$(umask 077; mktemp "${tokens_file}.tmp.XXXXXX" 2>/dev/null || true)
         if [[ -z "$tmp_file" ]]; then
-            tmp_file=$(umask 077 && mktemp "${TMPDIR:-/tmp}/gitsetu_tokens.XXXXXX")
+            tmp_file=$(umask 077; mktemp "${TMPDIR:-/tmp}/gitsetu_tokens.XXXXXX")
         fi
         GITSETU_CLEANUP_FILES+=("$tmp_file")
         awk -v s="$service_name" -F':' '$1":"$2":"$3 != s' "$tokens_file" > "$tmp_file"
@@ -4498,9 +4491,9 @@ keychain_erase() {
     local tokens_file="$tokens_dir/.tokens"
     if [[ -f "$tokens_file" ]]; then
         local tmp_file
-        tmp_file=$(umask 077 && mktemp "${tokens_file}.tmp.XXXXXX" 2>/dev/null || true)
+        tmp_file=$(umask 077; mktemp "${tokens_file}.tmp.XXXXXX" 2>/dev/null || true)
         if [[ -z "$tmp_file" ]]; then
-            tmp_file=$(umask 077 && mktemp "${TMPDIR:-/tmp}/gitsetu_tokens.XXXXXX")
+            tmp_file=$(umask 077; mktemp "${TMPDIR:-/tmp}/gitsetu_tokens.XXXXXX")
         fi
         GITSETU_CLEANUP_FILES+=("$tmp_file")
         awk -v s="$service_name" -F':' '$1":"$2":"$3 != s' "$tokens_file" > "$tmp_file"
@@ -4951,11 +4944,12 @@ cmd_run() {
 # ------------------------------------------------------------------------------
 cmd_remove() {
     detect_os
-    local profile="$1"
+    local profile="${1:-}"
+    local force_flag="${2:-}"
     profile=$(to_lower "$profile")
     
     if [[ -z "$profile" ]]; then
-        print_error "Usage: gitsetu remove <profile>"
+        print_error "Usage: gitsetu remove <profile> [--force]"
         return 1
     fi
     
@@ -4990,9 +4984,11 @@ cmd_remove() {
         return 1
     fi
 
-    if ! confirm "Are you sure you want to completely remove profile '$profile'?" "n"; then
-        print_info "Cancelled."
-        return 0
+    if [[ "$force_flag" != "--force" && "$force_flag" != "-y" ]]; then
+        if ! confirm "Are you sure you want to completely remove profile '$profile'?" "n"; then
+            print_info "Cancelled."
+            return 0
+        fi
     fi
     
     acquire_lock || return 1
@@ -5176,7 +5172,7 @@ main() {
             cmd_run "$@"
             ;;
         remove)
-            cmd_remove "${1:-}"
+            cmd_remove "$@"
             ;;
         backup)
             cmd_backup "$@"

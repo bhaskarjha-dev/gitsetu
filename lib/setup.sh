@@ -207,6 +207,7 @@ ensure_workspace_dirs() {
 # verification, stale lock recovery, 60s timeout handling, re-entrancy depth
 # tracking, and explicit release.
 # ------------------------------------------------------------------------------
+# shellcheck disable=SC2120
 acquire_lock() {
     local target_lock="${1:-${GITSETU_LOCK_DIR:-${GITSETU_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu}/profiles.lock}}"
     local config_dir
@@ -222,6 +223,7 @@ acquire_lock() {
     fi
     local retry=0
     local no_pid_count=0
+    local dead_pid_count=0
 
     # Re-entrancy: If current process already holds the lock, increment depth
     if [[ "${GITSETU_LOCK_DEPTH:-0}" -gt 0 ]]; then
@@ -236,6 +238,7 @@ acquire_lock() {
         local lock_pid=""
         if [[ -f "$target_lock/pid" ]]; then
             lock_pid=$(cat "$target_lock/pid" 2>/dev/null || echo "")
+            lock_pid="${lock_pid%$'\r'}"
         fi
 
         # If current process already owns lock on disk, increment depth
@@ -245,11 +248,18 @@ acquire_lock() {
         fi
 
         # Case 1: Holding process is dead (stale lock recovery)
+        # Require 3 consecutive confirmations to avoid transient false-positives
         if [[ -n "$lock_pid" ]] && ! kill -0 "$lock_pid" 2>/dev/null; then
-            if mv "$target_lock" "${target_lock}.stale.$$" 2>/dev/null; then
-                rm -rf "${target_lock}.stale.$$" 2>/dev/null || true
-                continue
+            dead_pid_count=$((dead_pid_count + 1))
+            if [[ "$dead_pid_count" -ge 3 ]]; then
+                if mv "$target_lock" "${target_lock}.stale.$$" 2>/dev/null; then
+                    rm -rf "${target_lock}.stale.$$" 2>/dev/null || true
+                    dead_pid_count=0
+                    continue
+                fi
             fi
+        else
+            dead_pid_count=0
         fi
 
         # Case 2: PID file missing or empty (process died before writing PID)
@@ -270,9 +280,11 @@ acquire_lock() {
         local lock_time=""
         if [[ -f "$target_lock/timestamp" ]]; then
             lock_time=$(cat "$target_lock/timestamp" 2>/dev/null || echo "")
+            lock_time="${lock_time%$'\r'}"
         fi
         if [[ -z "$lock_time" ]]; then
             lock_time=$(stat -c '%Y' "$target_lock" 2>/dev/null || stat -f '%m' "$target_lock" 2>/dev/null || echo "")
+            lock_time="${lock_time%$'\r'}"
         fi
         local now
         now=$(date +%s 2>/dev/null || echo "")
@@ -298,18 +310,25 @@ acquire_lock() {
         sleep "$sleep_dur"
     done
 
-    # Lock acquired: write PID and creation timestamp
-    echo "$$" > "$target_lock/pid"
+    # Lock acquired: atomically write PID (via temp file rename) and creation timestamp
+    echo "$$" > "$target_lock/pid.tmp.$$" 2>/dev/null || echo "$$" > "$target_lock/pid"
+    mv -f "$target_lock/pid.tmp.$$" "$target_lock/pid" 2>/dev/null || true
     date +%s > "$target_lock/timestamp" 2>/dev/null || true
     GITSETU_LOCK_DEPTH=1
     GITSETU_CLEANUP_DIRS+=("$target_lock")
     return 0
 }
 
+# shellcheck disable=SC2120
 release_lock() {
     local target_lock="${1:-${GITSETU_LOCK_DIR:-${GITSETU_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu}/profiles.lock}}"
 
-    if [[ "${GITSETU_LOCK_DEPTH:-0}" -gt 1 ]]; then
+    # If current process does not hold the lock, do nothing
+    if [[ "${GITSETU_LOCK_DEPTH:-0}" -le 0 ]]; then
+        return 0
+    fi
+
+    if [[ "$GITSETU_LOCK_DEPTH" -gt 1 ]]; then
         GITSETU_LOCK_DEPTH=$((GITSETU_LOCK_DEPTH - 1))
         return 0
     fi
@@ -319,10 +338,18 @@ release_lock() {
         local lock_pid=""
         if [[ -f "$target_lock/pid" ]]; then
             lock_pid=$(cat "$target_lock/pid" 2>/dev/null || echo "")
+            lock_pid="${lock_pid%$'\r'}"
         fi
-        if [[ -z "$lock_pid" ]] || [[ "$lock_pid" == "$$" ]]; then
-            rm -f "$target_lock/pid" "$target_lock/timestamp" 2>/dev/null || true
-            rmdir "$target_lock" 2>/dev/null || true
+        # Only release if current process strictly owns the lock on disk
+        if [[ "$lock_pid" == "$$" ]]; then
+            # Atomic release: rename lock dir away so competing processes can immediately acquire
+            local releasing_dir="${target_lock}.rel.$$"
+            if mv "$target_lock" "$releasing_dir" 2>/dev/null; then
+                rm -rf "$releasing_dir" 2>/dev/null || true
+            else
+                rm -f "$target_lock/pid" "$target_lock/timestamp" 2>/dev/null || true
+                rmdir "$target_lock" 2>/dev/null || true
+            fi
         fi
     fi
     return 0
@@ -659,6 +686,12 @@ cmd_profile() {
                     release_lock
                     exit 1
                 fi
+            fi
+
+            if ! validate_email "${PROFILE_EMAILS[idx]}"; then
+                print_error "Invalid email address: '${PROFILE_EMAILS[idx]}'."
+                release_lock
+                exit 1
             fi
 
             execute_blueprint

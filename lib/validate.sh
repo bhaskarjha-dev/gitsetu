@@ -20,6 +20,11 @@ validate_email() {
         return 1
     fi
 
+    # Must not contain newlines or carriage returns (prevents INI injection)
+    if [[ "$email" == *$'\n'* ]] || [[ "$email" == *$'\r'* ]]; then
+        return 1
+    fi
+
     # Must contain @
     if [[ "$email" != *"@"* ]]; then
         return 1
