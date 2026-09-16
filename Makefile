@@ -5,7 +5,7 @@ help:
 	@echo ""
 	@echo "  make check     Run BOTH linting and tests (Simulates CI)"
 	@echo "  make lint      Run ShellCheck against all scripts"
-	@echo "  make test      Run all 33 regression test suites (requires bash 3.2+)"
+	@echo "  make test      Run all 36 regression test suites (requires bash 3.2+)"
 	@echo "  make dist      Compile standalone monolithic single-file binary to dist/gitsetu"
 	@echo "  make hooks     Install Git pre-push hook to prevent bad pushes"
 	@echo "  make install   Install GitSetu to ~/.local/bin via git clone"
@@ -15,7 +15,7 @@ help:
 check: lint test
 
 test:
-	@echo "Running 33 regression test suites..."
+	@echo "Running 36 regression test suites..."
 	@bash tests/run_all.sh
 
 dist:

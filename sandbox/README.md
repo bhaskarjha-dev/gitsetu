@@ -4,9 +4,8 @@ This directory provides an isolated, disposable **Windows Sandbox** test harness
 
 ## Files
 
-- **`launch_sandbox.ps1`**: Native PowerShell launcher with environment auto-detection and execution policy bypass.
+- **`launch_sandbox.ps1`**: Native PowerShell launcher with environment auto-detection, dynamic `.wsb` sandbox definition generation, and execution policy bypass.
 - **`launch_sandbox.bat`**: Windows batch wrapper for `launch_sandbox.ps1`.
-- **`gitsetu_test.wsb`**: Windows Sandbox definition mapping the repository source and Git for Windows read-only.
 - **`bootstrap.ps1`**: Automated 8-dimension test harness running upon Sandbox login.
 - **`live_test.sh`**: Real multi-profile end-to-end simulation (creates profiles, initializes repos, runs commits, tests identity switching).
 - **`comprehensive_audit.sh`**: 31-phase zero-trust empirical audit script running ~110 checks across all CLI commands, security hardening, concurrency locking, CRLF self-healing, backup/restore round-trips, edge cases, and packaging channels.

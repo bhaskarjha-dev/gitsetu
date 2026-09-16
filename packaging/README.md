@@ -17,7 +17,7 @@ This directory contains package manager manifests, compilation scripts, and form
 
 ### 2. Standalone Single-File Monolith (`dist/gitsetu`)
 - **Compiler:** `scripts/bundle.sh` (`make dist`)
-- **Output:** `dist/gitsetu` (170 KB self-contained bash monolith with inlined modules)
+- **Output:** `dist/gitsetu` (186 KB self-contained bash monolith with inlined modules)
 - **Direct Curl Usage:**
   ```bash
   curl -sL https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/dist/gitsetu -o ~/.local/bin/gitsetu && chmod +x ~/.local/bin/gitsetu
@@ -36,9 +36,10 @@ This directory contains package manager manifests, compilation scripts, and form
 
 ### 4. Windows — Scoop (`packaging/scoop/gitsetu.json`)
 - **Manifest Path:** `packaging/scoop/gitsetu.json`
-- **Target Bucket:** `scoop-main` or custom bucket `bhaskarjha-dev/scoop-bucket`
+- **Target Bucket:** `bhaskarjha-dev/scoop-gitsetu`
 - **Usage:**
   ```powershell
+  scoop bucket add gitsetu https://github.com/bhaskarjha-dev/scoop-gitsetu
   scoop install gitsetu
   ```
 
