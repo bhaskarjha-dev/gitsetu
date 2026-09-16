@@ -17,6 +17,28 @@ Absolutely not. GitSetu respects a strict *Managed Block Protocol*. It only mani
 
 ---
 
+### Existing Manual Setups & Migration
+
+**I already have manual `includeIf` configurations and custom `~/.ssh/config` host aliases. Will GitSetu overwrite or delete them?**
+**No, absolutely not.** GitSetu is designed with a strict zero-destruction philosophy:
+1. **In `~/.gitconfig`:** GitSetu writes exclusively between `# [gitsetu:managed:start]` and `# [gitsetu:managed:end]` sentinel markers. Any pre-existing manual `includeIf` directives, `[user]` identities, `[alias]` definitions, or custom configurations outside those markers remain completely untouched.
+2. **In `~/.ssh/config`:** GitSetu never edits or reorders your existing `Host` blocks (such as `Host github-pro` or `Host personal`). It only prepends a single directive to the very top: `Include ~/.config/gitsetu/profiles/ssh_config`. All of your manual SSH aliases and key mappings underneath remain 100% functional and active.
+3. **Pre-Modification Backups:** Before touching any configuration file, GitSetu automatically creates a timestamped backup in `~/.config/gitsetu/backups/` (`.gitconfig.<TIMESTAMP>.bak` and `config.<TIMESTAMP>.bak`).
+
+**Do I have to start fresh from scratch if I already have manual profiles?**
+**No.** GitSetu provides a smooth, automated transition via its built-in **Auto-Discovery Engine**:
+- When you run `gitsetu setup --auto` (or during interactive `gitsetu setup`), the discovery engine parses your existing `~/.gitconfig` for existing `includeIf` directories, inspects `~/.ssh/` for existing keys (`id_ed25519_*`), and extracts emails from public keys.
+- It pre-populates your profile blueprint with your existing paths and keys so you don't have to retype them.
+- You can either choose **Peaceful Co-existence** (leave manual configs as-is and only use GitSetu for new profiles) or **Smooth Migration** (let GitSetu manage all profiles so you gain `gitsetu guard`, `gitsetu doctor`, and instant prompt status).
+
+**What happens if both a manual `includeIf` and a GitSetu profile target the same folder?**
+Git processes `~/.gitconfig` sequentially from top to bottom. If the same configuration key (such as `user.email`) is matched multiple times, Git's native precedence rule applies: **the last matching entry wins**. Because GitSetu's managed block is placed at the end of `~/.gitconfig`, GitSetu's profile will take precedence for that specific directory. For any other directories covered only by your manual configs, your manual setup continues to govern.
+
+**What if I want to remove GitSetu and go back to my manual setup?**
+Run `gitsetu teardown`. GitSetu will surgically excise only its managed block from `~/.gitconfig`, remove the `Include` line from `~/.ssh/config`, and remove `~/.config/gitsetu/`. Your manual `includeIf` blocks, SSH keys, and custom settings remain intact in their original state.
+
+---
+
 ### Security Boundaries
 
 **Where does GitSetu store HTTPS Personal Access Tokens?**
@@ -28,6 +50,17 @@ No. GitSetu contains zero tracking dependencies, zero background daemon listener
 ---
 
 ### Windows & WSL
+
+**What are the prerequisites for running GitSetu on Windows?**
+The only prerequisite on Windows is **Git for Windows** (which provides standard `git.exe` and `bash.exe`). You can install it via:
+```powershell
+winget install Git.Git
+# Or download directly from: https://git-scm.com/download/win
+```
+Once Git for Windows is installed, GitSetu requires zero external runtimes (no Node.js, Python, or Go). GitSetu provides native Windows command shims (`gitsetu.cmd`, `gitsetu.ps1`, `gitsetu.exe`) so you can run all commands directly from **PowerShell**, **Command Prompt (CMD)**, **Windows Terminal**, and **VS Code**.
+
+**Why does WinGet use `winget install BhaskarJha.GitSetu` instead of `winget install GitSetu`?**
+Microsoft's official Windows Package Manager repository requires every package to have a unique, collision-proof Package Identifier formatted as `Publisher.PackageName`. `BhaskarJha.GitSetu` is the canonical identifier. Once WinGet updates its local search indexes, typing `winget install GitSetu` also automatically resolves to the official package.
 
 **Does GitSetu operate properly on native Windows environments?**
 Yes! GitSetu provides first-class support for Windows. When installed via `install.ps1`, WinGet, Scoop, or npm, GitSetu creates native command shims (`gitsetu.cmd`, `gitsetu.ps1`) so you can run `gitsetu` directly from **PowerShell**, **Command Prompt**, **Windows Terminal**, or **VS Code** — no need to open Git Bash.

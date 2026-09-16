@@ -1,6 +1,6 @@
 # Installation
 
-GitSetu is designed to be as lightweight and accessible as possible. It runs natively across macOS, Linux, and Windows with zero external runtimes (no Node.js, Python, or Go required for shell installations).
+GitSetu is designed to be as lightweight and accessible as possible. It runs natively across macOS, Linux, and Windows with zero external runtimes (no Node.js, Python, or Go required for shell installations). On Windows, the only prerequisite is **Git for Windows**.
 
 ---
 
@@ -21,6 +21,15 @@ irm https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.ps1 | 
 # Or via custom domain:
 # irm https://gitsetu.bhaskarjha.dev/install.ps1 | iex
 ```
+
+> [!IMPORTANT]
+> **Windows Prerequisite:** GitSetu requires **Git for Windows** (which provides standard `git.exe` and `bash.exe`).
+> If you do not have Git installed yet, run:
+> ```powershell
+> winget install Git.Git
+> ```
+> or download from [git-scm.com/download/win](https://git-scm.com/download/win).
+
 > [!TIP]
 > **Zero Friction on Windows:** The PowerShell installer automatically configures native `gitsetu.cmd` and `gitsetu.ps1` command shims and adds `%LOCALAPPDATA%\gitsetu\bin` directly to your Windows User `PATH`. You can run `gitsetu` or `git setu` immediately in PowerShell, Command Prompt, or VS Code without opening Git Bash!
 
@@ -47,8 +56,15 @@ npm install -g gitsetu
 ### Windows — Microsoft WinGet
 Install via the official Windows Package Manager:
 ```powershell
+# Official Microsoft Package Identifier (Publisher.PackageName)
 winget install BhaskarJha.GitSetu
+
+# Or once indexed in local manifests:
+winget install GitSetu
 ```
+
+> [!NOTE]
+> `BhaskarJha.GitSetu` is the canonical, collision-proof Package Identifier in Microsoft's official `winget-pkgs` repository.
 
 ### Windows — Scoop
 Install via Scoop bucket:

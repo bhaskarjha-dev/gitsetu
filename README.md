@@ -74,6 +74,9 @@ GitSetu compiled native configuration into three places and exited:
 
 There is no daemon. There is no runtime. Git and OpenSSH evaluate these rules natively on every operation.
 
+> [!NOTE]
+> **Non-Destructive & Safe:** GitSetu writes strictly between `# [gitsetu:managed:start]` and `# [gitsetu:managed:end]` markers. Existing manual `includeIf` rules, custom aliases, and `~/.ssh/config` host blocks are 100% preserved. `setup --auto` automatically discovers existing manual identities and workspace paths.
+
 ---
 
 ## How It Works
@@ -162,6 +165,8 @@ nix run github:bhaskarjha-dev/gitsetu
 
 ### Windows
 
+> **Prerequisite:** [Git for Windows](https://git-scm.com/download/win) (`winget install Git.Git`).
+
 ```powershell
 # PowerShell one-liner
 irm https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.ps1 | iex
@@ -170,8 +175,10 @@ irm https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.ps1 | 
 **Package managers:**
 
 ```powershell
-# WinGet
+# WinGet (Official Microsoft Package Identifier)
 winget install BhaskarJha.GitSetu
+# Or once indexed locally:
+winget install GitSetu
 
 # Scoop
 scoop bucket add gitsetu https://github.com/bhaskarjha-dev/scoop-gitsetu

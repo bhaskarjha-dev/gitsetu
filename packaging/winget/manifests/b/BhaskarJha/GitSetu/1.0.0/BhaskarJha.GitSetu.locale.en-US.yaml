@@ -4,7 +4,7 @@ PackageIdentifier: BhaskarJha.GitSetu
 PackageVersion: 1.0.0
 PackageLocale: en-US
 Publisher: Bhaskar Jha
-PublisherUrl: https://bhaskarjha.dev
+PublisherUrl: https://github.com/bhaskarjha-dev
 PublisherSupportUrl: https://github.com/bhaskarjha-dev/gitsetu/issues
 PackageName: GitSetu
 PackageUrl: https://gitsetu.bhaskarjha.dev

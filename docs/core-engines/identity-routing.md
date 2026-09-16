@@ -77,6 +77,13 @@ When nested workspace directories exist (e.g., a general work directory `~/work/
 ### Multi-Profile Persistence & Re-hydration
 Running `gitsetu setup` multiple times is safe and non-destructive. GitSetu automatically loads and re-hydrates existing profiles from `~/.config/gitsetu/profiles.conf`, preserving their names, emails, keys, and directory bindings in memory. Users can review, adjust, or append profiles without overwriting previously configured identities.
 
+### Co-existence with Pre-Existing Manual `includeIf` Setups
+For developers transitioning from hand-crafted `includeIf` directives and custom `.gitconfig` files:
+1. **Zero-Destruction Boundary:** GitSetu encapsulates all generated rules strictly within `# [gitsetu:managed:start]` and `# [gitsetu:managed:end]`. Any manual `includeIf` rules, aliases, and settings outside this block are never altered, deleted, or reordered.
+2. **Top-Down Sequential Precedence:** Git evaluates `~/.gitconfig` sequentially from top to bottom. Because GitSetu's managed block is appended at the end of `~/.gitconfig`, GitSetu profiles take precedence for directories they manage, ensuring correct SSH key and identity routing. All directories managed exclusively by your manual `includeIf` continue to operate normally.
+3. **Automated Discovery Migration:** Running `gitsetu setup --auto` uses GitSetu's built-in discovery engine (`lib/discovery.sh`) to scan existing manual `includeIf` directives in `~/.gitconfig` and existing SSH keys in `~/.ssh/`. It automatically imports existing directory mappings and identities into the profile registry, eliminating manual re-configuration.
+4. **Clean Reversibility:** If you ever decide to remove GitSetu, executing `gitsetu teardown` excises only the managed block, restoring your original manual configuration completely intact.
+
 ### Profile Teardown, Unmounting & Orphan Pruning
 When a profile is removed via `gitsetu remove <label>`:
 1. The profile entry is deleted from `profiles.conf`.
