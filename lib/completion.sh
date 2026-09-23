@@ -51,7 +51,11 @@ _gitsetu() {
             ;;
         setup)
             # shellcheck disable=SC2207
-            COMPREPLY=( $(compgen -W "--dry-run" -- "${cur}") )
+            COMPREPLY=( $(compgen -W "--dry-run --auto" -- "${cur}") )
+            ;;
+        doctor)
+            # shellcheck disable=SC2207
+            COMPREPLY=( $(compgen -W "--repair --dry-run" -- "${cur}") )
             ;;
     esac
 }
