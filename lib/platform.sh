@@ -253,7 +253,8 @@ check_prerequisites() {
 }
 
 # ------------------------------------------------------------------------------
-# get_ssh_agent_advice — Returns platform-specific ssh-agent setup instructions
+# get_ssh_agent_advice — [DEPRECATED in v1.1.0 in favor of auto_register_ssh_keys]
+# Returns platform-specific ssh-agent setup instructions. Retained for backward compat.
 # ------------------------------------------------------------------------------
 get_ssh_agent_advice() {
     case "$GITSETU_OS" in

@@ -335,14 +335,15 @@ show_help() {
 ${BOLD}gitsetu${RESET} v${GITSETU_VERSION} — One command. All identities. Every machine.
 
 ${BOLD}USAGE${RESET}
-    gitsetu setup [--auto] [--dry-run]  Interactive wizard or zero-prompt discovery
+    gitsetu setup [--auto] [--dry-run]  Guided on-ramp or dashboard setup wizard
     gitsetu init [--auto] [--dry-run]   Alias for setup
     gitsetu add <label> <name> <email> <dir>
                                      Add a profile (non-interactive)
     gitsetu remove <label>           Remove a profile
     gitsetu status                   Show current identity configuration
     gitsetu verify                   Test SSH keys and git config
-    gitsetu doctor                   Run diagnostic checks
+    gitsetu doctor [--repair] [--dry-run]
+                                     Run diagnostic checks or auto-heal configuration
     gitsetu update                   Update gitsetu to the latest version
     gitsetu prompt                   Print active profile for \$PS1
     gitsetu backup [out_file]        Export encrypted identity state
@@ -360,7 +361,7 @@ ${BOLD}EXAMPLES${RESET}
     ${DIM}# Instant zero-prompt onboarding:${RESET}
     gitsetu setup --auto
 
-    ${DIM}# First-time interactive setup:${RESET}
+    ${DIM}# First-time guided on-ramp (Single, Dual, or Custom):${RESET}
     gitsetu setup
 
     ${DIM}# Add a profile non-interactively:${RESET}
@@ -876,32 +877,69 @@ cmd_credential() {
 }
 
 # ------------------------------------------------------------------------------
-# cmd_doctor — Run diagnostics
+# cmd_doctor — Run diagnostics or repair configuration
 # ------------------------------------------------------------------------------
 cmd_doctor() {
+    local repair=0
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            --repair)
+                repair=1
+                ;;
+            --dry-run)
+                GITSETU_DRY_RUN=1
+                ;;
+        esac
+    done
+
     load_profiles
-    run_doctor
+    if [[ "$repair" -eq 1 ]]; then
+        run_doctor_repair "$@"
+    else
+        run_doctor
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# show_brief_usage — Print concise CLI usage
+# ------------------------------------------------------------------------------
+show_brief_usage() {
+    printf >&2 '%bgitsetu%b v%s — One command. All identities. Every machine.\n\n' \
+        "$BOLD" "$RESET" "$GITSETU_VERSION"
+    printf >&2 'Usage: gitsetu setup [--auto] [--dry-run]    Start the setup wizard\n'
+    printf >&2 '       gitsetu status               Show current identity\n'
+    printf >&2 '       gitsetu verify               Test SSH and git config\n'
+    printf >&2 '       gitsetu doctor [--repair]    Diagnose or repair configuration\n'
+    printf >&2 '       gitsetu prompt               Print active profile (for PS1)\n'
+    printf >&2 '       gitsetu run <profile> -- <cmd>  Run as identity\n'
+    printf >&2 '       gitsetu remove <profile>     Remove a specific profile\n'
+    printf >&2 '       gitsetu backup [out_file]    Export encrypted state vault\n'
+    printf >&2 '       gitsetu restore <in_file>    Import encrypted state vault\n'
+    printf >&2 '       gitsetu teardown [--force]   Remove all configurations\n'
+    printf >&2 '       gitsetu guard --install      Install commit guard hook\n'
+    printf >&2 '       gitsetu --help                Full help\n\n'
 }
 
 # ------------------------------------------------------------------------------
 # Main — Parse arguments and route to subcommand
 # ------------------------------------------------------------------------------
 main() {
-    # No arguments → show brief usage
+    # No arguments → check TTY and configuration
     if [[ $# -eq 0 ]]; then
-        printf >&2 '%bgitsetu%b v%s — One command. All identities. Every machine.\n\n' \
-            "$BOLD" "$RESET" "$GITSETU_VERSION"
-        printf >&2 'Usage: gitsetu setup [--dry-run]    Start the setup wizard\n'
-        printf >&2 '       gitsetu status               Show current identity\n'
-        printf >&2 '       gitsetu verify               Test SSH and git config\n'
-        printf >&2 '       gitsetu prompt               Print active profile (for PS1)\n'
-        printf >&2 '       gitsetu run <profile> -- <cmd>  Run as identity\n'
-        printf >&2 '       gitsetu remove <profile>     Remove a specific profile\n'
-        printf >&2 '       gitsetu backup [out_file]    Export encrypted state vault\n'
-        printf >&2 '       gitsetu restore <in_file>    Import encrypted state vault\n'
-        printf >&2 '       gitsetu teardown [--force]   Remove all configurations\n'
-        printf >&2 '       gitsetu guard --install      Install commit guard hook\n'
-        printf >&2 '       gitsetu --help                Full help\n\n'
+        if [[ ! -t 0 || ! -t 1 || -n "${CI:-}" ]]; then
+            show_brief_usage
+            exit 0
+        fi
+
+        detect_os
+
+        load_profiles
+        if [[ -f "$GITSETU_PROFILES_CONF" ]] && [[ "$PROFILE_COUNT" -gt 0 ]]; then
+            cmd_status
+        else
+            preset_guided_onboarding
+        fi
         return 0
     fi
 

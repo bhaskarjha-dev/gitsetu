@@ -36,7 +36,12 @@ render_blueprint_dashboard() {
         local display_email="${email:-(Not Configured)}"
         local display_dir="${dir:-[Global Fallback]}"
         
-        printf >&2 '  %b%s) [%s]%b %s <%s>\n' "$BOLD" "$((i+1))" "$label" "$RESET" "$display_name" "$display_email"
+        local incomplete_tag=""
+        if [[ -z "$name" ]] || [[ -z "$email" ]]; then
+            incomplete_tag=" ${YELLOW}[${SYM_WARN} Incomplete]${RESET}"
+        fi
+
+        printf >&2 '  %b%s) [%s]%b%b %s <%s>\n' "$BOLD" "$((i+1))" "$label" "$RESET" "$incomplete_tag" "$display_name" "$display_email"
         printf >&2 '     Key: %s %b\n' "$key" "$key_status"
         printf >&2 '     Dir: %s\n\n' "$display_dir"
     done
@@ -44,6 +49,248 @@ render_blueprint_dashboard() {
     printf >&2 '  ──────────────────────────────────────────────────────────\n'
     printf >&2 '  [A]dd Profile | [E]dit Profile | [R]emove | [S]ecurity \n'
     printf >&2 '  [H]elp        | [Q]uit         | [ENTER] Apply\n\n'
+}
+
+# ------------------------------------------------------------------------------
+# preset_guided_onboarding — 3-Path guided on-ramp for first-time interactive setup
+# ------------------------------------------------------------------------------
+preset_guided_onboarding() {
+    if ! command -v git >/dev/null 2>&1; then
+        print_error "Git is not installed or not in PATH."
+        return 1
+    fi
+
+    while true; do
+        clear || printf '\033c'
+        printf >&2 '\n  %b╔══════════════════════════════════════╗%b\n' "$BOLD" "$RESET"
+        printf >&2 '  %b║  Welcome to GitSetu!                 ║%b\n' "$BOLD" "$RESET"
+        printf >&2 '  %b╚══════════════════════════════════════╝%b\n\n' "$BOLD" "$RESET"
+
+        printf >&2 '  How would you like to set up?\n\n'
+        printf >&2 '  %b1) Single Identity%b  — one account for everything\n' "$BOLD" "$RESET"
+        printf >&2 '  %b2) Dual Identity%b    — separate work & personal\n' "$BOLD" "$RESET"
+        printf >&2 '  %b3) Custom Setup%b     — full manual control\n\n' "$BOLD" "$RESET"
+
+        local choice=""
+        if ! read -r -p "  Select [1-3] (default: 1): " choice; then
+            print_info "Setup cancelled."
+            return 0
+        fi
+        choice="${choice:-1}"
+
+        case "$choice" in
+            1)
+                discover_global_git_identity
+                local def_name="${DISCOVERED_GLOBAL_NAME:-}"
+                if [[ -z "$def_name" ]]; then
+                    def_name="${USER:-$(whoami 2>/dev/null || echo "GitSetu User")}"
+                fi
+                local def_email="${DISCOVERED_GLOBAL_EMAIL:-}"
+
+                printf >&2 '\n  %b─── Single Account Setup ───%b\n\n' "$BOLD" "$RESET"
+
+                local name=""
+                if [[ -n "$def_name" ]]; then
+                    read -r -p "  Name [$def_name]: " name || true
+                    name="${name:-$def_name}"
+                else
+                    read -r -p "  Name: " name || true
+                    name="${name:-GitSetu User}"
+                fi
+
+                local email=""
+                if [[ -n "$def_email" ]]; then
+                    read -r -p "  Email [$def_email]: " email || true
+                    email="${email:-$def_email}"
+                fi
+
+                while [[ -z "$email" ]] || ! validate_email "$email"; do
+                    if [[ -n "$email" ]] && ! validate_email "$email"; then
+                        print_error "Invalid email address: '$email'."
+                    fi
+                    read -r -p "  Email: " email || true
+                done
+
+                local global_key
+                global_key=$(discover_ssh_key_for_label "global")
+
+                # shellcheck disable=SC2034
+                PROFILE_COUNT=1
+                # shellcheck disable=SC2034
+                PROFILE_LABELS[0]="global"
+                # shellcheck disable=SC2034
+                PROFILE_NAMES[0]="$name"
+                # shellcheck disable=SC2034
+                PROFILE_EMAILS[0]="$email"
+                # shellcheck disable=SC2034
+                PROFILE_DIRS[0]=""
+                # shellcheck disable=SC2034
+                PROFILE_PROVIDERS[0]="github.com"
+                # shellcheck disable=SC2034
+                PROFILE_SIGNS[0]="0"
+                # shellcheck disable=SC2034
+                PROFILE_KEYS[0]="${global_key:-$HOME/.ssh/id_ed25519_global}"
+                # shellcheck disable=SC2034
+                PROFILE_USERS[0]=""
+                # shellcheck disable=SC2034
+                PROFILE_PATS[0]=""
+
+                execute_blueprint
+                return 0
+                ;;
+            2)
+                discover_global_git_identity
+                local def_name="${DISCOVERED_GLOBAL_NAME:-}"
+                if [[ -z "$def_name" ]]; then
+                    def_name="${USER:-$(whoami 2>/dev/null || echo "GitSetu User")}"
+                fi
+                local def_personal_email="${DISCOVERED_GLOBAL_EMAIL:-}"
+
+                local def_work_dir
+                def_work_dir=$(discover_workspace_dir "work")
+                def_work_dir="${def_work_dir:-$HOME/work}"
+
+                printf >&2 '\n  %b─── Setting Up Dual Identity ───%b\n\n' "$BOLD" "$RESET"
+
+                local name=""
+                if [[ -n "$def_name" ]]; then
+                    read -r -p "  Name [$def_name]: " name || true
+                    name="${name:-$def_name}"
+                else
+                    read -r -p "  Name: " name || true
+                    name="${name:-GitSetu User}"
+                fi
+
+                local personal_email=""
+                if [[ -n "$def_personal_email" ]]; then
+                    read -r -p "  Personal Email [$def_personal_email]: " personal_email || true
+                    personal_email="${personal_email:-$def_personal_email}"
+                fi
+
+                while [[ -z "$personal_email" ]] || ! validate_email "$personal_email"; do
+                    if [[ -n "$personal_email" ]] && ! validate_email "$personal_email"; then
+                        print_error "Invalid email address: '$personal_email'."
+                    fi
+                    read -r -p "  Personal Email: " personal_email || true
+                done
+
+                local work_email=""
+                read -r -p "  Work Email: " work_email || true
+                while [[ -z "$work_email" ]] || ! validate_email "$work_email"; do
+                    if [[ -n "$work_email" ]] && ! validate_email "$work_email"; then
+                        print_error "Invalid email address: '$work_email'."
+                    fi
+                    read -r -p "  Work Email: " work_email || true
+                done
+
+                local disp_work_dir="$def_work_dir"
+                if [[ "$disp_work_dir" == "$HOME/"* ]]; then
+                    disp_work_dir="~/${disp_work_dir#"$HOME"/}"
+                elif [[ "$disp_work_dir" == "$HOME" ]]; then
+                    disp_work_dir="~"
+                fi
+
+                local work_dir=""
+                read -r -p "  Work directory [$disp_work_dir]: " work_dir || true
+                work_dir="${work_dir:-$def_work_dir}"
+                work_dir=$(normalize_path "$work_dir")
+
+                local def_personal_dir
+                def_personal_dir=$(discover_workspace_dir "personal")
+                local personal_dir="${def_personal_dir:-$HOME/personal}"
+                personal_dir=$(normalize_path "$personal_dir")
+
+                local global_key
+                global_key=$(discover_ssh_key_for_label "global")
+                local work_key
+                work_key=$(discover_ssh_key_for_label "work")
+                local personal_key
+                personal_key=$(discover_ssh_key_for_label "personal")
+
+                # shellcheck disable=SC2034
+                PROFILE_COUNT=3
+
+                # Profile 0: global fallback (personal identity)
+                # shellcheck disable=SC2034
+                PROFILE_LABELS[0]="global"
+                # shellcheck disable=SC2034
+                PROFILE_NAMES[0]="$name"
+                # shellcheck disable=SC2034
+                PROFILE_EMAILS[0]="$personal_email"
+                # shellcheck disable=SC2034
+                PROFILE_DIRS[0]=""
+                # shellcheck disable=SC2034
+                PROFILE_PROVIDERS[0]="github.com"
+                # shellcheck disable=SC2034
+                PROFILE_SIGNS[0]="0"
+                # shellcheck disable=SC2034
+                PROFILE_KEYS[0]="${global_key:-$HOME/.ssh/id_ed25519_global}"
+                # shellcheck disable=SC2034
+                PROFILE_USERS[0]=""
+                # shellcheck disable=SC2034
+                PROFILE_PATS[0]=""
+
+                # Profile 1: work
+                # shellcheck disable=SC2034
+                PROFILE_LABELS[1]="work"
+                # shellcheck disable=SC2034
+                PROFILE_NAMES[1]="$name"
+                # shellcheck disable=SC2034
+                PROFILE_EMAILS[1]="$work_email"
+                # shellcheck disable=SC2034
+                PROFILE_DIRS[1]="$work_dir"
+                # shellcheck disable=SC2034
+                PROFILE_PROVIDERS[1]="github.com"
+                # shellcheck disable=SC2034
+                PROFILE_SIGNS[1]="0"
+                # shellcheck disable=SC2034
+                PROFILE_KEYS[1]="${work_key:-$HOME/.ssh/id_ed25519_work}"
+                # shellcheck disable=SC2034
+                PROFILE_USERS[1]=""
+                # shellcheck disable=SC2034
+                PROFILE_PATS[1]=""
+
+                # Profile 2: personal
+                # shellcheck disable=SC2034
+                PROFILE_LABELS[2]="personal"
+                # shellcheck disable=SC2034
+                PROFILE_NAMES[2]="$name"
+                # shellcheck disable=SC2034
+                PROFILE_EMAILS[2]="$personal_email"
+                # shellcheck disable=SC2034
+                PROFILE_DIRS[2]="$personal_dir"
+                # shellcheck disable=SC2034
+                PROFILE_PROVIDERS[2]="github.com"
+                # shellcheck disable=SC2034
+                PROFILE_SIGNS[2]="0"
+                # shellcheck disable=SC2034
+                PROFILE_KEYS[2]="${personal_key:-$HOME/.ssh/id_ed25519_personal}"
+                # shellcheck disable=SC2034
+                PROFILE_USERS[2]=""
+                # shellcheck disable=SC2034
+                PROFILE_PATS[2]=""
+
+                execute_blueprint
+                return 0
+                ;;
+            3)
+                if [[ "${GITSETU_IN_WIZARD:-0}" -eq 1 ]]; then
+                    return 0
+                else
+                    GITSETU_SKIP_ON_RAMP=1 interactive_setup_wizard
+                    return $?
+                fi
+                ;;
+            "q"|"Q"|"quit"|"exit")
+                print_info "Setup cancelled."
+                exit 0
+                ;;
+            *)
+                print_error "Invalid selection: '$choice'. Please choose 1, 2, or 3."
+                sleep 1
+                ;;
+        esac
+    done
 }
 
 # ------------------------------------------------------------------------------
@@ -356,6 +603,58 @@ release_lock() {
 }
 
 # ------------------------------------------------------------------------------
+# render_setup_summary — Displays post-setup completion summary (T2.5)
+# ------------------------------------------------------------------------------
+render_setup_summary() {
+    print_section "Setup Complete"
+    print_success "Setup complete! You're ready to go."
+    printf >&2 '\n'
+
+    if [[ "${PROFILE_COUNT:-0}" -eq 0 ]] && declare -f load_profiles >/dev/null 2>&1; then
+        load_profiles 2>/dev/null || true
+    fi
+
+    printf >&2 '  %bProfiles:%b\n' "$BOLD" "$RESET"
+    local i
+    for (( i=0; i<PROFILE_COUNT; i++ )); do
+        local label="${PROFILE_LABELS[i]}"
+        local email="${PROFILE_EMAILS[i]}"
+        local dir="${PROFILE_DIRS[i]:-}"
+        local key_path="${PROFILE_KEYS[i]:-$HOME/.ssh/id_ed25519_${label}}"
+
+        local dir_display="[Global]"
+        if [[ -n "$dir" && "$dir" != "$HOME" ]]; then
+            if [[ "$dir" == "$HOME/"* ]]; then
+                dir_display="~/${dir#"$HOME"/}"
+            elif [[ "$dir" == "$HOME" ]]; then
+                dir_display="~"
+            else
+                dir_display="$dir"
+            fi
+        fi
+
+        local key_status="${RED}${SYM_CROSS}${RESET}"
+        if [[ -f "$key_path" ]]; then
+            key_status="${GREEN}${SYM_CHECK}${RESET}"
+        fi
+
+        printf >&2 '    %-12s %-26s %-18s Key: %b\n' "[$label]" "$email" "$dir_display" "$key_status"
+    done
+    printf >&2 '\n'
+
+    local guard_status="${DIM}Inactive${RESET}"
+    if [[ -f "$GITSETU_HOOKS_DIR/pre-commit" ]]; then
+        guard_status="${GREEN}Active${RESET}"
+    fi
+    printf >&2 '  %bGuard:%b %b\n\n' "$BOLD" "$RESET" "$guard_status"
+
+    printf >&2 '  %bQuick Reference:%b\n' "$BOLD" "$RESET"
+    printf >&2 '    %bgitsetu status%b    — check active identity\n' "$CYAN" "$RESET"
+    printf >&2 '    %bgitsetu doctor%b    — diagnose issues\n' "$CYAN" "$RESET"
+    printf >&2 '    %bgitsetu backup%b    — encrypted migration vault\n\n' "$CYAN" "$RESET"
+}
+
+# ------------------------------------------------------------------------------
 # execute_blueprint
 # ------------------------------------------------------------------------------
 execute_blueprint() {
@@ -432,13 +731,36 @@ execute_blueprint() {
     # 5. Display public keys
     display_public_keys
     
-    # SSH agent advice
-    print_section "SSH Agent Setup"
-    get_ssh_agent_advice
+    # 6. SSH agent key registration (T2.1)
+    auto_register_ssh_keys
     printf >&2 '\n'
 
-    print_success "Setup complete! You're ready to go."
-    printf >&2 '\n'
+    # 6.5 Live SSH handshake verification with Port 443 fallback (T2.3)
+    if [[ -z "${GITSETU_TEST:-}" || -n "${GITSETU_TEST_SSH_VERIFY:-}" || -n "${GITSETU_TEST_SSH:-}" ]]; then
+        print_section "SSH Verification"
+        local v_key_path v_provider
+        for (( i=0; i<PROFILE_COUNT; i++ )); do
+            v_key_path="${PROFILE_KEYS[i]:-$HOME/.ssh/id_ed25519_${PROFILE_LABELS[i]}}"
+            v_provider="${PROFILE_PROVIDERS[i]:-github.com}"
+            verify_ssh_handshake "$v_key_path" "$v_provider" || true
+        done
+        printf >&2 '\n'
+
+        if [[ "${GITSETU_PORT443_NEEDED:-0}" -eq 1 ]]; then
+            print_info "Regenerating SSH configuration with Port 443 corporate fallback..."
+            write_ssh_config
+        fi
+    fi
+
+    # 7. Guard activation prompt (T2.4)
+    if [[ ! -f "$GITSETU_HOOKS_DIR/pre-commit" ]] && [[ -z "${GITSETU_TEST:-}" ]]; then
+        if confirm "Enable pre-commit identity guard (prevents wrong-email commits)?" "y"; then
+            install_guard
+        fi
+    fi
+
+    # 8. Post-setup completion summary (T2.5)
+    render_setup_summary
 
     release_lock
 }
@@ -500,10 +822,38 @@ interactive_setup_wizard() {
         generate_initial_blueprint
     fi
 
+    # Check if fresh install: no profiles.conf or only unconfigured [global]
+    if [[ "${GITSETU_SKIP_ON_RAMP:-0}" -ne 1 ]]; then
+        local is_fresh=0
+        if [[ ! -f "$GITSETU_PROFILES_CONF" ]]; then
+            is_fresh=1
+        elif [[ "$PROFILE_COUNT" -eq 0 ]]; then
+            is_fresh=1
+        elif [[ "$PROFILE_COUNT" -eq 1 ]] && [[ "${PROFILE_LABELS[0]}" == "global" ]] && [[ -z "${PROFILE_EMAILS[0]}" ]]; then
+            is_fresh=1
+        fi
+
+        if [[ "$is_fresh" -eq 1 ]]; then
+            local GITSETU_IN_WIZARD=1
+            preset_guided_onboarding
+            # If preset was applied, profiles now exist and are configured
+            if [[ -f "$GITSETU_PROFILES_CONF" ]] && [[ "$PROFILE_COUNT" -gt 0 ]]; then
+                if [[ "$PROFILE_COUNT" -gt 1 ]] || [[ -n "${PROFILE_EMAILS[0]}" ]]; then
+                    return 0
+                fi
+            fi
+            # If Option 3 was chosen, fall through to dashboard loop
+        fi
+    fi
+
     while true; do
         render_blueprint_dashboard
         
-        read -r -p "[?] Select an option, or press ENTER to Apply: " choice
+        local choice=""
+        if ! read -r -p "[?] Select an option, or press ENTER to Apply: " choice; then
+            print_info "Setup aborted."
+            exit 0
+        fi
         choice=$(echo "$choice" | tr '[:lower:]' '[:upper:]')
         
         case "$choice" in
@@ -513,9 +863,9 @@ interactive_setup_wizard() {
                 local i
                 for (( i=0; i<PROFILE_COUNT; i++ )); do
                     if [[ -z "${PROFILE_NAMES[i]}" ]] || [[ -z "${PROFILE_EMAILS[i]}" ]]; then
-                        print_error "Profile '${PROFILE_LABELS[i]}' is missing a name or email!"
+                        print_warning "Profile '${PROFILE_LABELS[i]}' is incomplete. Please configure name and email:"
+                        prompt_edit_profile "$i"
                         valid=0
-                        sleep 2
                         break
                     fi
                 done
@@ -528,9 +878,13 @@ interactive_setup_wizard() {
                 prompt_add_profile
                 ;;
             "E")
-                read -r -p "Enter profile number to edit (1-$PROFILE_COUNT): " idx
-                if [[ "$idx" =~ ^[0-9]+$ ]] && [[ "$idx" -ge 1 ]] && [[ "$idx" -le "$PROFILE_COUNT" ]]; then
-                    prompt_edit_profile $((idx - 1))
+                if [[ "$PROFILE_COUNT" -eq 1 ]]; then
+                    prompt_edit_profile 0
+                else
+                    read -r -p "Enter profile number to edit (1-$PROFILE_COUNT): " idx
+                    if [[ "$idx" =~ ^[0-9]+$ ]] && [[ "$idx" -ge 1 ]] && [[ "$idx" -le "$PROFILE_COUNT" ]]; then
+                        prompt_edit_profile $((idx - 1))
+                    fi
                 fi
                 ;;
             "R")
