@@ -37,7 +37,7 @@ irm https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.ps1 | 
 - [ ] Installer completes without errors
 - [ ] `%LOCALAPPDATA%\gitsetu\share` directory exists
 - [ ] `gitsetu.cmd` and `gitsetu.ps1` exist in `%LOCALAPPDATA%\gitsetu\bin`
-- [ ] `gitsetu --version` outputs `gitsetu v1.0.0` in PowerShell, CMD, and Windows Terminal
+- [ ] `gitsetu --version` outputs `gitsetu v1.1.0` in PowerShell, CMD, and Windows Terminal
 - [ ] `git setu --version` alias works identically
 
 ---

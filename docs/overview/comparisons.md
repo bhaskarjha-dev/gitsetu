@@ -1,83 +1,89 @@
 # Git Identity Tools: Comprehensive Comparison
 
-**An authoritative, deep-dive competitive matrix evaluating multi-identity Git managers across features, architecture, safety, and developer experience.**
+**An authoritative, evidence-backed evaluation of multi-identity Git managers across architecture, features, security guardrails, and developer experience.**
 
-Managing multiple directory-scoped Git identities securely is a foundational challenge. To help engineering organizations and security managers evaluate their options, this document provides an objective, side-by-side comparison of the six leading approaches to Git identity switching as of **September 2026 (v1.0.0 GA)**.
+Managing multiple directory-scoped Git identities securely across work, open-source, and personal contexts is a foundational engineering problem. To help developers and engineering teams make informed tooling decisions, this document provides an objective, side-by-side comparison of the leading Git identity tools based on verified repository data as of **September 2026 (v1.1.0)**.
 
 ---
 
-## Overall Composite Scores
+## Tool Overview
 
-Scores reflect a balanced evaluation of feature breadth, zero-trust reliability, user experience, community presence, and portability constraints.
-
-| Tool | Approach / Runtime | Composite Score | Feature Breadth | Ease of Use | Reliability | Community Stars | Portability |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| 🏆 **GitSetu** | **Zero-Dependency Bash Core** | **86 / 100** | **95%** | **80%** | **90%** | **★ 0** | **75%** |
-| **gitego** | Go Binary Switcher | **76 / 100** | 75% | 85% | 78% | ★ ~20 | 90% |
-| **karn** | Mature YAML Switcher (Go) | **68 / 100** | 40% | 85% | 85% | ★ 306 | 90% |
-| **gitch** | Feature-Rich TUI (Go) | **72 / 100** | 88% | 72% | 55% | ★ 5 | 90% |
-| **gh-switcher** | GitHub-Focused CLI (Go) | **60 / 100** | 60% | 72% | 50% | ★ 3 | 85% |
-| **Manual DIY** | Hand-Rolled `.ssh/config` | **54 / 100** | 100% | 20% | 80% | N/A | 100% |
+| Tool | Language / Runtime | Stars | Maintenance Status | Primary Mechanism |
+| :--- | :--- | :--- | :--- | :--- |
+| **GitSetu** | Pure Bash (3.2+) | Active | Actively Maintained | Native Git `includeIf` + OpenSSH `Include` |
+| **git-ego** | Go | ★ 111 | Actively Maintained | Native Git `includeIf` + Keychain PAT |
+| **gitch** | Go | ★ 7 | Actively Maintained | Custom rule engine (Path & Remote URL) |
+| **gh-switcher** | Shell | ★ 14 | Inactive | Directory memory + wrapper scripts |
+| **karn** | Go | ★ 305 | Unmaintained | YAML configuration + direct config updates |
+| **gguser** | Node.js (npm) | Active | Active | CLI wrapper + SSH profile switching |
+| **Manual DIY** | Shell / Config | N/A | Manual Maintenance | Hand-crafted `.gitconfig` & `~/.ssh/config` |
 
 ---
 
 ## Detailed Feature Matrix
 
-| Feature Capability | GitSetu | gitego | karn | gitch | gh-switch | Manual DIY |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Identity Switching Mechanics** | | | | | | |
-| Directory auto-switch (`cd` trigger) | ✓ | ✓ | ✓ | ✓ | ✓ | ~ |
-| Native Git `includeIf` integration | ✓ | ✓ | ✓ | ✓ | ~ | ✓ |
-| Deep directory path recursion | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Manual CLI profile override | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Global fallback identity safety | ✓ | ✓ | ~ | ✓ | ✓ | ✓ |
-| **SSH & Cryptography Orchestration** | | | | | | |
-| Automated `ed25519` key generation | ✓ | ~ | ~ | ~ | ✗ | ✗ |
-| Top-level OpenSSH `Include` pivot | ✓ | ~ | ~ | ✓ | ✗ | ✓ |
-| Native SSH commit signing (`gpgsign`) | ✓ | ~ | ✓ | ✓ | ✗ | ~ |
-| Hardware key bootstrapping (FIDO2) | ✓ | ✗ | ✗ | ✗ | ✗ | ~ |
-| Standard clone URLs (`git@github.com`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ |
-| **HTTPS & Credential Brokering** | | | | | | |
-| Namespaced PAT authentication routing | ✓ | ✓ | ~ | ✓ | ✓ | ✗ |
-| OS keychain integration (`security`) | ✓ | ✓ | ~ | ✓ | ✓ | ~ |
-| **Safety Guard Rails & Integrity** | | | | | | |
-| Pre-commit Identity Guard (fail-closed) | ✓ | ~ | ✓ | ✓ | ✗ | ✗ |
-| Idempotent managed block parsing | ✓ | ✓ | ✓ | ~ | ~ | ✗ |
-| Atomic configuration writes | ✓ | ✓ | ✓ | ~ | ~ | ✓ |
-| **Diagnostics & Team Operations** | | | | | | |
-| Built-in `doctor` configuration scanner | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| Hyper-optimized prompt integration | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ |
-| Encrypted state export & restoration | ✓ | ~ | ✗ | ✗ | ✗ | ✗ |
-| **Technical Footprint** | | | | | | |
-| Runtime dependency requirements | **None** | Go | Go | Go | Go | None |
-| Active maintenance lifecycle | **High** | High | Stale | High | Low | N/A |
+| Feature Capability | GitSetu | git-ego | gitch | gh-switcher | karn | gguser | Manual DIY |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Identity Switching Mechanics** | | | | | | | |
+| Directory auto-switch (`cd` trigger) | ✓ | ✓ | ✓ | ✓ | ✓ | ~ | ~ |
+| Native Git `includeIf` integration | ✓ | ✓ | ✗ | ~ | ✗ | ~ | ✓ |
+| Remote URL auto-matching | ✗ | ✗ | **✓** | ✗ | ✗ | ✗ | ✗ |
+| Manual CLI profile override / switch | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Ephemeral identity runner (`run <prof> -- <cmd>`) | **✓** | ✗ | ✗ | ✗ | ✗ | ✗ | ~ |
+| **SSH & Cryptography Orchestration** | | | | | | | |
+| Automated SSH key generation | ✓ (Ed25519) | ~ (Import) | **✓** (Ed25519/RSA) | ✗ | ✗ | ✓ | ✗ |
+| Automated `ssh-agent` loading | **✓** | ✗ | **✓** | ✗ | ✗ | ✗ | ✗ |
+| OpenSSH `Include` directive pivot | **✓** | ~ | ~ | ✗ | ~ | ✗ | ✓ |
+| Corporate firewall Port 443 fallback | **✓** | ✗ | ✗ | ✗ | ✗ | ✗ | ~ |
+| SSH commit signing (`gpgsign`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ~ |
+| Hardware key bootstrapping (FIDO2) | **✓** | ✗ | ✗ | ✗ | ✗ | ✗ | ~ |
+| Standard clone URLs (`git@github.com`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ |
+| **Safety Guard Rails & Integrity** | | | | | | | |
+| Fail-closed Pre-Commit Identity Guard | **✓** (Global) | ✓ (Per-repo) | ✓ (Warn/Block) | ✓ | ✗ | ✗ | ✗ |
+| Hook passthrough (Husky / Lefthook) | **✓** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Commit history identity audit | ✗ | ✗ | **✓** | ✗ | ✗ | ✗ | ✗ |
+| Self-healing configuration repair | **✓** (`--repair`) | **✓** (`--repair`) | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Built-in diagnostic doctor | ✓ | ✓ | ✗ | ✓ | ✗ | ✗ | ✗ |
+| **Backup & Distribution** | | | | | | | |
+| Encrypted state export & restore | **✓** (AES-256) | ~ (Unencrypted) | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Zero runtime dependencies | **✓** (Bash 3.2+) | ✗ (Go) | ✗ (Go) | ✓ (Shell) | ✗ (Go) | ✗ (Node) | **✓** |
+| Distribution channels | 8 channels | 4 channels | Go install | Git clone | Go install | npm | N/A |
 
-*(✓ = fully supported, ~ = partial / manual intervention required, ✗ = unsupported)*
+*(✓ = fully supported, ~ = partial support or manual intervention required, ✗ = unsupported)*
 
 ---
 
-## Strategic Deep Dive: Best For Each Use Case
+## Where Competitors Excel
 
-### 🏆 Best Overall: GitSetu
-GitSetu covers the widest operational scope end-to-end. It is the only platform evaluated that seamlessly combines **automated SSH key generation**, directory-scoped multi-key routing, native OS credential brokering, fail-closed pre-commit guard enforcement, encrypted state backups, and interactive diagnostics into a single, cohesive engine. 
+An objective look at features and capabilities where alternative tools offer distinct advantages:
 
-**The Trade-off:** As a new entrant (★ 0 stars), GitSetu has a smaller community footprint than mature Go-based tools. However, it ships with the widest distribution coverage at launch: npm, Homebrew, Scoop, WinGet, AUR, Nix, GitHub CLI extension, and native shell installers for both POSIX and PowerShell.
+### 1. `gitch` ([orzazade/gitch](https://github.com/orzazade/gitch))
+- **Commit History Audit (`gitch audit`):** Scans existing repository commit history for commits authored under the wrong email address or name, allowing retrospective compliance auditing.
+- **Remote URL Matching:** Switches identities not only by local directory path, but also by matching repository remote URLs (e.g. `github.com/work-org/*`), which is valuable when repositories are stored outside designated directories.
+- **VS Code Extension:** Offers an integrated status-bar extension that visually displays the current active Git identity inside the editor.
 
-### 🪟 Windows Environments
-While tools like `gitego` compile native `.exe` binaries, GitSetu provides first-class, production-grade Windows support under Git Bash with native integration across PowerShell, CMD, Windows Terminal, and VS Code. GitSetu automatically compiles canonical Windows paths (`C:/path`), configures case-insensitive `gitdir/i:` directives, binds natively to **Windows Credential Manager (GCM)** via DPAPI, and provides a host-isolated **Windows Sandbox Test Harness** (`sandbox/`) for zero-risk verification.
+### 2. `git-ego` ([bgreenwell/git-ego](https://github.com/bgreenwell/git-ego))
+- **Repository Assertion Files (`.gitego`):** Teams can commit a `.gitego` file directly into a shared repository to enforce that all contributors use the expected profile or email domain.
+- **Native Go Binary:** Compiles to a single static binary without dependency on system shell interpreters.
+- **OS Keychain PAT Helper:** Direct integration with OS keychain systems via Git credential-helper protocols for Personal Access Tokens.
 
-### 🏛️ Best for Battle-Tested Simplicity: `karn`
-With over 300+ GitHub stars and years of historical deployment stability, `karn` provides exceptionally reliable directory-to-identity switching via clean YAML definitions. 
-**The Trade-off:** Extremely narrow functional footprint. It acts purely as a switcher, omitting cryptographic key bootstrapping, agent virtualization handling, and secure token isolation entirely.
+### 3. `karn` ([prydonius/karn](https://github.com/prydonius/karn))
+- **Simplicity & Track Record:** Established tool with a long history (★ 305) and a straightforward YAML configuration format for developers who prefer minimal, declarative mapping without cryptographic key management.
 
-### 🛡️ Most Control & Auditability: Manual DIY
-Writing conditional `includeIf` directives and manually crafting namespaced `~/.ssh/config` host alias blocks provides absolute zero-black-box execution. 
-**The Trade-off:** Imposes brutal operational friction. Requires developers to remember specialized remote formatting strings (`git clone git@github-work:org/repo.git`), scales poorly across enterprise developer fleets, and provides zero dynamic feedback inside the editor or terminal shell.
+### 4. `gguser` ([withshubh/gguser](https://github.com/withshubh/gguser))
+- **npm Ecosystem Integration:** Trivial to install and update for frontend and full-stack teams already working in JavaScript/Node.js environments (`npm i -g gguser`).
+
+### 5. Indirect Alternatives
+- **`direnv`:** Path-based environment variable loader (`.envrc`). Excellent for general-purpose environment switching (setting `GIT_AUTHOR_EMAIL`, `GIT_SSH_COMMAND`), though not specialized for Git config or SSH key orchestration.
+- **1Password SSH Agent:** Manages SSH keys with biometric unlocking and per-repository key assignment, focusing strictly on SSH authentication rather than Git configuration or commit metadata.
 
 ---
 
-## Conclusion
+## Where GitSetu Excels
 
-If you require seamless, automated identity security across POSIX-compliant platforms (macOS, Linux, WSL) and native Windows environments with absolute zero runtime dependencies, **GitSetu stands alone as the category winner.** 
-
-If native compiled distribution targets or integrated IDE extensions represent hard operational blockers for your team, reviewing alternative Go tools or consulting our upcoming feature milestones provides clear planning direction.
+1. **Zero Runtime Dependencies:** Built strictly on POSIX Bash 3.2+ with core utilities. Requires no Go compiler, no Node.js runtime, and no external package managers.
+2. **End-to-End SSH Automation:** Generates Ed25519 keys, automatically manages `ssh-agent` loading with socket liveness checks, provides corporate firewall Port 443 fallback for restricted networks, and handles one-click GitHub public key upload via `gh`.
+3. **Fail-Closed Pre-Commit Guard with Hook Chaining:** Enforces email and identity correctness system-wide via a global `core.hooksPath` pre-commit guard, while transparently passing through execution to project hooks (Husky, Lefthook, pre-commit framework).
+4. **Encrypted State Vaults:** AES-256 encrypted backups allow developers to securely export and restore their complete identity configurations across workstations.
+5. **Robust Cross-Platform Engine:** Rigorously tested across macOS, Linux, WSL, and Git Bash on Windows with automated CRLF self-healing, Windows path normalization (`C:/`), and Windows Credential Manager integration.
+6. **Self-Healing Diagnostics (`gitsetu doctor --repair`):** Detects and automatically restores missing Git managed blocks, SSH Include directives, and agent keys with a single command.

@@ -143,7 +143,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Once installed, verify that GitSetu is available:
 ```bash
 gitsetu --version
-# Outputs: gitsetu v1.0.0
+# Outputs: gitsetu v1.1.0
 ```
 
 ### Instant 1-Second Setup
