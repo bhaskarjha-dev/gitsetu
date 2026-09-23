@@ -43,6 +43,7 @@ test_doctor_detects_missing_managed_blocks() {
     # shellcheck disable=SC2088
     assert_contains "$output" "~/.gitconfig: " "checks gitconfig" || return 1
     assert_contains "$output" "WARNING (Managed blocks missing)" "detects missing block in gitconfig" || return 1
+    assert_contains "$output" "gitsetu doctor --repair" "suggests repair when issues found" || return 1
 }
 
 test_doctor_success_state() {
@@ -70,6 +71,7 @@ EOF
     assert_contains "$output" "~/.gitconfig: OK" "gitconfig ok" || return 1
     # shellcheck disable=SC2088
     assert_contains "$output" "~/.ssh/config: OK" "ssh config ok" || return 1
+    assert_not_contains "$output" "gitsetu doctor --repair" "does not suggest repair when clean" || return 1
 }
 
 printf '\n%btest_doctor.sh%b\n' "$T_BOLD" "$T_RESET"

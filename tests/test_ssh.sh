@@ -129,11 +129,23 @@ test_generate_key_fido2_fallback() {
     assert_file_exists "$key_path" "fallback key was generated at requested path" || return 1
 }
 
+test_ssh_host_block_port443() {
+    GITSETU_PORT443_NEEDED=1
+    local block
+    block=$(build_ssh_host_block "work" "github.com")
+    unset GITSETU_PORT443_NEEDED
+
+    assert_contains "$block" "Port 443" "has Port 443" &&
+    assert_contains "$block" "HostName ssh.github.com" "has ssh.github.com HostName" &&
+    assert_contains "$block" "Host github-work" "has Host alias"
+}
+
 # --- Run ---
 
 printf '\n%btest_ssh.sh%b\n' "$T_BOLD" "$T_RESET"
 run_test "SSH host block has correct format" test_ssh_host_block_format
 run_test "SSH host block uses custom hostname" test_ssh_host_block_custom_host
+run_test "SSH host block with Port 443 fallback" test_ssh_host_block_port443
 run_test "generate_ssh_key creates key files" test_generate_key_creates_files
 run_test "generated key has 600 permissions" test_generate_key_permissions
 run_test "dry run does not create keys" test_generate_key_dry_run

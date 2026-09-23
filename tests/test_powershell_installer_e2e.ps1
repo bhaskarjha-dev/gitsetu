@@ -50,8 +50,8 @@ Write-Host "  [OK] Shims and repository structure successfully created." -Foregr
 Write-Host "Step 3: Testing gitsetu.cmd shim..." -ForegroundColor Yellow
 $cmdOut = & cmd.exe /c "`"$cmdShim`" --version"
 Write-Host "  CMD output: $cmdOut"
-if ($cmdOut -notmatch "gitsetu v1.0.0") {
-    Write-Error "gitsetu.cmd output did not match 'gitsetu v1.0.0'"
+if ($cmdOut -notmatch "gitsetu v1.1.0") {
+    Write-Error "gitsetu.cmd output did not match 'gitsetu v1.1.0'"
     exit 1
 }
 Write-Host "  [OK] gitsetu.cmd executed successfully!" -ForegroundColor Green
@@ -60,8 +60,8 @@ Write-Host "  [OK] gitsetu.cmd executed successfully!" -ForegroundColor Green
 Write-Host "Step 4: Testing gitsetu.ps1 shim..." -ForegroundColor Yellow
 $psOut = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$psShim" --version
 Write-Host "  PowerShell output: $psOut"
-if ($psOut -notmatch "gitsetu v1.0.0") {
-    Write-Error "gitsetu.ps1 output did not match 'gitsetu v1.0.0'"
+if ($psOut -notmatch "gitsetu v1.1.0") {
+    Write-Error "gitsetu.ps1 output did not match 'gitsetu v1.1.0'"
     exit 1
 }
 Write-Host "  [OK] gitsetu.ps1 executed successfully!" -ForegroundColor Green

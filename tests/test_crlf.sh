@@ -163,7 +163,7 @@ test_gitsetu_crlf_e2e_reexec() {
         out=$(bash "$crlf_exe" --version 2>&1) || rc=$?
         rm -f "$crlf_exe"
         assert_equals "0" "$rc" "CRLF gitsetu --version exits 0" || return 1
-        assert_contains "$out" "gitsetu v1.0.0" "CRLF gitsetu prints version output" || return 1
+        assert_contains "$out" "gitsetu v1.1.0" "CRLF gitsetu prints version output" || return 1
     fi
 }
 
@@ -245,7 +245,7 @@ EOF
     local out="" rc=0
     out=$(PATH="$mock_bin:$PATH" bash "$gitsetu_exe" --version 2>&1) || rc=$?
     assert_equals "0" "$rc" "Clean LF gitsetu executes without tr in PATH"
-    assert_contains "$out" "gitsetu v1.0.0" "Version displayed without tr"
+    assert_contains "$out" "gitsetu v1.1.0" "Version displayed without tr"
 
     # 2. CRLF-contaminated execution without tr
     local crlf_exe="$repo_dir/.gitsetu_crlf_test_no_tr"
@@ -255,7 +255,7 @@ EOF
     out=$(PATH="$mock_bin:$PATH" bash "$crlf_exe" --version 2>&1) || rc=$?
     rm -f "$crlf_exe"
     assert_equals "0" "$rc" "CRLF gitsetu executes without tr in PATH"
-    assert_contains "$out" "gitsetu v1.0.0" "Version displayed for CRLF script without tr"
+    assert_contains "$out" "gitsetu v1.1.0" "Version displayed for CRLF script without tr"
 
     rm -rf "$mock_bin"
 }

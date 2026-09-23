@@ -113,7 +113,7 @@ test_windows_powershell_installer_pipeline() {
     # 3. Verify execution via cmd.exe
     local cmd_out
     cmd_out=$(MSYS2_ARG_CONV_EXCL="*" cmd.exe /c "$win_sandbox_appdata/gitsetu/bin/gitsetu.cmd" --version 2>&1 || true)
-    if [[ "$cmd_out" != *"gitsetu v1.0.0"* ]]; then
+    if [[ "$cmd_out" != *"gitsetu v1.1.0"* ]]; then
         echo "Failed: gitsetu.cmd --version output: $cmd_out"
         rm -rf "$sandbox_appdata"; return 1
     fi
@@ -121,7 +121,7 @@ test_windows_powershell_installer_pipeline() {
     # 4. Verify execution via powershell.exe
     local ps_out
     ps_out=$(powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$win_sandbox_appdata/gitsetu/bin/gitsetu.ps1" --version 2>&1 || true)
-    if [[ "$ps_out" != *"gitsetu v1.0.0"* ]]; then
+    if [[ "$ps_out" != *"gitsetu v1.1.0"* ]]; then
         echo "Failed: gitsetu.ps1 --version output: $ps_out"
         rm -rf "$sandbox_appdata"; return 1
     fi

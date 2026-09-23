@@ -36,7 +36,7 @@ else
     pkg_bin_gitsetu=$(node -e "console.log(require('./package.json').bin.gitsetu)")
     pkg_bin_git_setu=$(node -e "console.log(require('./package.json').bin['git-setu'])")
 
-    if [ "$pkg_name" = "gitsetu" ] && [ "$pkg_version" = "1.0.0" ] && [ "$pkg_bin_gitsetu" = "./bin/gitsetu.js" ] && [ "$pkg_bin_git_setu" = "./bin/gitsetu.js" ]; then
+    if [ "$pkg_name" = "gitsetu" ] && [ "$pkg_version" = "1.1.0" ] && [ "$pkg_bin_gitsetu" = "./bin/gitsetu.js" ] && [ "$pkg_bin_git_setu" = "./bin/gitsetu.js" ]; then
         pass "package.json schema & metadata valid"
     else
         fail "package.json schema" "name=$pkg_name, ver=$pkg_version, bin=$pkg_bin_gitsetu"
@@ -45,8 +45,8 @@ fi
 
 # 2. Test node bin/gitsetu.js --version
 ver_out=$(node "$REPO_DIR/bin/gitsetu.js" --version 2>/dev/null || echo "")
-if [[ "$ver_out" == *"gitsetu v1.0.0"* ]]; then
-    pass "node bin/gitsetu.js --version output matches v1.0.0"
+if [[ "$ver_out" == *"gitsetu v1.1.0"* ]]; then
+    pass "node bin/gitsetu.js --version output matches v1.1.0"
 else
     fail "node bin/gitsetu.js --version" "output was '$ver_out'"
 fi
@@ -85,7 +85,7 @@ if command -v npm >/dev/null 2>&1; then
 
         # Execute extracted bin/gitsetu.js in isolation
         ext_ver=$(node extracted/package/bin/gitsetu.js --version 2>/dev/null || echo "")
-        if [[ "$ext_ver" == *"gitsetu v1.0.0"* ]]; then
+        if [[ "$ext_ver" == *"gitsetu v1.1.0"* ]]; then
             pass "extracted npm package executes independently"
         else
             fail "extracted npm package" "failed to run --version in isolation (output: '$ext_ver')"

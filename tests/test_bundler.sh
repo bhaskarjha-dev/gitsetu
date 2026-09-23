@@ -56,7 +56,7 @@ fi
 
 # Test --version in isolation
 ver_out=$("$TEST_TMP/gitsetu" --version 2>/dev/null || echo "")
-if [[ "$ver_out" == *"gitsetu v1.0.0"* ]]; then
+if [[ "$ver_out" == *"gitsetu v1.1.0"* ]]; then
     pass "standalone bundle runs --version without lib/ directory"
 else
     fail "standalone --version" "output was '$ver_out'"

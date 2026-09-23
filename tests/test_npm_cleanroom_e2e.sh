@@ -63,8 +63,8 @@ fi
 
 # 3. Test npx execution directly from tarball
 NPX_VER=$(npx --yes --package "$TARBALL" gitsetu --version 2>&1 || true)
-if [[ "$NPX_VER" == *"gitsetu v1.0.0"* ]]; then
-    pass "npx execution from tarball matches 'gitsetu v1.0.0'"
+if [[ "$NPX_VER" == *"gitsetu v1.1.0"* ]]; then
+    pass "npx execution from tarball matches 'gitsetu v1.1.0'"
 else
     fail "npx execution" "Output mismatch: '$NPX_VER'"
 fi
@@ -111,7 +111,7 @@ elif [ -n "$INSTALLED_BIN" ]; then
     VER_CHECK=$("$INSTALLED_BIN" --version 2>&1 || true)
 fi
 
-if [[ "$VER_CHECK" == *"gitsetu v1.0.0"* ]]; then
+if [[ "$VER_CHECK" == *"gitsetu v1.1.0"* ]]; then
     pass "Installed package entrypoint runs correctly: $VER_CHECK"
 else
     fail "entrypoint execution" "Unexpected output: $VER_CHECK"
@@ -128,7 +128,7 @@ RUN_CMD() {
 
 # F1: --version
 OUT_V=$(RUN_CMD --version | tr -d '\r')
-if [[ "$OUT_V" == *"v1.0.0"* ]]; then
+if [[ "$OUT_V" == *"v1.1.0"* ]]; then
     pass "Feature 1: --version"
 else
     fail "Feature 1" "$OUT_V"

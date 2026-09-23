@@ -36,8 +36,8 @@ else
     fail "flake inputs" "nixpkgs input missing"
 fi
 
-if grep -q 'pname = "gitsetu"' "$FLAKE_FILE" && grep -q 'version = "1.0.0"' "$FLAKE_FILE"; then
-    pass "flake package declares gitsetu v1.0.0"
+if grep -q 'pname = "gitsetu"' "$FLAKE_FILE" && grep -q 'version = "1.1.0"' "$FLAKE_FILE"; then
+    pass "flake package declares gitsetu v1.1.0"
 else
     fail "flake package" "pname or version mismatch"
 fi

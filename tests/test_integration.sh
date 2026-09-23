@@ -188,6 +188,20 @@ test_identity_preservation_on_reload() {
     assert_equals "Custom Pro Name" "$final_name" "custom name is preserved on disk after rewrite"
 }
 
+test_integration_execute_blueprint_noninteractive_summary() {
+    rm -rf "$HOME/.ssh" "$GITSETU_CONFIG_DIR"
+    setup_two_profiles
+
+    local output
+    output=$(execute_blueprint 2>&1 || true)
+
+    assert_contains "$output" "Setup Complete" "summary header rendered" || return 1
+    assert_contains "$output" "Setup complete! You're ready to go." "summary success message" || return 1
+    assert_contains "$output" "Quick Reference" "quick reference rendered" || return 1
+    assert_contains "$output" "gitsetu status" "quick reference status command" || return 1
+    assert_contains "$output" "gitsetu doctor" "quick reference doctor command" || return 1
+}
+
 # --- Run ---
 
 printf '\n%btest_integration.sh%b\n' "$T_BOLD" "$T_RESET"
@@ -203,4 +217,5 @@ run_test "re-run is idempotent (no duplicates)" test_integration_idempotent_reru
 run_test "backups are created during re-run" test_integration_backup_created
 run_test "gitsetu run exports correctly" test_integration_gitsetu_run
 run_test "identity preservation on headless reload" test_identity_preservation_on_reload
+run_test "execute_blueprint non-interactive completion summary" test_integration_execute_blueprint_noninteractive_summary
 print_results "Integration tests"

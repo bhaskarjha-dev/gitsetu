@@ -43,8 +43,8 @@ pkgname=$(grep "^pkgname=" "$PKGBUILD" | cut -d= -f2)
 pkgver=$(grep "^pkgver=" "$PKGBUILD" | cut -d= -f2)
 pkgrel=$(grep "^pkgrel=" "$PKGBUILD" | cut -d= -f2)
 
-if [ "$pkgname" = "gitsetu" ] && [ "$pkgver" = "1.0.0" ] && [ "$pkgrel" = "1" ]; then
-    pass "PKGBUILD package metadata valid (gitsetu v1.0.0-1)"
+if [ "$pkgname" = "gitsetu" ] && [ "$pkgver" = "1.1.0" ] && [ "$pkgrel" = "1" ]; then
+    pass "PKGBUILD package metadata valid (gitsetu v1.1.0-1)"
 else
     fail "PKGBUILD metadata" "name=$pkgname, ver=$pkgver, rel=$pkgrel"
 fi

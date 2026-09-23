@@ -49,7 +49,7 @@ fi
 
 # 2. Verify binary execution
 BIN_VER=$("$INSTALL_DIR/bin/gitsetu" --version 2>&1 || true)
-if [[ "$BIN_VER" == *"gitsetu v1.0.0"* ]]; then
+if [[ "$BIN_VER" == *"gitsetu v1.1.0"* ]]; then
     pass "Installed binary executes cleanly: $BIN_VER"
 else
     fail "binary execution" "Output was '$BIN_VER'"

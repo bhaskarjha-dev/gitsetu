@@ -37,8 +37,8 @@ fi
 
 # 2. Test --version delegation
 ver_out=$(bash "$GH_EXT" --version 2>/dev/null || echo "")
-if [[ "$ver_out" == *"gitsetu v1.0.0"* ]]; then
-    pass "gh-gitsetu --version delegates and returns v1.0.0"
+if [[ "$ver_out" == *"gitsetu v1.1.0"* ]]; then
+    pass "gh-gitsetu --version delegates and returns v1.1.0"
 else
     fail "gh-gitsetu --version" "output was '$ver_out'"
 fi

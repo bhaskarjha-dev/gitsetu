@@ -143,6 +143,37 @@ EOF
     assert_not_contains "$output" "FAILED" "guard allowed commit using the dynamically read email" || return 1
 }
 
+test_guard_prompt_bypassed_in_test_mode() {
+    rm -f "$GITSETU_HOOKS_DIR/pre-commit"
+    local should_prompt=0
+    if [[ ! -f "$GITSETU_HOOKS_DIR/pre-commit" ]] && [[ -z "${GITSETU_TEST:-}" ]]; then
+        should_prompt=1
+    fi
+    assert_equals "0" "$should_prompt" "guard prompt bypassed when GITSETU_TEST=1" || return 1
+}
+
+test_guard_prompt_skipped_if_already_installed() {
+    install_guard 2>/dev/null
+    assert_file_exists "$GITSETU_HOOKS_DIR/pre-commit" "hook exists" || return 1
+    local should_prompt=0
+    local saved_test="${GITSETU_TEST:-}"
+    unset GITSETU_TEST
+    if [[ ! -f "$GITSETU_HOOKS_DIR/pre-commit" ]] && [[ -z "${GITSETU_TEST:-}" ]]; then
+        should_prompt=1
+    fi
+    export GITSETU_TEST="${saved_test:-1}"
+    assert_equals "0" "$should_prompt" "guard prompt skipped when hook already installed" || return 1
+}
+
+test_guard_prompt_default_yes() {
+    rm -f "$GITSETU_HOOKS_DIR/pre-commit"
+    local result=1
+    if printf "\n" | confirm "Enable pre-commit identity guard?" "y" >/dev/null 2>&1; then
+        result=0
+    fi
+    assert_equals "0" "$result" "confirm defaults to yes on empty input" || return 1
+}
+
 printf '\n%btest_guard.sh%b\n' "$T_BOLD" "$T_RESET"
 run_test "install_guard links hook" test_install_guard
 run_test "guard blocks mismatched email" test_guard_blocks_mismatch
@@ -150,4 +181,7 @@ run_test "guard allows matched email" test_guard_allows_match
 run_test "guard blocks missing config" test_guard_blocks_missing_config
 run_test "guard passes through to local hooks" test_guard_pass_through
 run_test "guard dynamically reads email to prevent desync" test_guard_dual_state_desync_recovery
+run_test "guard prompt bypassed in test mode" test_guard_prompt_bypassed_in_test_mode
+run_test "guard prompt skipped if already installed" test_guard_prompt_skipped_if_already_installed
+run_test "guard prompt defaults to yes" test_guard_prompt_default_yes
 print_results "Guard tests"

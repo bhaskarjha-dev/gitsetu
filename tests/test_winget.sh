@@ -20,7 +20,7 @@ fail() {
 
 echo "=== Running tests/test_winget.sh ==="
 
-MANIFEST_DIR="$REPO_DIR/packaging/winget/manifests/b/BhaskarJha/GitSetu/1.0.0"
+MANIFEST_DIR="$REPO_DIR/packaging/winget/manifests/b/BhaskarJha/GitSetu/1.1.0"
 VER_FILE="$MANIFEST_DIR/BhaskarJha.GitSetu.yaml"
 LOC_FILE="$MANIFEST_DIR/BhaskarJha.GitSetu.locale.en-US.yaml"
 INS_FILE="$MANIFEST_DIR/BhaskarJha.GitSetu.installer.yaml"
@@ -47,8 +47,8 @@ else
     fail "PackageIdentifier" "mismatch across manifest files ($id_ver / $id_loc / $id_ins)"
 fi
 
-if [ "$v_ver" = "1.0.0" ] && [ "$v_loc" = "1.0.0" ] && [ "$v_ins" = "1.0.0" ]; then
-    pass "PackageVersion consistency (1.0.0)"
+if [ "$v_ver" = "1.1.0" ] && [ "$v_loc" = "1.1.0" ] && [ "$v_ins" = "1.1.0" ]; then
+    pass "PackageVersion consistency (1.1.0)"
 else
     fail "PackageVersion" "mismatch across manifest files ($v_ver / $v_loc / $v_ins)"
 fi

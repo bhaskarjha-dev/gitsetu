@@ -12,7 +12,9 @@ GITSETU_EXE="${GITSETU_EXE%$'\r'}"
 test_cli_no_args_shows_help() {
     local output
     output=$(bash "$GITSETU_EXE" 2>&1 || true)
-    assert_contains "$output" "Usage:" "no args prints usage" || return 1
+    assert_contains "$output" "One command. All identities. Every machine." "shows brief usage tagline" || return 1
+    assert_contains "$output" "Usage: gitsetu setup" "no args prints usage" || return 1
+    assert_contains "$output" "gitsetu v1.1.0" "shows version string in brief usage" || return 1
 }
 
 test_cli_invalid_command() {

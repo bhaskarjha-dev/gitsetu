@@ -26,7 +26,7 @@ test_paths_with_spaces_and_special_chars() {
     local out
     out=$(bash "$REPO_DIR/gitsetu" add weird "Weird User" "weird@example.com" "$weird_dir" 2>&1)
 
-    assert_contains "$out" "Setup complete" "Profile added with spaces and special chars" || return 1
+    assert_contains "$out" "Setup complete! You're ready to go." "Profile added and completion summary rendered" || return 1
 
     # Verify profiles.conf stores path correctly
     assert_file_contains "$GITSETU_PROFILES_CONF" "weird::" "profile recorded in registry" || return 1
@@ -84,7 +84,7 @@ test_path_with_single_quote() {
 
     local out
     out=$(bash "$REPO_DIR/gitsetu" add oreilly "Editor" "editor@oreilly.com" "$quote_dir" 2>&1)
-    assert_contains "$out" "Setup complete" "Profile added with single quote in directory path" || return 1
+    assert_contains "$out" "Setup complete! You're ready to go." "Profile added and completion summary rendered" || return 1
 
     pushd "$quote_dir" >/dev/null
     git init -q

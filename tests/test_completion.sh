@@ -25,6 +25,22 @@ test_completion_sources() {
     return 0
 }
 
+test_completion_doctor_repair() {
+    local script
+    script="$(dirname "${BASH_SOURCE[0]}")/../lib/completion.sh"
+    # shellcheck disable=SC1090
+    source "$script"
+
+    COMP_WORDS=("gitsetu" "doctor" "")
+    COMP_CWORD=2
+    _gitsetu
+    local reply_str="${COMPREPLY[*]}"
+    assert_contains "$reply_str" "--repair" "doctor completions include --repair" || return 1
+    assert_contains "$reply_str" "--dry-run" "doctor completions include --dry-run" || return 1
+}
+
 printf '\n%btest_completion.sh%b\n' "$T_BOLD" "$T_RESET"
 run_test "completion script sources cleanly" test_completion_sources
+run_test "completion includes doctor --repair and --dry-run" test_completion_doctor_repair
 print_results "Completion tests"
+

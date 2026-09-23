@@ -56,7 +56,7 @@ $testManifest = Join-Path $tempDir "gitsetu_scoop_test.json"
 
 $manifestContent = @"
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Zero-trust multi-account Git identity orchestrator",
   "homepage": "https://gitsetu.bhaskarjha.dev",
   "license": "MIT",
@@ -95,7 +95,7 @@ Write-Host "  gitsetu:  $vCmd"
 $vAlt = & cmd.exe /c "git-setu --version"
 Write-Host "  git-setu: $vAlt"
 
-if ($vCmd -notmatch "gitsetu v1.0.0" -or $vAlt -notmatch "gitsetu v1.0.0") {
+if ($vCmd -notmatch "gitsetu v1.1.0" -or $vAlt -notmatch "gitsetu v1.1.0") {
     Write-Error "Scoop shim execution failed"
     exit 1
 }
