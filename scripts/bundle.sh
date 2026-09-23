@@ -24,7 +24,7 @@ cat <<EOF >> "$TEMP_BUNDLE"
 
 # ==============================================================================
 # GitSetu Standalone Monolith Bundle
-# Version: 1.0.0
+# Version: 1.1.0
 # Zero-dependency, single-file distribution for direct curl execution.
 # https://github.com/bhaskarjha-dev/gitsetu
 # ==============================================================================

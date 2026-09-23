@@ -24,7 +24,7 @@ This directory contains package manager manifests, compilation scripts, and form
   ```
 
 ### 3. Windows — Microsoft WinGet (`packaging/winget/`)
-- **Manifest Directory:** `packaging/winget/manifests/b/BhaskarJha/GitSetu/1.0.0/`
+- **Manifest Directory:** `packaging/winget/manifests/b/BhaskarJha/GitSetu/1.1.0/`
   - Version: `BhaskarJha.GitSetu.yaml`
   - Installer: `BhaskarJha.GitSetu.installer.yaml`
   - Locale: `BhaskarJha.GitSetu.locale.en-US.yaml`

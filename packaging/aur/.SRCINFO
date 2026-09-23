@@ -1,6 +1,6 @@
 pkgbase = gitsetu
 	pkgdesc = Zero-trust multi-account Git identity orchestrator
-	pkgver = 1.0.0
+	pkgver = 1.1.0
 	pkgrel = 1
 	url = https://gitsetu.bhaskarjha.dev
 	arch = any
@@ -9,7 +9,7 @@ pkgbase = gitsetu
 	depends = git
 	depends = openssh
 	optdepends = libfido2: FIDO2 / YubiKey hardware key support
-	source = gitsetu-1.0.0.tar.gz::https://github.com/bhaskarjha-dev/gitsetu/releases/download/v1.0.0/gitsetu-1.0.0.tar.gz
+	source = gitsetu-1.1.0.tar.gz::https://github.com/bhaskarjha-dev/gitsetu/releases/download/v1.1.0/gitsetu-1.1.0.tar.gz
 	sha256sums = af0a75748e5c55a71bf8007daff4966b56db6fab0ce3d201ed06e5737f9a28a5
 
 pkgname = gitsetu

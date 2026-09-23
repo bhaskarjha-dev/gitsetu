@@ -11,7 +11,7 @@
 # Version
 # ------------------------------------------------------------------------------
 
-GITSETU_VERSION="1.0.0"
+GITSETU_VERSION="1.1.0"
 
 # ------------------------------------------------------------------------------
 # Normalize environment paths on Windows (converts backslashes to forward slashes)

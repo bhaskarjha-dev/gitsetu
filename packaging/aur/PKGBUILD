@@ -1,6 +1,6 @@
 # Maintainer: Bhaskar Jha <me@bhaskarjha.dev>
 pkgname=gitsetu
-pkgver=1.0.0
+pkgver=1.1.0
 pkgrel=1
 pkgdesc="Zero-trust multi-account Git identity orchestrator"
 arch=('any')

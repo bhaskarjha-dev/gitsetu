@@ -1,7 +1,7 @@
 class Gitsetu < Formula
   desc "Zero-trust multi-account Git identity orchestrator"
   homepage "https://gitsetu.bhaskarjha.dev"
-  url "https://github.com/bhaskarjha-dev/gitsetu/releases/download/v1.0.0/gitsetu-1.0.0.tar.gz"
+  url "https://github.com/bhaskarjha-dev/gitsetu/releases/download/v1.1.0/gitsetu-1.1.0.tar.gz"
   sha256 "af0a75748e5c55a71bf8007daff4966b56db6fab0ce3d201ed06e5737f9a28a5"
   license "MIT"
 
@@ -22,7 +22,7 @@ class Gitsetu < Formula
   end
 
   test do
-    assert_match "gitsetu v1.0.0", shell_output("#{bin}/gitsetu --version")
-    assert_match "gitsetu v1.0.0", shell_output("#{bin}/git-setu --version")
+    assert_match "gitsetu v1.1.0", shell_output("#{bin}/gitsetu --version")
+    assert_match "gitsetu v1.1.0", shell_output("#{bin}/git-setu --version")
   end
 end
