@@ -203,7 +203,7 @@ fi
 
 # ==============================================================================
 # GitSetu Standalone Monolith Bundle
-# Version: 1.0.0
+# Version: 1.1.0
 # Zero-dependency, single-file distribution for direct curl execution.
 # https://github.com/bhaskarjha-dev/gitsetu
 # ==============================================================================
@@ -224,7 +224,7 @@ export GITSETU_STANDALONE=1
 # Version
 # ------------------------------------------------------------------------------
 
-GITSETU_VERSION="1.0.0"
+GITSETU_VERSION="1.1.0"
 
 # ------------------------------------------------------------------------------
 # Normalize environment paths on Windows (converts backslashes to forward slashes)
@@ -700,7 +700,8 @@ check_prerequisites() {
 }
 
 # ------------------------------------------------------------------------------
-# get_ssh_agent_advice — Returns platform-specific ssh-agent setup instructions
+# get_ssh_agent_advice — [DEPRECATED in v1.1.0 in favor of auto_register_ssh_keys]
+# Returns platform-specific ssh-agent setup instructions. Retained for backward compat.
 # ------------------------------------------------------------------------------
 get_ssh_agent_advice() {
     case "$GITSETU_OS" in
@@ -1783,7 +1784,18 @@ build_ssh_host_block() {
     local prefix
     prefix=$(printf '%s' "$hostname" | cut -d'.' -f1)
 
-    cat <<EOF
+    if [[ "${GITSETU_PORT443_NEEDED:-0}" -eq 1 ]] && [[ "$hostname" == *"github"* ]]; then
+        cat <<EOF
+Host ${prefix}-${label}
+    HostName ssh.github.com
+    Port 443
+    User git
+    IdentityFile ${portable_key}
+    IdentitiesOnly yes
+    AddKeysToAgent yes
+EOF
+    else
+        cat <<EOF
 Host ${prefix}-${label}
     HostName ${hostname}
     User git
@@ -1791,6 +1803,7 @@ Host ${prefix}-${label}
     IdentitiesOnly yes
     AddKeysToAgent yes
 EOF
+    fi
 
     if [[ "${GITSETU_OS:-}" == "macos" || "${OSTYPE:-}" == "darwin"* ]]; then
         echo "    UseKeychain yes"
@@ -1907,6 +1920,102 @@ write_ssh_config() {
 }
 
 # ------------------------------------------------------------------------------
+# try_gh_key_upload — Upload an SSH public key to GitHub via gh CLI
+#
+# Locked Constraint: Scope discipline — only interacts with currently authenticated
+# account via `gh api user -q .login`. No multi-account detection, no auth switch.
+#
+# Usage: try_gh_key_upload "work" "/path/to/key.pub"
+# Returns: 0 on success or already registered, 1 on failure / skipped / declined
+# ------------------------------------------------------------------------------
+try_gh_key_upload() {
+    local label="$1"
+    local pubkey_path="$2"
+
+    # a) Check if gh is installed
+    if ! command -v gh >/dev/null 2>&1; then
+        return 1
+    fi
+
+    # Validate key file existence
+    if [[ ! -f "$pubkey_path" ]]; then
+        return 1
+    fi
+
+    # b) Get login username
+    local login
+    login=$(gh api user -q .login 2>/dev/null || true)
+    login="${login%$'\r'}"
+    if [[ -z "$login" ]]; then
+        return 1
+    fi
+
+    # Dry run check: suppress mutation
+    if [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
+        print_info "[DRY RUN] Would upload '$label' key to GitHub (@$login)"
+        return 0
+    fi
+
+    # c) If non-TTY or GITSETU_TEST is set, do NOT prompt interactively — skip or return 1 (unless mock is testing it)
+    if [[ -n "${GITSETU_TEST:-}" ]]; then
+        local is_mock=0
+        if [[ -n "${GITSETU_TEST_GH:-}" || -n "${GITSETU_TEST_GH_MOCK:-}" ]]; then
+            is_mock=1
+        elif [[ "$(type -t gh 2>/dev/null)" == "function" ]]; then
+            is_mock=1
+        elif [[ -n "${TEST_HOME:-}" && "$(command -v gh 2>/dev/null)" == *"$TEST_HOME"* ]]; then
+            is_mock=1
+        fi
+        if [[ "$is_mock" -eq 0 ]]; then
+            return 1
+        fi
+    elif [[ ! -t 0 ]]; then
+        return 1
+    fi
+
+    # d) Display: GitHub CLI: logged in as @$login
+    printf >&2 '  GitHub CLI: logged in as @%s\n' "$login"
+
+    # e) Confirm: confirm "Upload '$label' key to GitHub (@$login)?" "y"
+    # If user declines, return 1
+    if [[ -n "${GITSETU_TEST:-}" ]]; then
+        if [[ "${GITSETU_TEST_DECLINE:-0}" -eq 1 ]]; then
+            return 1
+        fi
+    else
+        if ! confirm "Upload '$label' key to GitHub (@$login)?" "y"; then
+            return 1
+        fi
+    fi
+
+    # f) Run upload
+    local hostname_str
+    hostname_str=$(hostname 2>/dev/null || echo "workstation")
+    hostname_str="${hostname_str%$'\r'}"
+    local upload_out
+    local exit_code=0
+    upload_out=$(gh ssh-key add "$pubkey_path" --title "GitSetu ($label - $hostname_str)" 2>&1) || exit_code=$?
+
+    # g) If exit_code == 0:
+    if [[ "$exit_code" -eq 0 ]]; then
+        print_success "Key successfully added to GitHub!"
+        return 0
+    fi
+
+    # h) If output matches "already in use" or "key is already in use":
+    local lower_out
+    lower_out=$(printf '%s' "$upload_out" | tr '[:upper:]' '[:lower:]')
+    if [[ "$lower_out" == *"already in use"* ]]; then
+        print_info "Key already registered on GitHub."
+        return 0
+    fi
+
+    # i) Any other error:
+    print_warning "Failed to upload key via GitHub CLI: $upload_out"
+    return 1
+}
+
+# ------------------------------------------------------------------------------
 # display_public_keys — Show all public keys with copy instructions
 #
 # Displays each key in a formatted box with the GitHub settings URL.
@@ -1919,10 +2028,16 @@ display_public_keys() {
     for (( i=0; i<PROFILE_COUNT; i++ )); do
         local label="${PROFILE_LABELS[$i]}"
         local email="${PROFILE_EMAILS[$i]}"
+        local provider="${PROFILE_PROVIDERS[$i]:-github.com}"
         local pubkey="${PROFILE_KEYS[$i]:-$HOME/.ssh/id_ed25519_${label}}.pub"
 
         if [[ -f "$pubkey" ]]; then
             print_key_box "$label" "$email" "$pubkey"
+            if [[ "$provider" == *"github"* ]]; then
+                if ! try_gh_key_upload "$label" "$pubkey"; then
+                    print_info "To add key manually, copy the key above and add at: https://github.com/settings/ssh/new"
+                fi
+            fi
         else
             print_warning "Key not found for '$label': $pubkey"
         fi
@@ -1934,6 +2049,214 @@ display_public_keys() {
     printf >&2 "    git clone git@github.com:username/repo.git\n\n"
     printf >&2 "  %bGitSetu will automatically intercept and use the correct SSH key!%b\n" "$BOLD" "$RESET"
 }
+
+# ------------------------------------------------------------------------------
+# auto_register_ssh_keys — Automatically register profile SSH keys with ssh-agent
+#
+# Non-fatal: checks socket liveness, skips already loaded keys, and adds keys
+# with macOS keychain persistence or standard ssh-add.
+# Usage: auto_register_ssh_keys [key_path...]
+# ------------------------------------------------------------------------------
+auto_register_ssh_keys() {
+    print_section "SSH Agent Key Registration"
+
+    # a) Check if SSH_AUTH_SOCK is set.
+    if [[ -z "${SSH_AUTH_SOCK:-}" ]]; then
+        print_info "SSH agent not running (SSH_AUTH_SOCK not set)."
+        print_info "To start ssh-agent, run: eval \$(ssh-agent -s)"
+        return 0
+    fi
+
+    # b) Socket liveness test: run `ssh-add -l >/dev/null 2>&1`. Exit code 2 means dead socket.
+    local agent_status=0
+    ssh-add -l >/dev/null 2>&1 || agent_status=$?
+    if [[ "$agent_status" -eq 2 ]]; then
+        print_warning "SSH agent socket not responding ($SSH_AUTH_SOCK)"
+        print_info "To restart ssh-agent, run: eval \$(ssh-agent -s)"
+        return 0
+    fi
+
+    # Loaded keys list for fingerprint deduplication (exit code 0 means identities present)
+    local loaded_keys=""
+    if [[ "$agent_status" -eq 0 ]]; then
+        loaded_keys=$(ssh-add -l 2>/dev/null || true)
+    fi
+
+    # c) Determine keys to register
+    local -a keys_to_process=()
+    if [[ "$#" -gt 0 ]]; then
+        keys_to_process=("$@")
+    elif [[ "${PROFILE_COUNT:-0}" -gt 0 ]]; then
+        local i
+        for (( i=0; i<PROFILE_COUNT; i++ )); do
+            local k="${PROFILE_KEYS[$i]:-$HOME/.ssh/id_ed25519_${PROFILE_LABELS[$i]}}"
+            keys_to_process+=("$k")
+        done
+    else
+        # If PROFILE_COUNT is 0, try loading from profiles.conf if available
+        if declare -f load_profiles >/dev/null 2>&1; then
+            load_profiles 2>/dev/null || true
+        fi
+        if [[ "${PROFILE_COUNT:-0}" -gt 0 ]]; then
+            local i
+            for (( i=0; i<PROFILE_COUNT; i++ )); do
+                local k="${PROFILE_KEYS[$i]:-$HOME/.ssh/id_ed25519_${PROFILE_LABELS[$i]}}"
+                keys_to_process+=("$k")
+            done
+        else
+            # Discover keys in ~/.ssh
+            local found_key
+            for found_key in "$HOME/.ssh"/id_ed25519_*; do
+                if [[ -f "$found_key" && "$found_key" != *.pub && "$found_key" != *.old* ]]; then
+                    keys_to_process+=("$found_key")
+                fi
+            done
+        fi
+    fi
+
+    # Deduplicate candidate key paths
+    local -a unique_keys=()
+    local kp
+    for kp in "${keys_to_process[@]}"; do
+        [[ -z "$kp" ]] && continue
+        local seen=0
+        local u
+        for u in "${unique_keys[@]}"; do
+            if [[ "$u" == "$kp" ]]; then
+                seen=1
+                break
+            fi
+        done
+        if [[ "$seen" -eq 0 ]]; then
+            unique_keys+=("$kp")
+        fi
+    done
+
+    if [[ "${#unique_keys[@]}" -eq 0 ]]; then
+        print_info "No profile SSH keys found to register."
+        return 0
+    fi
+
+    local registered_count=0
+    local already_loaded_count=0
+
+    for kp in "${unique_keys[@]}"; do
+        if [[ ! -f "$kp" ]]; then
+            continue
+        fi
+
+        # Check if key is already loaded in agent (compare fingerprint)
+        local key_fp=""
+        key_fp=$(ssh-keygen -lf "$kp" 2>/dev/null | awk '{print $2}')
+        if [[ -n "$key_fp" && -n "$loaded_keys" ]]; then
+            if printf '%s\n' "$loaded_keys" | grep -q -F "$key_fp"; then
+                already_loaded_count=$((already_loaded_count + 1))
+                print_info "Key already loaded in SSH agent: $kp"
+                continue
+            fi
+        fi
+
+        # Dry run check: suppress ssh-add invocation
+        if [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
+            print_info "[DRY RUN] Would register with SSH agent: $kp"
+            registered_count=$((registered_count + 1))
+            continue
+        fi
+
+        # Registration attempt (macOS keychain support or standard)
+        local add_status=0
+        if [[ "${GITSETU_OS:-}" == "macos" || "${OSTYPE:-}" == "darwin"* ]]; then
+            ssh-add --apple-use-keychain "$kp" 2>/dev/null || ssh-add "$kp" 2>/dev/null || add_status=$?
+        else
+            ssh-add "$kp" 2>/dev/null || add_status=$?
+        fi
+
+        if [[ "$add_status" -eq 0 ]]; then
+            registered_count=$((registered_count + 1))
+            print_success "Registered with SSH agent: $kp"
+            if [[ -n "$key_fp" ]]; then
+                loaded_keys=$(printf '%s\n%s' "$loaded_keys" "$key_fp")
+            fi
+        else
+            print_warning "Could not auto-register $kp (may require passphrase or hardware key)"
+            print_info "To add manually: ssh-add $kp"
+        fi
+    done
+
+    if [[ "$registered_count" -gt 0 ]]; then
+        if [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
+            print_info "[DRY RUN] Would register ${registered_count} key(s) with SSH agent"
+        else
+            print_success "Registered ${registered_count} key(s) with SSH agent"
+        fi
+    fi
+    if [[ "$already_loaded_count" -gt 0 ]]; then
+        print_info "${already_loaded_count} key(s) already loaded in SSH agent"
+    fi
+
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# verify_ssh_handshake — Verify SSH connectivity with Port 443 fallback
+#
+# Attempts SSH connection on standard Port 22 first. If Port 22 fails and the
+# provider is GitHub, automatically falls back to Port 443 via ssh.github.com.
+# If Port 443 succeeds, exports GITSETU_PORT443_NEEDED=1 to trigger clean
+# regeneration of ~/.config/gitsetu/profiles/ssh_config.
+#
+# Usage: verify_ssh_handshake "/path/to/key" "github.com"
+# Returns: 0 on success, 1 on failure
+# ------------------------------------------------------------------------------
+verify_ssh_handshake() {
+    local key_path="$1"
+    local provider="${2:-github.com}"
+    local host="$provider"
+
+    # If key file does not exist, return 0
+    if [[ ! -f "$key_path" ]]; then
+        return 0
+    fi
+
+    # a) If GITSETU_TEST is set and not explicitly testing SSH handshake, return 0 (never hang on network timeouts)
+    if [[ -n "${GITSETU_TEST:-}" ]]; then
+        local is_mock=0
+        if [[ -n "${GITSETU_TEST_SSH_VERIFY:-}" || -n "${GITSETU_TEST_SSH:-}" ]]; then
+            is_mock=1
+        elif [[ "$(type -t ssh 2>/dev/null)" == "function" ]]; then
+            is_mock=1
+        elif [[ -n "${TEST_HOME:-}" && "$(command -v ssh 2>/dev/null)" == *"$TEST_HOME"* ]]; then
+            is_mock=1
+        fi
+        if [[ "$is_mock" -eq 0 ]]; then
+            return 0
+        fi
+    fi
+
+    # b) Try port 22
+    local out
+    out=$(ssh -T -i "$key_path" -o ConnectTimeout=6 -o StrictHostKeyChecking=accept-new -o BatchMode=yes "git@$host" 2>&1 || true)
+    if [[ "$out" == *"successfully authenticated"* || "$out" == *"Welcome to GitLab"* ]]; then
+        print_success "SSH connection verified: $host (port 22)"
+        return 0
+    fi
+
+    # c) If port 22 fails AND host is "github.com" or provider is "github.com": Try port 443
+    if [[ "$host" == *"github.com"* || "$provider" == *"github.com"* ]]; then
+        local out443
+        out443=$(ssh -T -i "$key_path" -p 443 -o ConnectTimeout=6 -o StrictHostKeyChecking=accept-new -o BatchMode=yes git@ssh.github.com 2>&1 || true)
+        if [[ "$out443" == *"successfully authenticated"* ]]; then
+            print_success "SSH connection verified: github.com (port 443 corporate fallback)"
+            export GITSETU_PORT443_NEEDED=1
+            return 0
+        fi
+    fi
+
+    # d) If all fail
+    print_warning "SSH verification for $provider failed (non-fatal, setup continues)"
+    return 1
+}
+
 
 # ------------------------------------------------------------------------------
 # Inlined Module: lib/gitconfig.sh
@@ -2673,8 +2996,11 @@ run_doctor() {
     
     # 4. Check Config Integrity
     printf >&2 "  %bGitSetu Integrity:%b\n" "$BOLD" "$RESET"
+    local issues_found=0
+
     if [[ ! -f "$GITSETU_PROFILES_CONF" ]]; then
         printf >&2 "    %bERROR: Registry missing at %s%b\n" "$RED" "$GITSETU_PROFILES_CONF" "$RESET"
+        issues_found=1
     else
         printf >&2 "    Registry: OK\n"
     fi
@@ -2683,6 +3009,7 @@ run_doctor() {
         printf >&2 "    ~/.gitconfig: OK (Managed blocks present)\n"
     else
         printf >&2 "    ~/.gitconfig: %bWARNING (Managed blocks missing)%b\n" "$YELLOW" "$RESET"
+        issues_found=1
     fi
 
     local include_directive="Include ~/.config/gitsetu/profiles/ssh_config"
@@ -2690,9 +3017,152 @@ run_doctor() {
         printf >&2 "    ~/.ssh/config: OK (Include directive present)\n"
     else
         printf >&2 "    ~/.ssh/config: %bWARNING (Include directive missing)%b\n" "$YELLOW" "$RESET"
+        issues_found=1
     fi
     
     printf >&2 "\n"
+
+    # Check if SSH keys are missing from agent when profiles exist and agent is running
+    if [[ -n "${SSH_AUTH_SOCK:-}" && "${PROFILE_COUNT:-0}" -gt 0 ]]; then
+        if [[ "$loaded_keys" == *"The agent has no identities"* ]] || [[ -z "$loaded_keys" ]]; then
+            issues_found=1
+        fi
+    fi
+
+    if [[ "$issues_found" -gt 0 ]]; then
+        print_info "If issues were found, try: gitsetu doctor --repair"
+        printf >&2 "\n"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# run_doctor_repair — Self-healing repair mode for GitSetu configuration
+#
+# Restores missing gitconfig managed blocks, SSH configuration Include
+# directives, isolated host blocks, and registers profile SSH keys.
+#
+# Usage: run_doctor_repair
+# Returns: 0 on success/clean, 1 if system is unconfigured
+# ------------------------------------------------------------------------------
+run_doctor_repair() {
+    print_section "GitSetu Repair (Doctor)"
+
+    # Check if system is configured (profiles.conf existence)
+    if [[ ! -f "$GITSETU_PROFILES_CONF" ]]; then
+        print_error "GitSetu has not been configured yet (profiles.conf not found at $GITSETU_PROFILES_CONF). Run 'gitsetu setup' first."
+        return 1
+    fi
+
+    # Ensure profile registry is loaded and platform detected
+    if declare -f load_profiles >/dev/null 2>&1; then
+        load_profiles 2>/dev/null || true
+    fi
+    if declare -f detect_os >/dev/null 2>&1; then
+        [[ -z "${GITSETU_OS:-}" ]] && detect_os
+    fi
+
+    local repairs_performed=0
+
+    # Auto-fix 1: Missing managed blocks in ~/.gitconfig
+    local gitconfig_needs_repair=0
+    if [[ ! -f "$HOME/.gitconfig" ]]; then
+        gitconfig_needs_repair=1
+    elif ! grep -qF "${GITSETU_MANAGED_START}" "$HOME/.gitconfig" 2>/dev/null; then
+        gitconfig_needs_repair=1
+    fi
+
+    if [[ "$gitconfig_needs_repair" -eq 1 ]]; then
+        if [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
+            print_step "[DRY RUN] Would repair ~/.gitconfig managed blocks..."
+            write_global_gitconfig
+            repairs_performed=$((repairs_performed + 1))
+            print_info "[DRY RUN] Would restore managed blocks in ~/.gitconfig"
+        else
+            print_step "Repairing ~/.gitconfig managed blocks..."
+            write_global_gitconfig
+            repairs_performed=$((repairs_performed + 1))
+            print_success "Restored managed blocks in ~/.gitconfig"
+        fi
+    fi
+
+    # Auto-fix 2: Missing Include directive or isolated ssh_config in ~/.ssh/config
+    local ssh_needs_repair=0
+    local include_directive="Include ~/.config/gitsetu/profiles/ssh_config"
+    local isolated_config="$GITSETU_PROFILES_DIR/ssh_config"
+
+    if [[ ! -f "$HOME/.ssh/config" ]]; then
+        ssh_needs_repair=1
+    elif ! grep -qF "$include_directive" "$HOME/.ssh/config" 2>/dev/null && ! grep -qF "Include $GITSETU_PROFILES_DIR/ssh_config" "$HOME/.ssh/config" 2>/dev/null; then
+        ssh_needs_repair=1
+    elif [[ ! -f "$isolated_config" ]]; then
+        ssh_needs_repair=1
+    fi
+
+    if [[ "$ssh_needs_repair" -eq 1 ]]; then
+        if [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
+            print_step "[DRY RUN] Would repair SSH configuration and Include directive..."
+            write_ssh_config
+            repairs_performed=$((repairs_performed + 1))
+            print_info "[DRY RUN] Would restore SSH configuration in ~/.ssh/config"
+        else
+            print_step "Repairing SSH configuration and Include directive..."
+            write_ssh_config
+            repairs_performed=$((repairs_performed + 1))
+            print_success "Restored SSH configuration in ~/.ssh/config"
+        fi
+    fi
+
+    # Auto-fix 3: Keys not loaded in ssh-agent
+    local ssh_agent_needs_repair=0
+    if [[ -n "${SSH_AUTH_SOCK:-}" ]]; then
+        local agent_status=0
+        ssh-add -l >/dev/null 2>&1 || agent_status=$?
+        if [[ "$agent_status" -ne 2 ]]; then
+            local loaded_keys=""
+            if [[ "$agent_status" -eq 0 ]]; then
+                loaded_keys=$(ssh-add -l 2>/dev/null || true)
+            fi
+
+            local k_idx
+            for (( k_idx=0; k_idx<PROFILE_COUNT; k_idx++ )); do
+                local kp="${PROFILE_KEYS[$k_idx]:-$HOME/.ssh/id_ed25519_${PROFILE_LABELS[$k_idx]}}"
+                if [[ -f "$kp" ]]; then
+                    local fp=""
+                    fp=$(ssh-keygen -lf "$kp" 2>/dev/null | awk '{print $2}')
+                    if [[ -n "$fp" ]]; then
+                        if [[ -z "$loaded_keys" ]] || ! printf '%s\n' "$loaded_keys" | grep -q -F "$fp"; then
+                            ssh_agent_needs_repair=1
+                            break
+                        fi
+                    fi
+                fi
+            done
+        fi
+    fi
+
+    if [[ "$ssh_agent_needs_repair" -eq 1 ]]; then
+        if [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
+            print_step "[DRY RUN] Would register profile SSH keys with ssh-agent..."
+            auto_register_ssh_keys
+            repairs_performed=$((repairs_performed + 1))
+        else
+            print_step "Registering profile SSH keys with ssh-agent..."
+            auto_register_ssh_keys
+            repairs_performed=$((repairs_performed + 1))
+        fi
+    fi
+
+    if [[ "$repairs_performed" -eq 0 ]]; then
+        print_info "Nothing to repair. All configurations and managed blocks are intact."
+        return 0
+    fi
+
+    if [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
+        print_info "[DRY RUN] Dry run complete. $repairs_performed issue(s) would be repaired."
+    else
+        print_success "Repair complete. $repairs_performed issue(s) resolved."
+    fi
+    return 0
 }
 
 # ------------------------------------------------------------------------------
@@ -3618,7 +4088,12 @@ render_blueprint_dashboard() {
         local display_email="${email:-(Not Configured)}"
         local display_dir="${dir:-[Global Fallback]}"
         
-        printf >&2 '  %b%s) [%s]%b %s <%s>\n' "$BOLD" "$((i+1))" "$label" "$RESET" "$display_name" "$display_email"
+        local incomplete_tag=""
+        if [[ -z "$name" ]] || [[ -z "$email" ]]; then
+            incomplete_tag=" ${YELLOW}[${SYM_WARN} Incomplete]${RESET}"
+        fi
+
+        printf >&2 '  %b%s) [%s]%b%b %s <%s>\n' "$BOLD" "$((i+1))" "$label" "$RESET" "$incomplete_tag" "$display_name" "$display_email"
         printf >&2 '     Key: %s %b\n' "$key" "$key_status"
         printf >&2 '     Dir: %s\n\n' "$display_dir"
     done
@@ -3626,6 +4101,248 @@ render_blueprint_dashboard() {
     printf >&2 '  ──────────────────────────────────────────────────────────\n'
     printf >&2 '  [A]dd Profile | [E]dit Profile | [R]emove | [S]ecurity \n'
     printf >&2 '  [H]elp        | [Q]uit         | [ENTER] Apply\n\n'
+}
+
+# ------------------------------------------------------------------------------
+# preset_guided_onboarding — 3-Path guided on-ramp for first-time interactive setup
+# ------------------------------------------------------------------------------
+preset_guided_onboarding() {
+    if ! command -v git >/dev/null 2>&1; then
+        print_error "Git is not installed or not in PATH."
+        return 1
+    fi
+
+    while true; do
+        clear || printf '\033c'
+        printf >&2 '\n  %b╔══════════════════════════════════════╗%b\n' "$BOLD" "$RESET"
+        printf >&2 '  %b║  Welcome to GitSetu!                 ║%b\n' "$BOLD" "$RESET"
+        printf >&2 '  %b╚══════════════════════════════════════╝%b\n\n' "$BOLD" "$RESET"
+
+        printf >&2 '  How would you like to set up?\n\n'
+        printf >&2 '  %b1) Single Identity%b  — one account for everything\n' "$BOLD" "$RESET"
+        printf >&2 '  %b2) Dual Identity%b    — separate work & personal\n' "$BOLD" "$RESET"
+        printf >&2 '  %b3) Custom Setup%b     — full manual control\n\n' "$BOLD" "$RESET"
+
+        local choice=""
+        if ! read -r -p "  Select [1-3] (default: 1): " choice; then
+            print_info "Setup cancelled."
+            return 0
+        fi
+        choice="${choice:-1}"
+
+        case "$choice" in
+            1)
+                discover_global_git_identity
+                local def_name="${DISCOVERED_GLOBAL_NAME:-}"
+                if [[ -z "$def_name" ]]; then
+                    def_name="${USER:-$(whoami 2>/dev/null || echo "GitSetu User")}"
+                fi
+                local def_email="${DISCOVERED_GLOBAL_EMAIL:-}"
+
+                printf >&2 '\n  %b─── Single Account Setup ───%b\n\n' "$BOLD" "$RESET"
+
+                local name=""
+                if [[ -n "$def_name" ]]; then
+                    read -r -p "  Name [$def_name]: " name || true
+                    name="${name:-$def_name}"
+                else
+                    read -r -p "  Name: " name || true
+                    name="${name:-GitSetu User}"
+                fi
+
+                local email=""
+                if [[ -n "$def_email" ]]; then
+                    read -r -p "  Email [$def_email]: " email || true
+                    email="${email:-$def_email}"
+                fi
+
+                while [[ -z "$email" ]] || ! validate_email "$email"; do
+                    if [[ -n "$email" ]] && ! validate_email "$email"; then
+                        print_error "Invalid email address: '$email'."
+                    fi
+                    read -r -p "  Email: " email || true
+                done
+
+                local global_key
+                global_key=$(discover_ssh_key_for_label "global")
+
+                # shellcheck disable=SC2034
+                PROFILE_COUNT=1
+                # shellcheck disable=SC2034
+                PROFILE_LABELS[0]="global"
+                # shellcheck disable=SC2034
+                PROFILE_NAMES[0]="$name"
+                # shellcheck disable=SC2034
+                PROFILE_EMAILS[0]="$email"
+                # shellcheck disable=SC2034
+                PROFILE_DIRS[0]=""
+                # shellcheck disable=SC2034
+                PROFILE_PROVIDERS[0]="github.com"
+                # shellcheck disable=SC2034
+                PROFILE_SIGNS[0]="0"
+                # shellcheck disable=SC2034
+                PROFILE_KEYS[0]="${global_key:-$HOME/.ssh/id_ed25519_global}"
+                # shellcheck disable=SC2034
+                PROFILE_USERS[0]=""
+                # shellcheck disable=SC2034
+                PROFILE_PATS[0]=""
+
+                execute_blueprint
+                return 0
+                ;;
+            2)
+                discover_global_git_identity
+                local def_name="${DISCOVERED_GLOBAL_NAME:-}"
+                if [[ -z "$def_name" ]]; then
+                    def_name="${USER:-$(whoami 2>/dev/null || echo "GitSetu User")}"
+                fi
+                local def_personal_email="${DISCOVERED_GLOBAL_EMAIL:-}"
+
+                local def_work_dir
+                def_work_dir=$(discover_workspace_dir "work")
+                def_work_dir="${def_work_dir:-$HOME/work}"
+
+                printf >&2 '\n  %b─── Setting Up Dual Identity ───%b\n\n' "$BOLD" "$RESET"
+
+                local name=""
+                if [[ -n "$def_name" ]]; then
+                    read -r -p "  Name [$def_name]: " name || true
+                    name="${name:-$def_name}"
+                else
+                    read -r -p "  Name: " name || true
+                    name="${name:-GitSetu User}"
+                fi
+
+                local personal_email=""
+                if [[ -n "$def_personal_email" ]]; then
+                    read -r -p "  Personal Email [$def_personal_email]: " personal_email || true
+                    personal_email="${personal_email:-$def_personal_email}"
+                fi
+
+                while [[ -z "$personal_email" ]] || ! validate_email "$personal_email"; do
+                    if [[ -n "$personal_email" ]] && ! validate_email "$personal_email"; then
+                        print_error "Invalid email address: '$personal_email'."
+                    fi
+                    read -r -p "  Personal Email: " personal_email || true
+                done
+
+                local work_email=""
+                read -r -p "  Work Email: " work_email || true
+                while [[ -z "$work_email" ]] || ! validate_email "$work_email"; do
+                    if [[ -n "$work_email" ]] && ! validate_email "$work_email"; then
+                        print_error "Invalid email address: '$work_email'."
+                    fi
+                    read -r -p "  Work Email: " work_email || true
+                done
+
+                local disp_work_dir="$def_work_dir"
+                if [[ "$disp_work_dir" == "$HOME/"* ]]; then
+                    disp_work_dir="~/${disp_work_dir#"$HOME"/}"
+                elif [[ "$disp_work_dir" == "$HOME" ]]; then
+                    disp_work_dir="~"
+                fi
+
+                local work_dir=""
+                read -r -p "  Work directory [$disp_work_dir]: " work_dir || true
+                work_dir="${work_dir:-$def_work_dir}"
+                work_dir=$(normalize_path "$work_dir")
+
+                local def_personal_dir
+                def_personal_dir=$(discover_workspace_dir "personal")
+                local personal_dir="${def_personal_dir:-$HOME/personal}"
+                personal_dir=$(normalize_path "$personal_dir")
+
+                local global_key
+                global_key=$(discover_ssh_key_for_label "global")
+                local work_key
+                work_key=$(discover_ssh_key_for_label "work")
+                local personal_key
+                personal_key=$(discover_ssh_key_for_label "personal")
+
+                # shellcheck disable=SC2034
+                PROFILE_COUNT=3
+
+                # Profile 0: global fallback (personal identity)
+                # shellcheck disable=SC2034
+                PROFILE_LABELS[0]="global"
+                # shellcheck disable=SC2034
+                PROFILE_NAMES[0]="$name"
+                # shellcheck disable=SC2034
+                PROFILE_EMAILS[0]="$personal_email"
+                # shellcheck disable=SC2034
+                PROFILE_DIRS[0]=""
+                # shellcheck disable=SC2034
+                PROFILE_PROVIDERS[0]="github.com"
+                # shellcheck disable=SC2034
+                PROFILE_SIGNS[0]="0"
+                # shellcheck disable=SC2034
+                PROFILE_KEYS[0]="${global_key:-$HOME/.ssh/id_ed25519_global}"
+                # shellcheck disable=SC2034
+                PROFILE_USERS[0]=""
+                # shellcheck disable=SC2034
+                PROFILE_PATS[0]=""
+
+                # Profile 1: work
+                # shellcheck disable=SC2034
+                PROFILE_LABELS[1]="work"
+                # shellcheck disable=SC2034
+                PROFILE_NAMES[1]="$name"
+                # shellcheck disable=SC2034
+                PROFILE_EMAILS[1]="$work_email"
+                # shellcheck disable=SC2034
+                PROFILE_DIRS[1]="$work_dir"
+                # shellcheck disable=SC2034
+                PROFILE_PROVIDERS[1]="github.com"
+                # shellcheck disable=SC2034
+                PROFILE_SIGNS[1]="0"
+                # shellcheck disable=SC2034
+                PROFILE_KEYS[1]="${work_key:-$HOME/.ssh/id_ed25519_work}"
+                # shellcheck disable=SC2034
+                PROFILE_USERS[1]=""
+                # shellcheck disable=SC2034
+                PROFILE_PATS[1]=""
+
+                # Profile 2: personal
+                # shellcheck disable=SC2034
+                PROFILE_LABELS[2]="personal"
+                # shellcheck disable=SC2034
+                PROFILE_NAMES[2]="$name"
+                # shellcheck disable=SC2034
+                PROFILE_EMAILS[2]="$personal_email"
+                # shellcheck disable=SC2034
+                PROFILE_DIRS[2]="$personal_dir"
+                # shellcheck disable=SC2034
+                PROFILE_PROVIDERS[2]="github.com"
+                # shellcheck disable=SC2034
+                PROFILE_SIGNS[2]="0"
+                # shellcheck disable=SC2034
+                PROFILE_KEYS[2]="${personal_key:-$HOME/.ssh/id_ed25519_personal}"
+                # shellcheck disable=SC2034
+                PROFILE_USERS[2]=""
+                # shellcheck disable=SC2034
+                PROFILE_PATS[2]=""
+
+                execute_blueprint
+                return 0
+                ;;
+            3)
+                if [[ "${GITSETU_IN_WIZARD:-0}" -eq 1 ]]; then
+                    return 0
+                else
+                    GITSETU_SKIP_ON_RAMP=1 interactive_setup_wizard
+                    return $?
+                fi
+                ;;
+            "q"|"Q"|"quit"|"exit")
+                print_info "Setup cancelled."
+                exit 0
+                ;;
+            *)
+                print_error "Invalid selection: '$choice'. Please choose 1, 2, or 3."
+                sleep 1
+                ;;
+        esac
+    done
 }
 
 # ------------------------------------------------------------------------------
@@ -3938,6 +4655,58 @@ release_lock() {
 }
 
 # ------------------------------------------------------------------------------
+# render_setup_summary — Displays post-setup completion summary (T2.5)
+# ------------------------------------------------------------------------------
+render_setup_summary() {
+    print_section "Setup Complete"
+    print_success "Setup complete! You're ready to go."
+    printf >&2 '\n'
+
+    if [[ "${PROFILE_COUNT:-0}" -eq 0 ]] && declare -f load_profiles >/dev/null 2>&1; then
+        load_profiles 2>/dev/null || true
+    fi
+
+    printf >&2 '  %bProfiles:%b\n' "$BOLD" "$RESET"
+    local i
+    for (( i=0; i<PROFILE_COUNT; i++ )); do
+        local label="${PROFILE_LABELS[i]}"
+        local email="${PROFILE_EMAILS[i]}"
+        local dir="${PROFILE_DIRS[i]:-}"
+        local key_path="${PROFILE_KEYS[i]:-$HOME/.ssh/id_ed25519_${label}}"
+
+        local dir_display="[Global]"
+        if [[ -n "$dir" && "$dir" != "$HOME" ]]; then
+            if [[ "$dir" == "$HOME/"* ]]; then
+                dir_display="~/${dir#"$HOME"/}"
+            elif [[ "$dir" == "$HOME" ]]; then
+                dir_display="~"
+            else
+                dir_display="$dir"
+            fi
+        fi
+
+        local key_status="${RED}${SYM_CROSS}${RESET}"
+        if [[ -f "$key_path" ]]; then
+            key_status="${GREEN}${SYM_CHECK}${RESET}"
+        fi
+
+        printf >&2 '    %-12s %-26s %-18s Key: %b\n' "[$label]" "$email" "$dir_display" "$key_status"
+    done
+    printf >&2 '\n'
+
+    local guard_status="${DIM}Inactive${RESET}"
+    if [[ -f "$GITSETU_HOOKS_DIR/pre-commit" ]]; then
+        guard_status="${GREEN}Active${RESET}"
+    fi
+    printf >&2 '  %bGuard:%b %b\n\n' "$BOLD" "$RESET" "$guard_status"
+
+    printf >&2 '  %bQuick Reference:%b\n' "$BOLD" "$RESET"
+    printf >&2 '    %bgitsetu status%b    — check active identity\n' "$CYAN" "$RESET"
+    printf >&2 '    %bgitsetu doctor%b    — diagnose issues\n' "$CYAN" "$RESET"
+    printf >&2 '    %bgitsetu backup%b    — encrypted migration vault\n\n' "$CYAN" "$RESET"
+}
+
+# ------------------------------------------------------------------------------
 # execute_blueprint
 # ------------------------------------------------------------------------------
 execute_blueprint() {
@@ -4014,13 +4783,36 @@ execute_blueprint() {
     # 5. Display public keys
     display_public_keys
     
-    # SSH agent advice
-    print_section "SSH Agent Setup"
-    get_ssh_agent_advice
+    # 6. SSH agent key registration (T2.1)
+    auto_register_ssh_keys
     printf >&2 '\n'
 
-    print_success "Setup complete! You're ready to go."
-    printf >&2 '\n'
+    # 6.5 Live SSH handshake verification with Port 443 fallback (T2.3)
+    if [[ -z "${GITSETU_TEST:-}" || -n "${GITSETU_TEST_SSH_VERIFY:-}" || -n "${GITSETU_TEST_SSH:-}" ]]; then
+        print_section "SSH Verification"
+        local v_key_path v_provider
+        for (( i=0; i<PROFILE_COUNT; i++ )); do
+            v_key_path="${PROFILE_KEYS[i]:-$HOME/.ssh/id_ed25519_${PROFILE_LABELS[i]}}"
+            v_provider="${PROFILE_PROVIDERS[i]:-github.com}"
+            verify_ssh_handshake "$v_key_path" "$v_provider" || true
+        done
+        printf >&2 '\n'
+
+        if [[ "${GITSETU_PORT443_NEEDED:-0}" -eq 1 ]]; then
+            print_info "Regenerating SSH configuration with Port 443 corporate fallback..."
+            write_ssh_config
+        fi
+    fi
+
+    # 7. Guard activation prompt (T2.4)
+    if [[ ! -f "$GITSETU_HOOKS_DIR/pre-commit" ]] && [[ -z "${GITSETU_TEST:-}" ]]; then
+        if confirm "Enable pre-commit identity guard (prevents wrong-email commits)?" "y"; then
+            install_guard
+        fi
+    fi
+
+    # 8. Post-setup completion summary (T2.5)
+    render_setup_summary
 
     release_lock
 }
@@ -4082,10 +4874,38 @@ interactive_setup_wizard() {
         generate_initial_blueprint
     fi
 
+    # Check if fresh install: no profiles.conf or only unconfigured [global]
+    if [[ "${GITSETU_SKIP_ON_RAMP:-0}" -ne 1 ]]; then
+        local is_fresh=0
+        if [[ ! -f "$GITSETU_PROFILES_CONF" ]]; then
+            is_fresh=1
+        elif [[ "$PROFILE_COUNT" -eq 0 ]]; then
+            is_fresh=1
+        elif [[ "$PROFILE_COUNT" -eq 1 ]] && [[ "${PROFILE_LABELS[0]}" == "global" ]] && [[ -z "${PROFILE_EMAILS[0]}" ]]; then
+            is_fresh=1
+        fi
+
+        if [[ "$is_fresh" -eq 1 ]]; then
+            local GITSETU_IN_WIZARD=1
+            preset_guided_onboarding
+            # If preset was applied, profiles now exist and are configured
+            if [[ -f "$GITSETU_PROFILES_CONF" ]] && [[ "$PROFILE_COUNT" -gt 0 ]]; then
+                if [[ "$PROFILE_COUNT" -gt 1 ]] || [[ -n "${PROFILE_EMAILS[0]}" ]]; then
+                    return 0
+                fi
+            fi
+            # If Option 3 was chosen, fall through to dashboard loop
+        fi
+    fi
+
     while true; do
         render_blueprint_dashboard
         
-        read -r -p "[?] Select an option, or press ENTER to Apply: " choice
+        local choice=""
+        if ! read -r -p "[?] Select an option, or press ENTER to Apply: " choice; then
+            print_info "Setup aborted."
+            exit 0
+        fi
         choice=$(echo "$choice" | tr '[:lower:]' '[:upper:]')
         
         case "$choice" in
@@ -4095,9 +4915,9 @@ interactive_setup_wizard() {
                 local i
                 for (( i=0; i<PROFILE_COUNT; i++ )); do
                     if [[ -z "${PROFILE_NAMES[i]}" ]] || [[ -z "${PROFILE_EMAILS[i]}" ]]; then
-                        print_error "Profile '${PROFILE_LABELS[i]}' is missing a name or email!"
+                        print_warning "Profile '${PROFILE_LABELS[i]}' is incomplete. Please configure name and email:"
+                        prompt_edit_profile "$i"
                         valid=0
-                        sleep 2
                         break
                     fi
                 done
@@ -4110,9 +4930,13 @@ interactive_setup_wizard() {
                 prompt_add_profile
                 ;;
             "E")
-                read -r -p "Enter profile number to edit (1-$PROFILE_COUNT): " idx
-                if [[ "$idx" =~ ^[0-9]+$ ]] && [[ "$idx" -ge 1 ]] && [[ "$idx" -le "$PROFILE_COUNT" ]]; then
-                    prompt_edit_profile $((idx - 1))
+                if [[ "$PROFILE_COUNT" -eq 1 ]]; then
+                    prompt_edit_profile 0
+                else
+                    read -r -p "Enter profile number to edit (1-$PROFILE_COUNT): " idx
+                    if [[ "$idx" =~ ^[0-9]+$ ]] && [[ "$idx" -ge 1 ]] && [[ "$idx" -le "$PROFILE_COUNT" ]]; then
+                        prompt_edit_profile $((idx - 1))
+                    fi
                 fi
                 ;;
             "R")
@@ -4559,14 +5383,15 @@ show_help() {
 ${BOLD}gitsetu${RESET} v${GITSETU_VERSION} — One command. All identities. Every machine.
 
 ${BOLD}USAGE${RESET}
-    gitsetu setup [--auto] [--dry-run]  Interactive wizard or zero-prompt discovery
+    gitsetu setup [--auto] [--dry-run]  Guided on-ramp or dashboard setup wizard
     gitsetu init [--auto] [--dry-run]   Alias for setup
     gitsetu add <label> <name> <email> <dir>
                                      Add a profile (non-interactive)
     gitsetu remove <label>           Remove a profile
     gitsetu status                   Show current identity configuration
     gitsetu verify                   Test SSH keys and git config
-    gitsetu doctor                   Run diagnostic checks
+    gitsetu doctor [--repair] [--dry-run]
+                                     Run diagnostic checks or auto-heal configuration
     gitsetu update                   Update gitsetu to the latest version
     gitsetu prompt                   Print active profile for \$PS1
     gitsetu backup [out_file]        Export encrypted identity state
@@ -4584,7 +5409,7 @@ ${BOLD}EXAMPLES${RESET}
     ${DIM}# Instant zero-prompt onboarding:${RESET}
     gitsetu setup --auto
 
-    ${DIM}# First-time interactive setup:${RESET}
+    ${DIM}# First-time guided on-ramp (Single, Dual, or Custom):${RESET}
     gitsetu setup
 
     ${DIM}# Add a profile non-interactively:${RESET}
@@ -5100,32 +5925,69 @@ cmd_credential() {
 }
 
 # ------------------------------------------------------------------------------
-# cmd_doctor — Run diagnostics
+# cmd_doctor — Run diagnostics or repair configuration
 # ------------------------------------------------------------------------------
 cmd_doctor() {
+    local repair=0
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            --repair)
+                repair=1
+                ;;
+            --dry-run)
+                GITSETU_DRY_RUN=1
+                ;;
+        esac
+    done
+
     load_profiles
-    run_doctor
+    if [[ "$repair" -eq 1 ]]; then
+        run_doctor_repair "$@"
+    else
+        run_doctor
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# show_brief_usage — Print concise CLI usage
+# ------------------------------------------------------------------------------
+show_brief_usage() {
+    printf >&2 '%bgitsetu%b v%s — One command. All identities. Every machine.\n\n' \
+        "$BOLD" "$RESET" "$GITSETU_VERSION"
+    printf >&2 'Usage: gitsetu setup [--auto] [--dry-run]    Start the setup wizard\n'
+    printf >&2 '       gitsetu status               Show current identity\n'
+    printf >&2 '       gitsetu verify               Test SSH and git config\n'
+    printf >&2 '       gitsetu doctor [--repair]    Diagnose or repair configuration\n'
+    printf >&2 '       gitsetu prompt               Print active profile (for PS1)\n'
+    printf >&2 '       gitsetu run <profile> -- <cmd>  Run as identity\n'
+    printf >&2 '       gitsetu remove <profile>     Remove a specific profile\n'
+    printf >&2 '       gitsetu backup [out_file]    Export encrypted state vault\n'
+    printf >&2 '       gitsetu restore <in_file>    Import encrypted state vault\n'
+    printf >&2 '       gitsetu teardown [--force]   Remove all configurations\n'
+    printf >&2 '       gitsetu guard --install      Install commit guard hook\n'
+    printf >&2 '       gitsetu --help                Full help\n\n'
 }
 
 # ------------------------------------------------------------------------------
 # Main — Parse arguments and route to subcommand
 # ------------------------------------------------------------------------------
 main() {
-    # No arguments → show brief usage
+    # No arguments → check TTY and configuration
     if [[ $# -eq 0 ]]; then
-        printf >&2 '%bgitsetu%b v%s — One command. All identities. Every machine.\n\n' \
-            "$BOLD" "$RESET" "$GITSETU_VERSION"
-        printf >&2 'Usage: gitsetu setup [--dry-run]    Start the setup wizard\n'
-        printf >&2 '       gitsetu status               Show current identity\n'
-        printf >&2 '       gitsetu verify               Test SSH and git config\n'
-        printf >&2 '       gitsetu prompt               Print active profile (for PS1)\n'
-        printf >&2 '       gitsetu run <profile> -- <cmd>  Run as identity\n'
-        printf >&2 '       gitsetu remove <profile>     Remove a specific profile\n'
-        printf >&2 '       gitsetu backup [out_file]    Export encrypted state vault\n'
-        printf >&2 '       gitsetu restore <in_file>    Import encrypted state vault\n'
-        printf >&2 '       gitsetu teardown [--force]   Remove all configurations\n'
-        printf >&2 '       gitsetu guard --install      Install commit guard hook\n'
-        printf >&2 '       gitsetu --help                Full help\n\n'
+        if [[ ! -t 0 || ! -t 1 || -n "${CI:-}" ]]; then
+            show_brief_usage
+            exit 0
+        fi
+
+        detect_os
+
+        load_profiles
+        if [[ -f "$GITSETU_PROFILES_CONF" ]] && [[ "$PROFILE_COUNT" -gt 0 ]]; then
+            cmd_status
+        else
+            preset_guided_onboarding
+        fi
         return 0
     fi
 
