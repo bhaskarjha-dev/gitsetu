@@ -151,7 +151,18 @@ build_ssh_host_block() {
     local prefix
     prefix=$(printf '%s' "$hostname" | cut -d'.' -f1)
 
-    cat <<EOF
+    if [[ "${GITSETU_PORT443_NEEDED:-0}" -eq 1 ]] && [[ "$hostname" == *"github"* ]]; then
+        cat <<EOF
+Host ${prefix}-${label}
+    HostName ssh.github.com
+    Port 443
+    User git
+    IdentityFile ${portable_key}
+    IdentitiesOnly yes
+    AddKeysToAgent yes
+EOF
+    else
+        cat <<EOF
 Host ${prefix}-${label}
     HostName ${hostname}
     User git
@@ -159,6 +170,7 @@ Host ${prefix}-${label}
     IdentitiesOnly yes
     AddKeysToAgent yes
 EOF
+    fi
 
     if [[ "${GITSETU_OS:-}" == "macos" || "${OSTYPE:-}" == "darwin"* ]]; then
         echo "    UseKeychain yes"
@@ -275,6 +287,102 @@ write_ssh_config() {
 }
 
 # ------------------------------------------------------------------------------
+# try_gh_key_upload — Upload an SSH public key to GitHub via gh CLI
+#
+# Locked Constraint: Scope discipline — only interacts with currently authenticated
+# account via `gh api user -q .login`. No multi-account detection, no auth switch.
+#
+# Usage: try_gh_key_upload "work" "/path/to/key.pub"
+# Returns: 0 on success or already registered, 1 on failure / skipped / declined
+# ------------------------------------------------------------------------------
+try_gh_key_upload() {
+    local label="$1"
+    local pubkey_path="$2"
+
+    # a) Check if gh is installed
+    if ! command -v gh >/dev/null 2>&1; then
+        return 1
+    fi
+
+    # Validate key file existence
+    if [[ ! -f "$pubkey_path" ]]; then
+        return 1
+    fi
+
+    # b) Get login username
+    local login
+    login=$(gh api user -q .login 2>/dev/null || true)
+    login="${login%$'\r'}"
+    if [[ -z "$login" ]]; then
+        return 1
+    fi
+
+    # Dry run check: suppress mutation
+    if [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
+        print_info "[DRY RUN] Would upload '$label' key to GitHub (@$login)"
+        return 0
+    fi
+
+    # c) If non-TTY or GITSETU_TEST is set, do NOT prompt interactively — skip or return 1 (unless mock is testing it)
+    if [[ -n "${GITSETU_TEST:-}" ]]; then
+        local is_mock=0
+        if [[ -n "${GITSETU_TEST_GH:-}" || -n "${GITSETU_TEST_GH_MOCK:-}" ]]; then
+            is_mock=1
+        elif [[ "$(type -t gh 2>/dev/null)" == "function" ]]; then
+            is_mock=1
+        elif [[ -n "${TEST_HOME:-}" && "$(command -v gh 2>/dev/null)" == *"$TEST_HOME"* ]]; then
+            is_mock=1
+        fi
+        if [[ "$is_mock" -eq 0 ]]; then
+            return 1
+        fi
+    elif [[ ! -t 0 ]]; then
+        return 1
+    fi
+
+    # d) Display: GitHub CLI: logged in as @$login
+    printf >&2 '  GitHub CLI: logged in as @%s\n' "$login"
+
+    # e) Confirm: confirm "Upload '$label' key to GitHub (@$login)?" "y"
+    # If user declines, return 1
+    if [[ -n "${GITSETU_TEST:-}" ]]; then
+        if [[ "${GITSETU_TEST_DECLINE:-0}" -eq 1 ]]; then
+            return 1
+        fi
+    else
+        if ! confirm "Upload '$label' key to GitHub (@$login)?" "y"; then
+            return 1
+        fi
+    fi
+
+    # f) Run upload
+    local hostname_str
+    hostname_str=$(hostname 2>/dev/null || echo "workstation")
+    hostname_str="${hostname_str%$'\r'}"
+    local upload_out
+    local exit_code=0
+    upload_out=$(gh ssh-key add "$pubkey_path" --title "GitSetu ($label - $hostname_str)" 2>&1) || exit_code=$?
+
+    # g) If exit_code == 0:
+    if [[ "$exit_code" -eq 0 ]]; then
+        print_success "Key successfully added to GitHub!"
+        return 0
+    fi
+
+    # h) If output matches "already in use" or "key is already in use":
+    local lower_out
+    lower_out=$(printf '%s' "$upload_out" | tr '[:upper:]' '[:lower:]')
+    if [[ "$lower_out" == *"already in use"* ]]; then
+        print_info "Key already registered on GitHub."
+        return 0
+    fi
+
+    # i) Any other error:
+    print_warning "Failed to upload key via GitHub CLI: $upload_out"
+    return 1
+}
+
+# ------------------------------------------------------------------------------
 # display_public_keys — Show all public keys with copy instructions
 #
 # Displays each key in a formatted box with the GitHub settings URL.
@@ -287,10 +395,16 @@ display_public_keys() {
     for (( i=0; i<PROFILE_COUNT; i++ )); do
         local label="${PROFILE_LABELS[$i]}"
         local email="${PROFILE_EMAILS[$i]}"
+        local provider="${PROFILE_PROVIDERS[$i]:-github.com}"
         local pubkey="${PROFILE_KEYS[$i]:-$HOME/.ssh/id_ed25519_${label}}.pub"
 
         if [[ -f "$pubkey" ]]; then
             print_key_box "$label" "$email" "$pubkey"
+            if [[ "$provider" == *"github"* ]]; then
+                if ! try_gh_key_upload "$label" "$pubkey"; then
+                    print_info "To add key manually, copy the key above and add at: https://github.com/settings/ssh/new"
+                fi
+            fi
         else
             print_warning "Key not found for '$label': $pubkey"
         fi
@@ -302,3 +416,211 @@ display_public_keys() {
     printf >&2 "    git clone git@github.com:username/repo.git\n\n"
     printf >&2 "  %bGitSetu will automatically intercept and use the correct SSH key!%b\n" "$BOLD" "$RESET"
 }
+
+# ------------------------------------------------------------------------------
+# auto_register_ssh_keys — Automatically register profile SSH keys with ssh-agent
+#
+# Non-fatal: checks socket liveness, skips already loaded keys, and adds keys
+# with macOS keychain persistence or standard ssh-add.
+# Usage: auto_register_ssh_keys [key_path...]
+# ------------------------------------------------------------------------------
+auto_register_ssh_keys() {
+    print_section "SSH Agent Key Registration"
+
+    # a) Check if SSH_AUTH_SOCK is set.
+    if [[ -z "${SSH_AUTH_SOCK:-}" ]]; then
+        print_info "SSH agent not running (SSH_AUTH_SOCK not set)."
+        print_info "To start ssh-agent, run: eval \$(ssh-agent -s)"
+        return 0
+    fi
+
+    # b) Socket liveness test: run `ssh-add -l >/dev/null 2>&1`. Exit code 2 means dead socket.
+    local agent_status=0
+    ssh-add -l >/dev/null 2>&1 || agent_status=$?
+    if [[ "$agent_status" -eq 2 ]]; then
+        print_warning "SSH agent socket not responding ($SSH_AUTH_SOCK)"
+        print_info "To restart ssh-agent, run: eval \$(ssh-agent -s)"
+        return 0
+    fi
+
+    # Loaded keys list for fingerprint deduplication (exit code 0 means identities present)
+    local loaded_keys=""
+    if [[ "$agent_status" -eq 0 ]]; then
+        loaded_keys=$(ssh-add -l 2>/dev/null || true)
+    fi
+
+    # c) Determine keys to register
+    local -a keys_to_process=()
+    if [[ "$#" -gt 0 ]]; then
+        keys_to_process=("$@")
+    elif [[ "${PROFILE_COUNT:-0}" -gt 0 ]]; then
+        local i
+        for (( i=0; i<PROFILE_COUNT; i++ )); do
+            local k="${PROFILE_KEYS[$i]:-$HOME/.ssh/id_ed25519_${PROFILE_LABELS[$i]}}"
+            keys_to_process+=("$k")
+        done
+    else
+        # If PROFILE_COUNT is 0, try loading from profiles.conf if available
+        if declare -f load_profiles >/dev/null 2>&1; then
+            load_profiles 2>/dev/null || true
+        fi
+        if [[ "${PROFILE_COUNT:-0}" -gt 0 ]]; then
+            local i
+            for (( i=0; i<PROFILE_COUNT; i++ )); do
+                local k="${PROFILE_KEYS[$i]:-$HOME/.ssh/id_ed25519_${PROFILE_LABELS[$i]}}"
+                keys_to_process+=("$k")
+            done
+        else
+            # Discover keys in ~/.ssh
+            local found_key
+            for found_key in "$HOME/.ssh"/id_ed25519_*; do
+                if [[ -f "$found_key" && "$found_key" != *.pub && "$found_key" != *.old* ]]; then
+                    keys_to_process+=("$found_key")
+                fi
+            done
+        fi
+    fi
+
+    # Deduplicate candidate key paths
+    local -a unique_keys=()
+    local kp
+    for kp in "${keys_to_process[@]}"; do
+        [[ -z "$kp" ]] && continue
+        local seen=0
+        local u
+        for u in "${unique_keys[@]}"; do
+            if [[ "$u" == "$kp" ]]; then
+                seen=1
+                break
+            fi
+        done
+        if [[ "$seen" -eq 0 ]]; then
+            unique_keys+=("$kp")
+        fi
+    done
+
+    if [[ "${#unique_keys[@]}" -eq 0 ]]; then
+        print_info "No profile SSH keys found to register."
+        return 0
+    fi
+
+    local registered_count=0
+    local already_loaded_count=0
+
+    for kp in "${unique_keys[@]}"; do
+        if [[ ! -f "$kp" ]]; then
+            continue
+        fi
+
+        # Check if key is already loaded in agent (compare fingerprint)
+        local key_fp=""
+        key_fp=$(ssh-keygen -lf "$kp" 2>/dev/null | awk '{print $2}')
+        if [[ -n "$key_fp" && -n "$loaded_keys" ]]; then
+            if printf '%s\n' "$loaded_keys" | grep -q -F "$key_fp"; then
+                already_loaded_count=$((already_loaded_count + 1))
+                print_info "Key already loaded in SSH agent: $kp"
+                continue
+            fi
+        fi
+
+        # Dry run check: suppress ssh-add invocation
+        if [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
+            print_info "[DRY RUN] Would register with SSH agent: $kp"
+            registered_count=$((registered_count + 1))
+            continue
+        fi
+
+        # Registration attempt (macOS keychain support or standard)
+        local add_status=0
+        if [[ "${GITSETU_OS:-}" == "macos" || "${OSTYPE:-}" == "darwin"* ]]; then
+            ssh-add --apple-use-keychain "$kp" 2>/dev/null || ssh-add "$kp" 2>/dev/null || add_status=$?
+        else
+            ssh-add "$kp" 2>/dev/null || add_status=$?
+        fi
+
+        if [[ "$add_status" -eq 0 ]]; then
+            registered_count=$((registered_count + 1))
+            print_success "Registered with SSH agent: $kp"
+            if [[ -n "$key_fp" ]]; then
+                loaded_keys=$(printf '%s\n%s' "$loaded_keys" "$key_fp")
+            fi
+        else
+            print_warning "Could not auto-register $kp (may require passphrase or hardware key)"
+            print_info "To add manually: ssh-add $kp"
+        fi
+    done
+
+    if [[ "$registered_count" -gt 0 ]]; then
+        if [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
+            print_info "[DRY RUN] Would register ${registered_count} key(s) with SSH agent"
+        else
+            print_success "Registered ${registered_count} key(s) with SSH agent"
+        fi
+    fi
+    if [[ "$already_loaded_count" -gt 0 ]]; then
+        print_info "${already_loaded_count} key(s) already loaded in SSH agent"
+    fi
+
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# verify_ssh_handshake — Verify SSH connectivity with Port 443 fallback
+#
+# Attempts SSH connection on standard Port 22 first. If Port 22 fails and the
+# provider is GitHub, automatically falls back to Port 443 via ssh.github.com.
+# If Port 443 succeeds, exports GITSETU_PORT443_NEEDED=1 to trigger clean
+# regeneration of ~/.config/gitsetu/profiles/ssh_config.
+#
+# Usage: verify_ssh_handshake "/path/to/key" "github.com"
+# Returns: 0 on success, 1 on failure
+# ------------------------------------------------------------------------------
+verify_ssh_handshake() {
+    local key_path="$1"
+    local provider="${2:-github.com}"
+    local host="$provider"
+
+    # If key file does not exist, return 0
+    if [[ ! -f "$key_path" ]]; then
+        return 0
+    fi
+
+    # a) If GITSETU_TEST is set and not explicitly testing SSH handshake, return 0 (never hang on network timeouts)
+    if [[ -n "${GITSETU_TEST:-}" ]]; then
+        local is_mock=0
+        if [[ -n "${GITSETU_TEST_SSH_VERIFY:-}" || -n "${GITSETU_TEST_SSH:-}" ]]; then
+            is_mock=1
+        elif [[ "$(type -t ssh 2>/dev/null)" == "function" ]]; then
+            is_mock=1
+        elif [[ -n "${TEST_HOME:-}" && "$(command -v ssh 2>/dev/null)" == *"$TEST_HOME"* ]]; then
+            is_mock=1
+        fi
+        if [[ "$is_mock" -eq 0 ]]; then
+            return 0
+        fi
+    fi
+
+    # b) Try port 22
+    local out
+    out=$(ssh -T -i "$key_path" -o ConnectTimeout=6 -o StrictHostKeyChecking=accept-new -o BatchMode=yes "git@$host" 2>&1 || true)
+    if [[ "$out" == *"successfully authenticated"* || "$out" == *"Welcome to GitLab"* ]]; then
+        print_success "SSH connection verified: $host (port 22)"
+        return 0
+    fi
+
+    # c) If port 22 fails AND host is "github.com" or provider is "github.com": Try port 443
+    if [[ "$host" == *"github.com"* || "$provider" == *"github.com"* ]]; then
+        local out443
+        out443=$(ssh -T -i "$key_path" -p 443 -o ConnectTimeout=6 -o StrictHostKeyChecking=accept-new -o BatchMode=yes git@ssh.github.com 2>&1 || true)
+        if [[ "$out443" == *"successfully authenticated"* ]]; then
+            print_success "SSH connection verified: github.com (port 443 corporate fallback)"
+            export GITSETU_PORT443_NEEDED=1
+            return 0
+        fi
+    fi
+
+    # d) If all fail
+    print_warning "SSH verification for $provider failed (non-fatal, setup continues)"
+    return 1
+}
+
