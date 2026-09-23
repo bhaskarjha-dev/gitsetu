@@ -488,10 +488,10 @@ chmod +x "$BUNDLE_SANDBOX/gitsetu"
 cd "$BUNDLE_SANDBOX"
 
 b_ver=$("$BUNDLE_SANDBOX/gitsetu" --version 2>&1 || true)
-if [[ "$b_ver" == *"gitsetu v1.0.0"* ]]; then
-    record_result "Distribution: Monolith" "Isolated Version Check" "dist/gitsetu --version" "Outputs gitsetu v1.0.0 without lib/" "PASS" "$b_ver"
+if [[ "$b_ver" == *"gitsetu v1.1.0"* ]]; then
+    record_result "Distribution: Monolith" "Isolated Version Check" "dist/gitsetu --version" "Outputs gitsetu v1.1.0 without lib/" "PASS" "$b_ver"
 else
-    record_result "Distribution: Monolith" "Isolated Version Check" "dist/gitsetu --version" "Outputs gitsetu v1.0.0 without lib/" "FAIL" "$b_ver"
+    record_result "Distribution: Monolith" "Isolated Version Check" "dist/gitsetu --version" "Outputs gitsetu v1.1.0 without lib/" "FAIL" "$b_ver"
 fi
 
 b_help=$("$BUNDLE_SANDBOX/gitsetu" --help 2>&1 || true)
@@ -521,18 +521,18 @@ if command -v node >/dev/null 2>&1; then
     pkg_name=$(node -e "console.log(require('./package.json').name)")
     pkg_ver=$(node -e "console.log(require('./package.json').version)")
     pkg_bin=$(node -e "console.log(require('./package.json').bin.gitsetu)")
-    if [[ "$pkg_name" == "gitsetu" && "$pkg_ver" == "1.0.0" && "$pkg_bin" == "./bin/gitsetu.js" ]]; then
-        record_result "Distribution: NPM" "package.json Metadata" "package.json integrity" "Name: gitsetu, Version: 1.0.0, Bin: ./bin/gitsetu.js" "PASS" "Verified schema"
+    if [[ "$pkg_name" == "gitsetu" && "$pkg_ver" == "1.1.0" && "$pkg_bin" == "./bin/gitsetu.js" ]]; then
+        record_result "Distribution: NPM" "package.json Metadata" "package.json integrity" "Name: gitsetu, Version: 1.1.0, Bin: ./bin/gitsetu.js" "PASS" "Verified schema"
     else
-        record_result "Distribution: NPM" "package.json Metadata" "package.json integrity" "Name: gitsetu, Version: 1.0.0, Bin: ./bin/gitsetu.js" "FAIL" "Mismatch in metadata"
+        record_result "Distribution: NPM" "package.json Metadata" "package.json integrity" "Name: gitsetu, Version: 1.1.0, Bin: ./bin/gitsetu.js" "FAIL" "Mismatch in metadata"
     fi
 
     # 14.2 Node wrapper execution
     n_ver=$(node "$SCRIPT_DIR/bin/gitsetu.js" --version 2>&1 || true)
-    if [[ "$n_ver" == *"gitsetu v1.0.0"* ]]; then
-        record_result "Distribution: NPM" "Node Wrapper Version" "node bin/gitsetu.js --version" "Outputs gitsetu v1.0.0" "PASS" "$n_ver"
+    if [[ "$n_ver" == *"gitsetu v1.1.0"* ]]; then
+        record_result "Distribution: NPM" "Node Wrapper Version" "node bin/gitsetu.js --version" "Outputs gitsetu v1.1.0" "PASS" "$n_ver"
     else
-        record_result "Distribution: NPM" "Node Wrapper Version" "node bin/gitsetu.js --version" "Outputs gitsetu v1.0.0" "FAIL" "$n_ver"
+        record_result "Distribution: NPM" "Node Wrapper Version" "node bin/gitsetu.js --version" "Outputs gitsetu v1.1.0" "FAIL" "$n_ver"
     fi
 
     # 14.3 Exit code forwarding
@@ -552,7 +552,7 @@ if command -v node >/dev/null 2>&1; then
         if [[ -n "$tgz_file" && -f "$tgz_file" ]]; then
             mkdir -p extracted && tar -xzf "$tgz_file" -C extracted
             ext_ver=$(node extracted/package/bin/gitsetu.js --version 2>/dev/null || echo "")
-            if [[ "$ext_ver" == *"gitsetu v1.0.0"* ]]; then
+            if [[ "$ext_ver" == *"gitsetu v1.1.0"* ]]; then
                 record_result "Distribution: NPM" "Isolated Tarball Execution" "npm pack && extract && run" "Runs standalone from package tarball" "PASS" "$ext_ver"
             else
                 record_result "Distribution: NPM" "Isolated Tarball Execution" "npm pack && extract && run" "Runs standalone from package tarball" "FAIL" "$ext_ver"
@@ -596,10 +596,10 @@ if command -v powershell.exe >/dev/null 2>&1; then
         # Test execution of gitsetu.exe alongside dist/gitsetu
         cp "$SCRIPT_DIR/dist/gitsetu" "$CS_SANDBOX/gitsetu"
         exe_out=$("$CS_SANDBOX/gitsetu.exe" --version 2>&1 || true)
-        if [[ "$exe_out" == *"gitsetu v1.0.0"* ]]; then
-            record_result "Distribution: WinGet" "Native Launcher Execution" "gitsetu.exe --version" "Delegates to bash and outputs v1.0.0" "PASS" "$exe_out"
+        if [[ "$exe_out" == *"gitsetu v1.1.0"* ]]; then
+            record_result "Distribution: WinGet" "Native Launcher Execution" "gitsetu.exe --version" "Delegates to bash and outputs v1.1.0" "PASS" "$exe_out"
         else
-            record_result "Distribution: WinGet" "Native Launcher Execution" "gitsetu.exe --version" "Delegates to bash and outputs v1.0.0" "FAIL" "$exe_out"
+            record_result "Distribution: WinGet" "Native Launcher Execution" "gitsetu.exe --version" "Delegates to bash and outputs v1.1.0" "FAIL" "$exe_out"
         fi
     else
         record_result "Distribution: WinGet" "Native Launcher Compilation" "build_launcher.ps1" "Compiles gitsetu.exe via csc.exe" "FAIL" "Failed with code $bld_code"
@@ -615,7 +615,7 @@ fi
 echo -e "\n${BOLD}${CYAN}[PHASE 16] Microsoft WinGet Manifest Schema Validation${RESET}"
 cd "$SCRIPT_DIR"
 
-WINGET_DIR="$SCRIPT_DIR/packaging/winget/manifests/b/BhaskarJha/GitSetu/1.0.0"
+WINGET_DIR="$SCRIPT_DIR/packaging/winget/manifests/b/BhaskarJha/GitSetu/1.1.0"
 WG_VER="$WINGET_DIR/BhaskarJha.GitSetu.yaml"
 WG_LOC="$WINGET_DIR/BhaskarJha.GitSetu.locale.en-US.yaml"
 WG_INS="$WINGET_DIR/BhaskarJha.GitSetu.installer.yaml"
@@ -629,10 +629,10 @@ if [[ -f "$WG_VER" && -f "$WG_LOC" && -f "$WG_INS" ]]; then
     v2=$(awk '/^PackageVersion:/{print $2}' "$WG_LOC")
     v3=$(awk '/^PackageVersion:/{print $2}' "$WG_INS")
 
-    if [[ "$id1" == "BhaskarJha.GitSetu" && "$id2" == "BhaskarJha.GitSetu" && "$id3" == "BhaskarJha.GitSetu" && "$v1" == "1.0.0" && "$v2" == "1.0.0" && "$v3" == "1.0.0" ]]; then
-        record_result "Distribution: WinGet" "Manifest Consistency" "WinGet Triad Manifest" "BhaskarJha.GitSetu v1.0.0 synchronized" "PASS" "All 3 files matched"
+    if [[ "$id1" == "BhaskarJha.GitSetu" && "$id2" == "BhaskarJha.GitSetu" && "$id3" == "BhaskarJha.GitSetu" && "$v1" == "1.1.0" && "$v2" == "1.1.0" && "$v3" == "1.1.0" ]]; then
+        record_result "Distribution: WinGet" "Manifest Consistency" "WinGet Triad Manifest" "BhaskarJha.GitSetu v1.1.0 synchronized" "PASS" "All 3 files matched"
     else
-        record_result "Distribution: WinGet" "Manifest Consistency" "WinGet Triad Manifest" "BhaskarJha.GitSetu v1.0.0 synchronized" "FAIL" "ID: $id1/$id2/$id3, Ver: $v1/$v2/$v3"
+        record_result "Distribution: WinGet" "Manifest Consistency" "WinGet Triad Manifest" "BhaskarJha.GitSetu v1.1.0 synchronized" "FAIL" "ID: $id1/$id2/$id3, Ver: $v1/$v2/$v3"
     fi
 
     # Live winget validate if winget is present
@@ -734,10 +734,10 @@ else
 fi
 
 gh_ver=$(bash "$GH_BIN" --version 2>&1 || true)
-if [[ "$gh_ver" == *"gitsetu v1.0.0"* ]]; then
-    record_result "Distribution: GH Extension" "Version Flag Delegation" "gh-gitsetu --version" "Delegates to gitsetu v1.0.0" "PASS" "$gh_ver"
+if [[ "$gh_ver" == *"gitsetu v1.1.0"* ]]; then
+    record_result "Distribution: GH Extension" "Version Flag Delegation" "gh-gitsetu --version" "Delegates to gitsetu v1.1.0" "PASS" "$gh_ver"
 else
-    record_result "Distribution: GH Extension" "Version Flag Delegation" "gh-gitsetu --version" "Delegates to gitsetu v1.0.0" "FAIL" "$gh_ver"
+    record_result "Distribution: GH Extension" "Version Flag Delegation" "gh-gitsetu --version" "Delegates to gitsetu v1.1.0" "FAIL" "$gh_ver"
 fi
 
 gh_err_code=0
@@ -756,10 +756,10 @@ cd "$SCRIPT_DIR"
 
 # 19.1 Nix Flake
 FLAKE_SRC="$SCRIPT_DIR/flake.nix"
-if [[ -f "$FLAKE_SRC" ]] && grep -q 'inputs = {' "$FLAKE_SRC" && grep -q 'version = "1.0.0"' "$FLAKE_SRC" && grep -q 'mainProgram = "gitsetu"' "$FLAKE_SRC"; then
-    record_result "Distribution: Nix Flake" "Flake Definition & Metadata" "flake.nix" "Declares gitsetu v1.0.0, nixpkgs inputs, and mainProgram" "PASS" "Nix Flake specification valid"
+if [[ -f "$FLAKE_SRC" ]] && grep -q 'inputs = {' "$FLAKE_SRC" && grep -q 'version = "1.1.0"' "$FLAKE_SRC" && grep -q 'mainProgram = "gitsetu"' "$FLAKE_SRC"; then
+    record_result "Distribution: Nix Flake" "Flake Definition & Metadata" "flake.nix" "Declares gitsetu v1.1.0, nixpkgs inputs, and mainProgram" "PASS" "Nix Flake specification valid"
 else
-    record_result "Distribution: Nix Flake" "Flake Definition & Metadata" "flake.nix" "Declares gitsetu v1.0.0, nixpkgs inputs, and mainProgram" "FAIL" "flake.nix missing or invalid"
+    record_result "Distribution: Nix Flake" "Flake Definition & Metadata" "flake.nix" "Declares gitsetu v1.1.0, nixpkgs inputs, and mainProgram" "FAIL" "flake.nix missing or invalid"
 fi
 
 # 19.2 Arch Linux AUR PKGBUILD & .SRCINFO
@@ -768,13 +768,13 @@ AUR_SRC="$SCRIPT_DIR/packaging/aur/.SRCINFO"
 if [[ -f "$AUR_PKG" && -f "$AUR_SRC" ]] && bash -n "$AUR_PKG"; then
     pkg_v=$(grep "^pkgver=" "$AUR_PKG" | cut -d= -f2)
     src_v=$(grep "pkgver = " "$AUR_SRC" | awk '{print $3}')
-    if [[ "$pkg_v" == "1.0.0" && "$src_v" == "1.0.0" ]]; then
-        record_result "Distribution: AUR" "PKGBUILD & .SRCINFO Parity" "packaging/aur/" "bash -n passes and v1.0.0 synchronized" "PASS" "PKGBUILD and .SRCINFO verified"
+    if [[ "$pkg_v" == "1.1.0" && "$src_v" == "1.1.0" ]]; then
+        record_result "Distribution: AUR" "PKGBUILD & .SRCINFO Parity" "packaging/aur/" "bash -n passes and v1.1.0 synchronized" "PASS" "PKGBUILD and .SRCINFO verified"
     else
-        record_result "Distribution: AUR" "PKGBUILD & .SRCINFO Parity" "packaging/aur/" "bash -n passes and v1.0.0 synchronized" "FAIL" "Version mismatch: PKGBUILD=$pkg_v, SRCINFO=$src_v"
+        record_result "Distribution: AUR" "PKGBUILD & .SRCINFO Parity" "packaging/aur/" "bash -n passes and v1.1.0 synchronized" "FAIL" "Version mismatch: PKGBUILD=$pkg_v, SRCINFO=$src_v"
     fi
 else
-    record_result "Distribution: AUR" "PKGBUILD & .SRCINFO Parity" "packaging/aur/" "bash -n passes and v1.0.0 synchronized" "FAIL" "AUR files missing or syntax invalid"
+    record_result "Distribution: AUR" "PKGBUILD & .SRCINFO Parity" "packaging/aur/" "bash -n passes and v1.1.0 synchronized" "FAIL" "AUR files missing or syntax invalid"
 fi
 
 # ==============================================================================
@@ -801,7 +801,7 @@ if command -v powershell.exe >/dev/null 2>&1; then
 
     # 20.2 CMD Shim Execution
     cmd_shim_out=$(MSYS2_ARG_CONV_EXCL="*" cmd.exe /c "$win_ps_sandbox_appdata\\gitsetu\\bin\\gitsetu.cmd" --version 2>&1 || true)
-    if [[ "$cmd_shim_out" == *"gitsetu v1.0.0"* || "$cmd_shim_out" == *"gitsetu version 1.0.0"* ]]; then
+    if [[ "$cmd_shim_out" == *"gitsetu v1.1.0"* || "$cmd_shim_out" == *"gitsetu version 1.1.0"* ]]; then
         record_result "Installer: Windows PowerShell" "CMD Shim Invocation" "gitsetu.cmd --version" "Executes standalone binary via CMD" "PASS" "$cmd_shim_out"
     else
         record_result "Installer: Windows PowerShell" "CMD Shim Invocation" "gitsetu.cmd --version" "Executes standalone binary via CMD" "FAIL" "$cmd_shim_out"
@@ -809,7 +809,7 @@ if command -v powershell.exe >/dev/null 2>&1; then
 
     # 20.3 PowerShell Shim Execution
     ps_shim_out=$(powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$win_ps_sandbox_appdata\\gitsetu\\bin\\gitsetu.ps1" --version 2>&1 || true)
-    if [[ "$ps_shim_out" == *"gitsetu v1.0.0"* || "$ps_shim_out" == *"gitsetu version 1.0.0"* ]]; then
+    if [[ "$ps_shim_out" == *"gitsetu v1.1.0"* || "$ps_shim_out" == *"gitsetu version 1.1.0"* ]]; then
         record_result "Installer: Windows PowerShell" "PowerShell Shim Invocation" "gitsetu.ps1 --version" "Executes standalone binary via PowerShell" "PASS" "$ps_shim_out"
     else
         record_result "Installer: Windows PowerShell" "PowerShell Shim Invocation" "gitsetu.ps1 --version" "Executes standalone binary via PowerShell" "FAIL" "$ps_shim_out"

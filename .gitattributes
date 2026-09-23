@@ -4,6 +4,7 @@
 # Shell scripts — always LF, even on Windows
 *.sh text eol=lf
 gitsetu text eol=lf
+packaging/gh-extension/gh-gitsetu text eol=lf
 
 # Documentation
 *.md text eol=lf

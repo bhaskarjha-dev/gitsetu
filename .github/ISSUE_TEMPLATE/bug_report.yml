@@ -12,7 +12,7 @@ body:
     attributes:
       label: GitSetu Version
       description: Please provide your GitSetu version (`gitsetu --version`).
-      placeholder: "e.g., gitsetu v1.0.0"
+      placeholder: "e.g., gitsetu v1.1.0"
     validations:
       required: true
   - type: input

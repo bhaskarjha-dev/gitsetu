@@ -111,7 +111,7 @@ if ($psInstallResult -eq 0) {
     $env:PATH = "$env:LOCALAPPDATA\gitsetu\bin;$env:PATH"
     $vCmd = & cmd.exe /c "gitsetu --version"
     $vPs = & "$env:LOCALAPPDATA\gitsetu\bin\gitsetu.ps1" --version
-    if ($vCmd -match "gitsetu v1.0.0" -and $vPs -match "gitsetu v1.0.0") {
+    if ($vCmd -match "gitsetu v1.1.0" -and $vPs -match "gitsetu v1.1.0") {
         Write-Host "  [OK] Shims verified successfully!" -ForegroundColor Green
         $psShimTest = 0
     } else {
@@ -141,7 +141,7 @@ $launcherOut = Join-Path $targetDir "dist"
 & powershell.exe -ExecutionPolicy Bypass -File "$targetDir\packaging\windows\build_launcher.ps1" -OutDir "$launcherOut"
 if (Test-Path "$launcherOut\gitsetu.exe") {
     $vExe = & "$launcherOut\gitsetu.exe" --version
-    if ($vExe -match "gitsetu v1.0.0") {
+    if ($vExe -match "gitsetu v1.1.0") {
         Write-Host "  [OK] Native C# launcher (gitsetu.exe) compiled and verified!" -ForegroundColor Green
         $launcherTest = 0
     } else {
@@ -155,7 +155,7 @@ if (Test-Path $sterileDir) { Remove-Item -Recurse -Force $sterileDir }
 New-Item -ItemType Directory -Path $sterileDir | Out-Null
 Copy-Item "$launcherOut\gitsetu" -Destination "$sterileDir\gitsetu"
 $vBundle = & "$gitHost\bin\bash.exe" -c "cd /c/Users/WDAGUtilityAccount/gitsetu_sterile && ./gitsetu --version"
-if ($vBundle -match "gitsetu v1.0.0") {
+if ($vBundle -match "gitsetu v1.1.0") {
     Write-Host "  [OK] Standalone monolith bundle verified in sterile sandbox without lib/!" -ForegroundColor Green
     $monolithTest = 0
 } else {

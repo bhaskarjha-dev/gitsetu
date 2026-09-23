@@ -105,16 +105,16 @@ jobs:
           echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
           
           # Prepare clean build workspace
-          mkdir -p /home/builder/build/gitsetu-1.0.0
-          cp -r gitsetu lib LICENSE README.md /home/builder/build/gitsetu-1.0.0/
+          mkdir -p /home/builder/build/gitsetu-1.1.0
+          cp -r gitsetu lib LICENSE README.md /home/builder/build/gitsetu-1.1.0/
           
           # Create source tarball
-          tar -czf /home/builder/build/gitsetu-1.0.0.tar.gz -C /home/builder/build gitsetu-1.0.0
-          SHA=$(sha256sum /home/builder/build/gitsetu-1.0.0.tar.gz | awk '{print $1}')
+          tar -czf /home/builder/build/gitsetu-1.1.0.tar.gz -C /home/builder/build gitsetu-1.1.0
+          SHA=$(sha256sum /home/builder/build/gitsetu-1.1.0.tar.gz | awk '{print $1}')
           
           # Copy PKGBUILD and update source to use local archive for test
           cp packaging/aur/PKGBUILD /home/builder/build/
-          sed -i 's|^source=(.*)|source=("gitsetu-1.0.0.tar.gz")|g' /home/builder/build/PKGBUILD
+          sed -i 's|^source=(.*)|source=("gitsetu-1.1.0.tar.gz")|g' /home/builder/build/PKGBUILD
           sed -i "s|sha256sums=('.*')|sha256sums=('$SHA')|g" /home/builder/build/PKGBUILD
           
           chown -R builder:builder /home/builder/build
