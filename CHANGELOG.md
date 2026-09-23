@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-09-22
+
+The Developer Experience (DX) release — zero-friction onboarding, automated SSH verification, and self-healing diagnostics.
+
+### Added
+
+#### First-Time Onboarding UX
+- **3-Path Guided On-Ramp (`preset_guided_onboarding`):** First-run experience offers Single Identity, Dual Identity, or Custom Setup presets with auto-discovery of existing Git identities and SSH keys.
+- **Bare `gitsetu` Smart Entrypoint:** Running `gitsetu` without arguments now shows `gitsetu status` when configured (interactive TTY), or launches the guided on-ramp when unconfigured.
+- **Dashboard UX Improvements:** ENTER on incomplete profile auto-opens edit prompt; single-profile `[E]dit` skips number selection; `[⚠ Incomplete]` tag rendered next to profiles missing name/email.
+- **Post-Setup Completion Summary (`render_setup_summary`):** Structured summary table with profile details, guard status, and quick reference commands.
+
+#### SSH Automation & Verification
+- **Automated `ssh-agent` Key Registration (`auto_register_ssh_keys`):** Socket liveness detection, fingerprint deduplication, macOS `--apple-use-keychain` support. All failures non-fatal.
+- **GitHub CLI Key Upload (`try_gh_key_upload`):** One-click SSH public key upload to authenticated GitHub account via `gh ssh-key add`. Scope-disciplined: uses only `gh api user -q .login`.
+- **SSH Handshake Verification with Port 443 Fallback (`verify_ssh_handshake`):** Post-setup connectivity test with automatic corporate firewall detection. Regenerates SSH config with `Port 443` + `HostName ssh.github.com` when needed.
+- **Guard Activation Prompt:** `execute_blueprint()` now prompts to enable pre-commit identity guard (default yes) after setup.
+
+#### Diagnostics & Self-Healing
+- **Doctor Repair Mode (`gitsetu doctor --repair`):** Auto-restores missing `~/.gitconfig` managed blocks, SSH Include directives, and registers unloaded SSH keys with the agent.
+- **Doctor Repair Hint:** `run_doctor()` now prints `"try: gitsetu doctor --repair"` footer when issues are detected.
+
+#### Workspace Management
+- **Automated Workspace Directory Provisioning (`ensure_workspace_dirs`):** Automatically creates missing workspace directories during setup with `mkdir -p`.
+
+### Changed
+- **Comparisons Documentation Rewrite (`docs/overview/comparisons.md`):** Browser-verified competitor data with honest "Where Competitors Excel" section. Removed fabricated self-assessment scores.
+- **Test Suite Expansion:** 44 comprehensive regression & E2E test suites (up from 36), including `test_onboarding.sh` (15 tests), `test_ssh_automation.sh` (19 tests), `test_doctor_repair.sh` (6 tests), `test_gh_keys.sh`, `test_setup_load_and_dirs.sh`, `test_status.sh`, `test_update.sh`, and `test_audit_regressions.sh`.
+- **Shell Completion Expansion:** Added `--repair` and `--dry-run` to `doctor` completions; `--auto` to `setup` completions.
+
+### Fixed
+- Dashboard ENTER with incomplete profile no longer prints error and sleeps — auto-opens edit for first incomplete profile.
+- Single-profile `[E]dit` no longer prompts for profile number selection.
+
+[1.1.0]: https://github.com/bhaskarjha-dev/gitsetu/releases/tag/v1.1.0
+
 ## [1.0.0] - 2026-09-10
 
 The inaugural General Availability (GA) production release of GitSetu — a zero-dependency, pure Bash 3.2 CLI compiler for automated Git multi-identity orchestration and OpenSSH key management across Linux, macOS, and Windows.
@@ -62,8 +98,8 @@ The inaugural General Availability (GA) production release of GitSetu — a zero
   - **GitHub CLI Extension (`packaging/gh-extension/`):** Executable extension wrapper (`gh gitsetu`).
 - **Multi-OS GitHub Actions CI Matrix:** Continuous delivery matrix running automated validation across 5 platforms: Ubuntu Linux 24.04, Arch Linux container (`makepkg`), Alpine Linux container (Musl/BusyBox), macOS Apple Silicon (native `/bin/bash` 3.2), and Windows Native (PowerShell, WinGet, Scoop).
 - **Installer Regression Pipeline:** Added automated end-to-end testing for both POSIX and Windows PowerShell installer/uninstaller pipelines in `tests/test_installer.sh` with `$GITSETU_INSTALL_DIR` non-destructive test isolation.
-- **36 Comprehensive Regression & E2E Test Suites:** Full test suite covering core logic, CLI, SSH, gitconfig, guard, credential broker, backup/restore, concurrency, teardown, validation, platform detection, discovery, doctor, prompt, resilience, installer, keychain, manual mode, bundler, npm wrapper, winget, AUR, Nix flake, GH extension, CRLF self-healing, audit regressions, clean-room npm E2E (`test_npm_cleanroom_e2e.sh`), and adversarial & concurrency stress (`test_adversarial_stress.sh`).
-- **Unified Test Runner:** Added `tests/run_all.sh` providing aggregated status and colored summaries across all 36 test suites.
+- **44 Comprehensive Regression & E2E Test Suites:** Full test suite covering core logic, CLI, SSH, gitconfig, guard, credential broker, backup/restore, concurrency, teardown, validation, platform detection, discovery, doctor, prompt, resilience, installer, keychain, manual mode, bundler, npm wrapper, winget, AUR, Nix flake, GH extension, CRLF self-healing, audit regressions, clean-room npm E2E (`test_npm_cleanroom_e2e.sh`), and adversarial & concurrency stress (`test_adversarial_stress.sh`).
+- **Unified Test Runner:** Added `tests/run_all.sh` providing aggregated status and colored summaries across all 44 test suites.
 - **Developer Makefile:** Targets for `make test`, `make lint` (ShellCheck), `make check`, and `make hooks`.
 - **Shell Autocompletion:** TAB autocompletion for subcommands and profile labels in Bash and Zsh.
 - **Diagnostic Doctor (`gitsetu doctor`):** Multi-point diagnostic scanner for registry validity, OpenSSH include directives, SSH agent status, and local repository configuration drift.
