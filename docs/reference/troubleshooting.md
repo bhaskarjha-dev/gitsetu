@@ -97,7 +97,7 @@ powershell -ExecutionPolicy Bypass -File .\sandbox\launch_sandbox.ps1
 # Or via Command Prompt / Explorer:
 .\sandbox\launch_sandbox.bat
 ```
-This boots a clean, disposable Windows Sandbox container, runs the entire regression test suite (all 36 test suites), and simulates multi-profile Git commits without any risk to your host setup.
+This boots a clean, disposable Windows Sandbox container, runs the entire regression test suite (all 44 test suites), and simulates multi-profile Git commits without any risk to your host setup.
 
 ---
 

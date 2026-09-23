@@ -11,7 +11,7 @@
 [![CI](https://github.com/bhaskarjha-dev/gitsetu/actions/workflows/ci.yml/badge.svg)](https://github.com/bhaskarjha-dev/gitsetu/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/github/license/bhaskarjha-dev/gitsetu?color=blue)](LICENSE)
 [![Bash 3.2+](https://img.shields.io/badge/bash-3.2%2B-orange?logo=gnubash&logoColor=white)](https://www.gnu.org/software/bash/)
-[![Tests](https://img.shields.io/badge/tests-36%20suites%20passing-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-44%20suites%20passing-brightgreen)](#testing)
 [![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey)](#cross-platform)
 [![Website](https://img.shields.io/badge/docs-gitsetu.bhaskarjha.dev-00c4cc)](https://gitsetu.bhaskarjha.dev)
 
@@ -295,7 +295,7 @@ See [full comparison →](docs/overview/comparisons.md)
 
 ## Testing
 
-GitSetu is tested with **36 automated test suites** (including clean-room npm E2E and adversarial stress suites) and a **31-phase empirical sandbox audit** (107 checks) that runs inside an isolated Windows Sandbox VM.
+GitSetu is tested with **44 automated test suites** (including clean-room npm E2E and adversarial stress suites) and a **31-phase empirical sandbox audit** (107 checks) that runs inside an isolated Windows Sandbox VM.
 
 ```bash
 # Run unit & E2E tests
