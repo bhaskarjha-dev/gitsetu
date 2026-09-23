@@ -253,6 +253,12 @@ setup_test_home() {
     unset XDG_CONFIG_HOME
     mkdir -p "$HOME/.ssh"
     mkdir -p "$HOME/.config"
+    export GITSETU_CONFIG_DIR="$HOME/.config/gitsetu"
+    export GITSETU_BACKUP_DIR="$GITSETU_CONFIG_DIR/backups"
+    export GITSETU_PROFILES_DIR="$GITSETU_CONFIG_DIR/profiles"
+    export GITSETU_HOOKS_DIR="$GITSETU_CONFIG_DIR/hooks"
+    export GITSETU_PROFILES_CONF="$GITSETU_CONFIG_DIR/profiles.conf"
+    export GITSETU_LOCK_DIR="$GITSETU_CONFIG_DIR/profiles.lock"
 }
 
 teardown_test_home() {
