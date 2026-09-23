@@ -48,11 +48,13 @@ Renders a structured, tabular layout of your entire GitSetu configuration state.
 - Lists all registered profiles, bounded paths, and linked OpenSSH aliases.
 - Dynamically highlights your **currently active profile** based on your active terminal directory context.
 
-### `gitsetu doctor`
+### `gitsetu doctor [--repair] [--dry-run]`
 An advanced configuration health-scanner designed to identify silent environmental drift.
 - Validates global `~/.gitconfig` syntax integrity and verifies the presence of managed identity blocks.
 - Ensures the OpenSSH `Include` directive remains valid at the top of `~/.ssh/config`.
 - Scans deep local `.git/config` files within mapped directory trees to surface overlapping or conflicting `user.email` hardcodes.
+- `--repair`: Automatically restores missing managed blocks in `~/.gitconfig`, SSH Include directives, and registers unloaded SSH keys with the agent.
+- `--dry-run`: Previews what `--repair` would fix without making changes.
 
 ### `gitsetu verify`
 Executes aggressive permissions and structural validation testing.

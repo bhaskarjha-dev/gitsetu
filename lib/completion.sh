@@ -16,7 +16,7 @@ _gitsetu() {
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    opts="setup status verify run teardown guard add remove profile backup restore credential prompt doctor --help --version"
+    opts="setup init status verify run teardown guard add remove profile backup restore credential prompt doctor update --help --version"
 
     # Suggest subcommands if we are at the first argument
     if [[ ${COMP_CWORD} -eq 1 ]]; then
