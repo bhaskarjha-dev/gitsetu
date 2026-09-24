@@ -1,17 +1,18 @@
 # Maintainer: Bhaskar Jha <me@bhaskarjha.dev>
+# Generated from packaging/templates/aur/PKGBUILD.in for {{TAG}}.
 pkgname=gitsetu
-pkgver=1.1.0
+pkgver={{VERSION}}
 pkgrel=1
 pkgdesc="Zero-trust multi-account Git identity orchestrator"
 arch=('any')
 url="https://gitsetu.bhaskarjha.dev"
 license=('MIT')
-depends=('bash>=4.0' 'git' 'openssh')
+depends=('bash' 'git' 'openssh' 'openssl' 'coreutils')
 optdepends=(
   'libfido2: FIDO2 / YubiKey hardware key support'
 )
-source=("$pkgname-$pkgver.tar.gz::https://github.com/bhaskarjha-dev/gitsetu/releases/download/v$pkgver/gitsetu-$pkgver.tar.gz")
-sha256sums=('af0a75748e5c55a71bf8007daff4966b56db6fab0ce3d201ed06e5737f9a28a5')
+source=("$pkgname-$pkgver.tar.gz::{{SOURCE_URL}}")
+sha256sums=('{{SOURCE_SHA256}}')
 
 package() {
   cd "$pkgname-$pkgver"
@@ -22,19 +23,13 @@ package() {
   install -m755 gitsetu "$pkgdir/usr/share/$pkgname/gitsetu"
   install -m644 lib/*.sh "$pkgdir/usr/share/$pkgname/lib/"
 
-  # Wrapper script in /usr/bin
   cat << 'EOF' > "$pkgdir/usr/bin/gitsetu"
 #!/usr/bin/env bash
 exec /usr/share/gitsetu/gitsetu "$@"
 EOF
   chmod 755 "$pkgdir/usr/bin/gitsetu"
-
-  # Link git-setu compatibility command
   ln -s gitsetu "$pkgdir/usr/bin/git-setu"
 
-  # Shell completions
   install -Dm644 lib/completion.sh "$pkgdir/usr/share/bash-completion/completions/gitsetu"
-
-  # License
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

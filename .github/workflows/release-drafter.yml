@@ -4,24 +4,18 @@ on:
   push:
     branches:
       - main
-  # pull_request_target is used instead of pull_request for autolabeler
-  # to support PRs from forks (pull_request has read-only GITHUB_TOKEN on forks)
-  pull_request_target:
-    types: [opened, reopened, synchronize]
+  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  update_release_draft:
-    permissions:
-      # write permission is required to create a github release
-      contents: write
-      # write permission is required for autolabeler
-      pull-requests: write
+  draft:
+    name: Draft release notes from trusted main commits
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      # Drafts your next Release notes as Pull Requests are merged into "main"
-      - uses: release-drafter/release-drafter@c2e2804cc59f45f57076a99af580d0fedb697927 # v7.3.0
+      - name: Draft from merged main history only
+        uses: release-drafter/release-drafter@da8b9b696abad2ad997580e49f4c1c2e03cc2bd2 # v7.3.0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}

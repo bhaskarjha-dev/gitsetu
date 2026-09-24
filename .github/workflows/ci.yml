@@ -6,42 +6,100 @@ on:
   pull_request:
     branches: [main]
 
-permissions: read-all
+permissions:
+  contents: read
 
 jobs:
   lint:
-    name: ShellCheck
-    runs-on: ubuntu-latest
+    name: Lint (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
-      # Pinning actions/checkout to v6.0.2 SHA for security
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Checkout test revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
-      - name: Install ShellCheck
-        run: sudo apt-get install -y shellcheck
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20.19.4'
+          cache: npm
 
-      - name: Lint all scripts
-        run: make lint
+      - name: Install hash-pinned ShellCheck 0.10.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$(uname -s)-$(uname -m)" in
+            Linux-x86_64) asset=shellcheck-v0.10.0.linux.x86_64.tar.xz; expected=6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87 ;;
+            Linux-aarch64) asset=shellcheck-v0.10.0.linux.aarch64.tar.xz; expected=324a7e89de8fa2aed0d0c28f3dab59cf84c6d74264022c00c22af665ed1a09bb ;;
+            Darwin-x86_64) asset=shellcheck-v0.10.0.darwin.x86_64.tar.xz; expected=ef27684f23279d112d8ad84e0823642e43f838993bbb8c0963db9b58a90464c2 ;;
+            Darwin-arm64) asset=shellcheck-v0.10.0.darwin.aarch64.tar.xz; expected=bbd2f14826328eee7679da7221f2bc3afb011f6a928b848c80c321f6046ddf81 ;;
+            *) echo "Unsupported ShellCheck runner platform" >&2; exit 1 ;;
+          esac
+          archive="$RUNNER_TEMP/$asset"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            "https://github.com/koalaman/shellcheck/releases/download/v0.10.0/$asset" -o "$archive"
+          printf '%s  %s\n' "$expected" "$archive" | sha256sum -c -
+          tar -xJf "$archive" -C "$RUNNER_TEMP"
+          sudo install -m 0755 "$RUNNER_TEMP/shellcheck-v0.10.0/shellcheck" /usr/local/bin/shellcheck
+          shellcheck --version | grep 'version: 0.10.0'
+
+      - name: Validate metadata and all shipped script types
+        run: make metadata lint
 
   test:
     name: Tests (${{ matrix.os }})
     needs: lint
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
     defaults:
       run:
         shell: bash
     steps:
-      # Pinning actions/checkout to v6.0.2 SHA for security
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Checkout untrusted test revision without credentials
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
-      - name: Show environment
-        run: |
-          echo "OS: $(uname -s)"
-          echo "Bash: ${BASH_VERSION}"
-          echo "Git: $(git --version)"
-          echo "SSH: $(ssh -V 2>&1 || true)"
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20.19.4'
+          cache: npm
 
-      - name: Run tests
+      - name: Install locked npm metadata
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run tests through supported Git Bash
         run: make test
+
+      - name: Build and verify standalone bundle
+        run: make dist-check
+
+      - name: Run bundle-selected regression suite
+        if: runner.os != 'Windows'
+        run: make test-bundle
+
+      - name: Parse and test Windows launchers/installers
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $errors = $null
+          foreach ($file in @('install.ps1','uninstall.ps1','packaging/windows/build_launcher.ps1','packaging/windows/build_release_zip.ps1')) {
+            [Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$null, [ref]$errors) | Out-Null
+          }
+          if ($errors.Count) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test_powershell_installer_e2e.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test_windows_launcher.ps1
+          exit $LASTEXITCODE

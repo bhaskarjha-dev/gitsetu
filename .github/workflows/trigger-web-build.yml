@@ -6,13 +6,23 @@ on:
       - main
     paths:
       - 'docs/**'
-      - 'gitsetu-web/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  trigger-build:
+  trigger:
+    name: Request deployment from trusted main
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - name: Send Cloudflare Deploy Hook
+      - name: Send pinned-secret deploy request
+        env:
+          CLOUDFLARE_DEPLOY_HOOK_URL: ${{ secrets.CLOUDFLARE_DEPLOY_HOOK_URL }}
         run: |
-          curl -fsSL -X POST "${{ secrets.CLOUDFLARE_DEPLOY_HOOK_URL }}"
-          echo "Cloudflare Web Build triggered successfully!"
+          set -euo pipefail
+          test -n "$CLOUDFLARE_DEPLOY_HOOK_URL"
+          curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+            --request POST --header 'Content-Length: 0' --output /dev/null \
+            "$CLOUDFLARE_DEPLOY_HOOK_URL"

@@ -1,98 +1,74 @@
-# GitSetu Packaging & Distribution Specifications
+# GitSetu packaging and distribution policy
 
-This directory contains package manager manifests, compilation scripts, and formulas for deploying GitSetu across all major developer ecosystems.
+## Current release state
 
-## Supported Distribution Channels
+`v1.1.0` is a **verified local release candidate**, not a public release.
+`packaging/release.json` remains the canonical policy record and intentionally
+still declares the pre-publication state:
 
-### 1. Node.js — npm & npx
-- **Manifest:** `package.json`
-- **Binary Wrapper:** `bin/gitsetu.js`
-- **Usage:**
-  ```bash
-  # Instant run without global install
-  npx gitsetu setup
-  # Or global install
-  npm install -g gitsetu
-  ```
+- `release.state = development`
+- `release.prerelease = true`
+- `release.public = false`
+- no tag, publication date, artifact URL, or digest
 
-### 2. Standalone Single-File Monolith (`dist/gitsetu`)
-- **Compiler:** `scripts/bundle.sh` (`make dist`)
-- **Output:** `dist/gitsetu` (186 KB self-contained bash monolith with inlined modules)
-- **Direct Curl Usage:**
-  ```bash
-  curl -sL https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/dist/gitsetu -o ~/.local/bin/gitsetu && chmod +x ~/.local/bin/gitsetu
-  ```
+A local candidate bundle, Windows launcher/ZIP, npm tarball, and installers
+have been built and verified. They are preparation artifacts only: they are
+not signed, rendered into public package-manager manifests, tagged, or
+published. The canonical release state changes only after the intentional
+release workflow completes.
 
-### 3. Windows — Microsoft WinGet (`packaging/winget/`)
-- **Manifest Directory:** `packaging/winget/manifests/b/BhaskarJha/GitSetu/1.1.0/`
-  - Version: `BhaskarJha.GitSetu.yaml`
-  - Installer: `BhaskarJha.GitSetu.installer.yaml`
-  - Locale: `BhaskarJha.GitSetu.locale.en-US.yaml`
-- **Native Launcher:** `packaging/windows/gitsetu.cs` (compiles via built-in `csc.exe` via `build_launcher.ps1`)
-- **Usage:**
-  ```powershell
-  winget install BhaskarJha.GitSetu
-  ```
+Consequently, this branch does not publish installable AUR, Homebrew, Scoop, or
+WinGet manifests and does not advertise a public v1.1.0 installer. The checked-in
+`package.json` is private for the same reason. Missing public v1.1.0 assets are
+expected, not a release failure.
 
-### 4. Windows — Scoop (`packaging/scoop/gitsetu.json`)
-- **Manifest Path:** `packaging/scoop/gitsetu.json`
-- **Target Bucket:** `bhaskarjha-dev/scoop-gitsetu`
-- **Usage:**
-  ```powershell
-  scoop bucket add gitsetu https://github.com/bhaskarjha-dev/scoop-gitsetu
-  scoop install gitsetu
-  ```
+## Channels
 
-### 5. macOS & Linux — Homebrew (`packaging/homebrew/gitsetu.rb`)
-- **Formula Path:** `packaging/homebrew/gitsetu.rb`
-- **Target Tap:** `bhaskarjha-dev/homebrew-tap`
-- **Usage:**
-  ```bash
-  brew tap bhaskarjha-dev/tap
-  brew install gitsetu
-  ```
+| Channel | Development checkout policy | Release source |
+|---|---|---|
+| Standalone bundle | `bash scripts/bundle.sh` | Exact `standalone` artifact in `release.json` |
+| POSIX installer | `bash install.sh --local-development` from a clean checkout | `posixInstaller` + adjacent `release.env` |
+| Windows installer | Test mode with a controlled local ZIP only | `windowsInstaller` + adjacent `release.env` |
+| npm | `npm pack` / `npx` from this checkout; package is private | npm tarball from the release job |
+| GitHub CLI extensions | `packaging/gh-extension/gh-gitsetu` and `gh-setu` from this checkout | Signed, pinned standalone artifact |
+| AUR / Homebrew / Scoop / WinGet | Templates are validated but must not be rendered | Generated only from a `released` manifest |
 
-### 6. Nix & NixOS — Nix Flake (`flake.nix`)
-- **Flake Path:** `flake.nix` (repository root)
-- **Usage:**
-  ```bash
-  # Run directly via Nix
-  nix run github:bhaskarjha-dev/gitsetu -- setup
-  # Install to user profile
-  nix profile install github:bhaskarjha-dev/gitsetu
-  ```
+The npm command aliases are `gitsetu` and `git-setu` (the latter provides
+`git setu`). GitHub CLI exposes one command per installed extension, so the
+primary `gh-gitsetu` repository provides `gh gitsetu` and the separately packaged
+`gh-setu` repository provides the compatibility command `gh setu`.
 
-### 7. Arch Linux — AUR (`packaging/aur/`)
-- **Files:** `packaging/aur/PKGBUILD`, `packaging/aur/.SRCINFO`
-- **Usage:**
-  ```bash
-  yay -S gitsetu
-  # or
-  paru -S gitsetu
-  ```
+## Development metadata templates
 
-### 8. GitHub CLI Extension (`packaging/gh-extension/`)
-- **Shim:** `packaging/gh-extension/gh-gitsetu`
-- **Usage:**
-  ```bash
-  gh extension install bhaskarjha-dev/gh-gitsetu
-  gh gitsetu setup
-  ```
+Release-manager inputs live under `packaging/templates/`. They intentionally
+contain `{{TOKEN}}` placeholders and are not directly installable. Once a release
+is intentionally approved, update `packaging/release.json` to `released`, add
+the exact commit and signed artifact metadata, regenerate `release.env`, and run:
 
----
+```bash
+node packaging/release.js validate-source
+node packaging/release.js write-env
+node packaging/release.js render
+```
 
-## Direct Zero-Dependency Shell Installers
+In development, `node packaging/release.js render` must fail. This prevents an
+unreleased branch from acquiring installable claims or stale v1.0.0 hashes.
 
-- **macOS & Linux (POSIX Bash):**
-  ```bash
-  curl -sL https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.sh | bash
-  # Or via custom domain:
-  # curl -sL https://gitsetu.bhaskarjha.dev/install | bash
-  ```
+## Build and verification
 
-- **Windows (PowerShell):**
-  ```powershell
-  irm https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.ps1 | iex
-  # Or via custom domain:
-  # irm https://gitsetu.bhaskarjha.dev/install.ps1 | iex
-  ```
+```bash
+node packaging/release.js validate-source
+make dist-check
+make check
+```
+
+The bundle is written atomically as `dist/gitsetu`; its module list, source
+state, version, and SHA-256 are recorded in `dist/gitsetu.manifest.json`.
+Windows launcher output is normalized to deterministic bytes before packaging.
+The Windows ZIP builder accepts only the explicit runtime file allowlist and
+uses forward-slash ZIP member names.
+
+The release workflow must verify the full Git commit, all exact artifact bytes,
+cosign signatures, generated checksums, and provenance before changing a draft
+GitHub release to public. Pull requests and development builds never receive a
+publication token.

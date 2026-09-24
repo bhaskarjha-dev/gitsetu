@@ -1,0 +1,17 @@
+pkgbase = gitsetu
+\tpkgdesc = Zero-trust multi-account Git identity orchestrator
+\tpkgver = {{VERSION}}
+\tpkgrel = 1
+\turl = https://gitsetu.bhaskarjha.dev
+\tarch = any
+\tlicense = MIT
+\tdepends = bash
+\tdepends = git
+\tdepends = openssh
+\tdepends = openssl
+\tdepends = coreutils
+\toptdepends = libfido2: FIDO2 / YubiKey hardware key support
+\tsource = {{SOURCE_FILE}}::{{SOURCE_URL}}
+\tsha256sums = {{SOURCE_SHA256}}
+
+pkgname = gitsetu

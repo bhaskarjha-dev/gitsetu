@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "name": "gitsetu",
+  "version": "1.1.0",
+  "releaseState": "development",
+  "sourceCommit": "ee8b763ad2879265564ab033f67602321203be0e",
+  "sourceDirty": "dirty",
+  "bundleSha256": "7e2b72170864e9a676d789780dca14c0b8b4cb6eb9dc91ee7ca1005ffd229f65",
+  "modules": [
+    {
+      "path": "lib/core.sh",
+      "sha256": "fde839c4173e5c66662f20f0563e2dd67dcbea853af200c7b0f6c88fb73fe04d"
+    },
+    {
+      "path": "lib/platform.sh",
+      "sha256": "aaff25c19eae5f029282ce08e84da32bdd10689e8554aeed06cf98750c12f519"
+    },
+    {
+      "path": "lib/ui.sh",
+      "sha256": "80d09f948ee5e499dafeb14b0e65870fe91b3bc75eaf64214e7725993a483c4a"
+    },
+    {
+      "path": "lib/validate.sh",
+      "sha256": "9647220a5d7317c0c9f009ac10a4f37f5880df0406d262bfb0f883fce2339c2b"
+    },
+    {
+      "path": "lib/backup.sh",
+      "sha256": "83490f5a9167be0c8f8a6096bca8310bd29683fbf49969a72d6b01e88d8d854e"
+    },
+    {
+      "path": "lib/ssh.sh",
+      "sha256": "aefa2dfc94c47524c926e6225dc5f72ab966b60fa817b0a08bd4db1c31faeb57"
+    },
+    {
+      "path": "lib/gitconfig.sh",
+      "sha256": "b71b4683df4a551e02fd07e6014530e2e9f538dbd4176442b1e2c9e404e0c8f4"
+    },
+    {
+      "path": "lib/guard.sh",
+      "sha256": "6e677eb6cd0218a1eb7aeb2323c69708fcd6a61596d86f0ca5713e0b3db94bac"
+    },
+    {
+      "path": "lib/doctor.sh",
+      "sha256": "15ff2e36992131f28615c22f3c978a4c8ebc842a91b0407a612b0cea862d4a5e"
+    },
+    {
+      "path": "lib/verify.sh",
+      "sha256": "55c8eb1dcb16d4f73443634a80a46239c88432ea7a872b091dba892b2dbf3f94"
+    },
+    {
+      "path": "lib/teardown.sh",
+      "sha256": "65c3b55bb0cbfd601dd773f5f3cbbd5e88ffd9bf1cc94820c28602b897207aa8"
+    },
+    {
+      "path": "lib/discovery.sh",
+      "sha256": "4487237f1fd770c6121f9b7dc05d4462b9de4a830ee45f0334e3b912f6a493fb"
+    },
+    {
+      "path": "lib/setup.sh",
+      "sha256": "a71f7365bf82243727c5efe249db6ae1419c07e53ef85f1766018f59ecc03c8a"
+    },
+    {
+      "path": "lib/keychain.sh",
+      "sha256": "cab327d80311baa8b89509c6b8ca5ac04d4c810db02b27af85de5c87ecaa3389"
+    },
+    {
+      "path": "lib/completion.sh",
+      "sha256": "73cadd4d1c786cb7f0cb63ac92e050e9bc3aa9654aad8f5d413f651f7074b162"
+    }
+  ]
+}

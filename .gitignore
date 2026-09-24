@@ -18,7 +18,6 @@ gitsetu_vault_pre_restore_*.tar.gz.enc.password
 # --- Node.js ---
 node_modules/
 npm-debug.log*
-package-lock.json
 *.tgz
 
 # --- Backups & temporaries ---

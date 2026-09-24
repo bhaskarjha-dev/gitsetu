@@ -1,7 +1,8 @@
 {
   "name": "gitsetu",
   "version": "1.1.0",
-  "description": "Zero-trust multi-account Git identity orchestrator. One command. All identities. Every machine.",
+  "private": true,
+  "description": "Development build of the zero-trust multi-account Git identity orchestrator. v1.1.0 is not publicly released.",
   "main": "bin/gitsetu.js",
   "bin": {
     "gitsetu": "./bin/gitsetu.js",
@@ -15,8 +16,11 @@
     "LICENSE"
   ],
   "scripts": {
+    "metadata": "node packaging/release.js validate-source",
     "test": "bash tests/run_all.sh",
-    "dist": "bash scripts/bundle.sh"
+    "dist": "bash scripts/bundle.sh",
+    "verify:bundle": "node packaging/release.js verify-bundle dist/gitsetu dist/gitsetu.manifest.json",
+    "check": "npm run metadata && npm test && npm run dist && npm run verify:bundle"
   },
   "repository": {
     "type": "git",
@@ -39,6 +43,11 @@
   },
   "homepage": "https://gitsetu.bhaskarjha.dev",
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=18.0.0"
+  },
+  "packageManager": "npm@10.8.2",
+  "gitsetuRelease": {
+    "state": "development",
+    "manifest": "packaging/release.json"
   }
 }

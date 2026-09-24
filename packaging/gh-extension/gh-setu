@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# gh-gitsetu — integrity-verifying GitHub CLI extension for GitSetu.
+# gh-setu — integrity-verifying GitHub CLI command alias for GitSetu.
 set -euo pipefail
 umask 077
 

@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "name": "gitsetu",
+  "version": "1.1.0",
+  "release": {
+    "state": "development",
+    "prerelease": true,
+    "public": false,
+    "tag": null,
+    "commit": null,
+    "publishedAt": null
+  },
+  "sourceRepository": "https://github.com/bhaskarjha-dev/gitsetu",
+  "aliases": {
+    "commands": [
+      "gitsetu",
+      "git-setu"
+    ],
+    "githubExtensions": [
+      "gh-gitsetu",
+      "gh-setu"
+    ]
+  },
+  "runtime": {
+    "bashMinimum": "3.2",
+    "posix": [
+      "bash",
+      "git",
+      "openssh",
+      "openssl",
+      "coreutils"
+    ],
+    "windows": [
+      "Git for Windows"
+    ]
+  },
+  "trust": {
+    "hashAlgorithm": "sha256",
+    "signatureScheme": "cosign-blob",
+    "oidcIssuer": "https://token.actions.githubusercontent.com"
+  },
+  "artifacts": {}
+}
