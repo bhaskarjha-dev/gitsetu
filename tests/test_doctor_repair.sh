@@ -21,30 +21,53 @@ setup_valid_gitsetu_environment() {
     mkdir -p "$GITSETU_CONFIG_DIR" "$GITSETU_PROFILES_DIR" "$HOME/.ssh"
     
     # Create profile gitconfigs
-    cat << 'EOF' > "$GITSETU_PROFILES_DIR/work.gitconfig"
-[user]
-    name = Work User
-    email = work@corp.com
-EOF
-    cat << 'EOF' > "$GITSETU_PROFILES_DIR/personal.gitconfig"
-[user]
-    name = Personal User
-    email = personal@me.dev
-EOF
+    test_v2_profile_config global "Global User" "global@example.com"
+    test_v2_profile_config work "Work User" "work@corp.com"
+    test_v2_profile_config personal "Personal User" "personal@me.dev"
 
-    # Create dummy private/public keys
-    ssh-keygen -t ed25519 -C "work@corp.com" -f "$HOME/.ssh/id_ed25519_work" -N "" -q
-    ssh-keygen -t ed25519 -C "personal@me.dev" -f "$HOME/.ssh/id_ed25519_personal" -N "" -q
+    # Create and validate every key named by the strict v2 registry,
+    # including the mandatory global profile.
+    if ! ssh-keygen -t ed25519 -C "global@example.com" \
+        -f "$HOME/.ssh/id_ed25519_global" -N "" -q; then
+        printf '    FAIL: could not create the global SSH fixture key\n'
+        return 1
+    fi
+    if ! ssh-keygen -t ed25519 -C "work@corp.com" \
+        -f "$HOME/.ssh/id_ed25519_work" -N "" -q; then
+        printf '    FAIL: could not create the work SSH fixture key\n'
+        return 1
+    fi
+    if ! ssh-keygen -t ed25519 -C "personal@me.dev" \
+        -f "$HOME/.ssh/id_ed25519_personal" -N "" -q; then
+        printf '    FAIL: could not create the personal SSH fixture key\n'
+        return 1
+    fi
+    local key_path
+    for key_path in \
+        "$HOME/.ssh/id_ed25519_global" \
+        "$HOME/.ssh/id_ed25519_work" \
+        "$HOME/.ssh/id_ed25519_personal"; do
+        if [[ ! -f "$key_path" || -L "$key_path" ]]; then
+            printf '    FAIL: SSH fixture key is missing or redirected: %s\n' "$key_path"
+            return 1
+        fi
+    done
 
-    # Set up profile registry
-    cat << EOF > "$GITSETU_PROFILES_CONF"
-work::$HOME/work:github.com:0:$HOME/.ssh/id_ed25519_work:
-personal::$HOME/personal:github.com:0:$HOME/.ssh/id_ed25519_personal:
-EOF
+    # Set up a strict v2 profile registry; legacy seven-field rows are never
+    # accepted by the product loader.
+    {
+        test_v2_registry_header
+        test_v2_registry_line global "" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_global" ""
+        test_v2_registry_line work "$HOME/work" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_work" ""
+        test_v2_registry_line personal "$HOME/personal" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_personal" ""
+    } > "$GITSETU_PROFILES_CONF"
 
-    load_profiles
-    write_global_gitconfig
-    write_ssh_config
+    load_profiles || return 1
+    write_global_gitconfig || return 1
+    write_ssh_config || return 1
 }
 
 # ------------------------------------------------------------------------------
@@ -212,6 +235,75 @@ test_run_doctor_suggests_repair_on_broken() {
 }
 
 # ------------------------------------------------------------------------------
+# Test 10: corrupt SSH state invokes the SSH writer even when Git is healthy
+# ------------------------------------------------------------------------------
+test_repair_planner_invokes_ssh_writer_for_corrupt_ssh_state() {
+    setup_test_home
+    source_gitsetu_libs
+    mkdir -p "$GITSETU_PROFILES_DIR" "$HOME/.ssh"
+    test_v2_profile_config global "Global User" "global@example.com"
+    {
+        test_v2_registry_header
+        test_v2_registry_line global "" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_global" ""
+    } > "$GITSETU_PROFILES_CONF"
+    printf '%s\n[user]\n    name = Global User\n    email = global@example.com\n%s\n' \
+        "$GITSETU_MANAGED_START" "$GITSETU_MANAGED_END" > "$HOME/.gitconfig"
+    printf '%s\n' 'Host custom' '    HostName 127.0.0.1' > "$HOME/.ssh/config"
+    rm -f "$GITSETU_PROFILES_DIR/ssh_config"
+    unset SSH_AUTH_SOCK
+
+    local marker="$TEST_HOME/ssh-writer-called"
+    rm -f "$marker"
+    local output rc=0
+    output=$(
+        acquire_lock() { GITSETU_LOCK_DEPTH=1; return 0; }
+        release_lock() { GITSETU_LOCK_DEPTH=0; return 0; }
+        write_global_gitconfig() { return 0; }
+        write_ssh_config() {
+            printf 'called\\n' > "$marker"
+            mkdir -p "$GITSETU_PROFILES_DIR" "$HOME/.ssh"
+            printf '%s\\n' '# generated' > "$GITSETU_PROFILES_DIR/ssh_config"
+            printf '%s\\n' 'Include ~/.config/gitsetu/profiles/ssh_config' > "$HOME/.ssh/config"
+            return 0
+        }
+        run_doctor_repair 2>&1
+    ) || rc=$?
+    assert_equals "0" "$rc" "SSH corruption repair succeeds when the SSH writer is available" || return 1
+    assert_file_exists "$marker" "repair planner invokes write_ssh_config for corrupt SSH state" || return 1
+    assert_contains "$output" "Repair complete" "SSH repair reports completion" || return 1
+    rm -f "$marker"
+}
+
+# ------------------------------------------------------------------------------
+# Test 9: a failed later writer rolls back earlier config mutations
+# ------------------------------------------------------------------------------
+test_repair_rolls_back_partial_config_write() {
+    setup_valid_gitsetu_environment
+    unset SSH_AUTH_SOCK
+    local corrupted_ssh
+    corrupted_ssh=$'Host intentionally-broken\n    HostName 127.0.0.1'
+    printf '%s\n' "$corrupted_ssh" > "$HOME/.ssh/config"
+    rm -f "$HOME/.gitconfig" "$GITSETU_PROFILES_DIR/ssh_config"
+
+    local checkout="$TEST_HOME/repair-fault-checkout"
+    mkdir -p "$checkout"
+    cp "$GITSETU_EXE" "$checkout/gitsetu"
+    cp -R "$REPO_DIR/lib" "$checkout/lib"
+    printf '\nwrite_ssh_config() { return 17; }\n' >> "$checkout/lib/ssh.sh"
+
+    local output rc=0
+    output=$(bash "$checkout/gitsetu" doctor --repair 2>&1) || rc=$?
+    assert_equals "1" "$rc" "failed SSH writer makes repair fail" || return 1
+    assert_file_not_exists "$HOME/.gitconfig" "Git config mutation is rolled back" || return 1
+    local restored_ssh
+    restored_ssh=$(cat "$HOME/.ssh/config") || return 1
+    assert_equals "$corrupted_ssh" "$restored_ssh" "corrupted SSH config is restored after rollback" || return 1
+    assert_file_not_exists "$GITSETU_PROFILES_DIR/ssh_config" "missing isolated SSH state remains absent after rollback" || return 1
+    assert_contains "$output" "rolled back" "repair reports rollback" || return 1
+}
+
+# ------------------------------------------------------------------------------
 # Run all tests
 # ------------------------------------------------------------------------------
 printf '\n%btest_doctor_repair.sh%b\n' "$T_BOLD" "$T_RESET"
@@ -223,4 +315,6 @@ run_test "doctor --repair registers missing keys in agent" test_repair_registers
 run_test "CLI gitsetu doctor --repair routes to repair pipeline" test_cli_doctor_repair_dispatch
 run_test "CLI gitsetu doctor --repair --dry-run makes 0 mutations" test_cli_doctor_repair_dry_run
 run_test "doctor diagnostics footer conditionally suggests --repair" test_run_doctor_suggests_repair_on_broken
+run_test "doctor repair rolls back partial config writes" test_repair_rolls_back_partial_config_write
+run_test "repair planner invokes SSH writer for corrupt SSH state" test_repair_planner_invokes_ssh_writer_for_corrupt_ssh_state
 print_results "Doctor Repair tests"

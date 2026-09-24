@@ -12,6 +12,48 @@ setup_test_home
 source_gitsetu_libs
 detect_os
 
+# Keep an end-to-end child from turning this suite into an unbounded hang when
+# a product command waits for input or a broken helper.  GNU timeout is used
+# when available; the fallback is portable Bash and preserves the child status.
+run_integration_with_timeout() {
+    local seconds="$1"
+    shift
+    local command_pid watchdog_pid command_status=0 watchdog_status=0
+
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$seconds" "$@"
+        return $?
+    fi
+
+    "$@" &
+    command_pid=$!
+    (
+        sleep "$seconds"
+        if kill -0 "$command_pid" 2>/dev/null; then
+            kill -TERM "$command_pid" 2>/dev/null
+            sleep 1
+            if kill -0 "$command_pid" 2>/dev/null; then
+                kill -KILL "$command_pid" 2>/dev/null
+            fi
+        fi
+    ) &
+    watchdog_pid=$!
+    wait "$command_pid" || command_status=$?
+    if kill -0 "$watchdog_pid" 2>/dev/null; then
+        kill -TERM "$watchdog_pid" 2>/dev/null
+    fi
+    if wait "$watchdog_pid" 2>/dev/null; then
+        :
+    else
+        watchdog_status=$?
+        [[ "$watchdog_status" -eq 143 || "$watchdog_status" -eq 137 ]] || return "$watchdog_status"
+    fi
+    if [[ "$command_status" -eq 143 || "$command_status" -eq 137 ]]; then
+        return 124
+    fi
+    return "$command_status"
+}
+
 # --- Integration tests ---
 
 # Simulate a full 2-profile setup
@@ -32,10 +74,16 @@ setup_two_profiles() {
     mkdir -p "$HOME/dev/pro"
 
     # Execute all setup steps
-    ensure_dirs 2>/dev/null
-    generate_ssh_key "global" "global@test.com" "$HOME/.ssh/id_ed25519_global" 2>/dev/null || true
-    generate_ssh_key "pro" "pro@test.com" "$HOME/.ssh/id_ed25519_pro" 2>/dev/null || true
-    write_profile_gitconfig "pro" "Test Pro" "pro@test.com" "0" "$HOME/.ssh/id_ed25519_pro" 2>/dev/null
+    ensure_dirs 2>/dev/null || return 1
+    if ! generate_ssh_key "global" "global@test.com" "$HOME/.ssh/id_ed25519_global" 2>/dev/null; then
+        printf '    FAIL: could not create the global SSH fixture key\n'
+        return 1
+    fi
+    if ! generate_ssh_key "pro" "pro@test.com" "$HOME/.ssh/id_ed25519_pro" 2>/dev/null; then
+        printf '    FAIL: could not create the pro SSH fixture key\n'
+        return 1
+    fi
+    write_profile_gitconfig "pro" "Test Pro" "pro@test.com" "0" "$HOME/.ssh/id_ed25519_pro" 2>/dev/null || return 1
     write_global_gitconfig 2>/dev/null
     write_ssh_config 2>/dev/null
     write_profiles_conf 2>/dev/null
@@ -65,9 +113,20 @@ test_integration_includeif_correct() {
 }
 
 test_integration_profile_config_created() {
-    assert_file_exists "$GITSETU_PROFILES_DIR/pro.gitconfig" "pro profile exists" &&
-    assert_file_contains "$GITSETU_PROFILES_DIR/pro.gitconfig" "email = pro@test.com" "pro has email" &&
-    assert_file_contains "$GITSETU_PROFILES_DIR/pro.gitconfig" "sshCommand = ssh -i ~/.ssh/id_ed25519_pro" "pro has sshCommand"
+    local profile_config="$GITSETU_PROFILES_DIR/pro.gitconfig"
+    assert_file_exists "$profile_config" "pro profile exists" || return 1
+    assert_file_contains "$profile_config" "email = pro@test.com" "pro has email" || return 1
+
+    # Do not assert a platform-specific rendering (`~/...` versus an absolute
+    # path, quoting, or slash style).  Ask Git for the effective value and
+    # verify the identity-file basename and option are present.
+    local ssh_command
+    if ! ssh_command=$(git config --file "$profile_config" --get core.sshCommand); then
+        printf '    FAIL: Git could not read the profile core.sshCommand value\n'
+        return 1
+    fi
+    assert_contains "$ssh_command" "-i" "pro uses an identity-file option" || return 1
+    assert_contains "$ssh_command" "id_ed25519_pro" "pro sshCommand references its key"
 }
 
 test_integration_ssh_config_created() {
@@ -80,9 +139,12 @@ test_integration_ssh_config_created() {
 }
 
 test_integration_profiles_conf_created() {
-    assert_file_exists "$GITSETU_PROFILES_CONF" "profiles.conf exists" &&
-    assert_file_contains "$GITSETU_PROFILES_CONF" "global:::" "global entry" &&
-    assert_file_contains "$GITSETU_PROFILES_CONF" "pro::$HOME/dev/pro" "pro entry"
+    assert_file_exists "$GITSETU_PROFILES_CONF" "profiles.conf exists" || return 1
+    assert_file_contains "$GITSETU_PROFILES_CONF" "# gitsetu-registry-v2" "strict v2 header exists" || return 1
+    load_profiles
+    assert_equals "2" "$PROFILE_COUNT" "v2 registry loads both profiles"
+    assert_equals "global" "${PROFILE_LABELS[0]}" "global v2 record exists"
+    assert_equals "pro" "${PROFILE_LABELS[1]}" "pro v2 record exists"
 }
 
 test_integration_gitconfig_parseable() {
@@ -135,27 +197,33 @@ test_integration_backup_created() {
 }
 
 test_integration_gitsetu_run() {
-    # Clean up to avoid interactive prompts on existing keys
-    rm -rf "$HOME/.ssh" "$GITSETU_CONFIG_DIR"
-    setup_two_profiles
+    # The preceding setup cases already created a valid strict v2 state.  Reuse
+    # it instead of regenerating keys and repeatedly traversing the Windows
+    # reparse-point checks; this case is about the run boundary, not setup.
+    if ! load_profiles; then
+        printf '    FAIL: integration fixture registry could not be loaded\n'
+        return 1
+    fi
 
-    # Execute gitsetu run in a subshell, verify it exports the right email
     local output
     local gitsetu_script
     gitsetu_script="$(dirname "${BASH_SOURCE[0]}")/../gitsetu"
     gitsetu_script="${gitsetu_script%$'\r'}"
-    
-    # Run gitsetu and capture output, ignoring failures due to set -e
-    local raw_output
-    raw_output=$(bash "$gitsetu_script" run pro -- env 2>&1 || true)
-    
-    output=$(echo "$raw_output" | grep "^GIT_AUTHOR_EMAIL=" || true)
-    
+
+    # Run gitsetu with a bounded child so a broken product command fails the
+    # test instead of hanging the whole suite.
+    local raw_output run_status=0
+    raw_output=$(run_integration_with_timeout 30 bash "$gitsetu_script" run pro -- env 2>&1) || run_status=$?
+    assert_equals "0" "$run_status" "gitsetu run exits successfully" || return 1
+
+    if ! output=$(printf '%s\n' "$raw_output" | grep '^GIT_AUTHOR_EMAIL='); then
+        output=""
+    fi
+
     if [[ "$output" != "GIT_AUTHOR_EMAIL=pro@test.com" ]]; then
         echo "RAW OUTPUT WAS: $raw_output"
     fi
     assert_equals "GIT_AUTHOR_EMAIL=pro@test.com" "$output" "gitsetu run exports correct environment variable"
-
 }
 
 test_identity_preservation_on_reload() {
@@ -210,7 +278,7 @@ run_test "global gitconfig created with defaults" test_integration_gitconfig_cre
 run_test "includeIf has correct path" test_integration_includeif_correct
 run_test "profile gitconfig created" test_integration_profile_config_created
 run_test "SSH config has host aliases" test_integration_ssh_config_created
-run_test "profiles.conf registry created" test_integration_profiles_conf_created
+run_test "strict v2 profiles.conf registry created" test_integration_profiles_conf_created
 run_test "global gitconfig is parseable by git" test_integration_gitconfig_parseable
 run_test "profile gitconfig is parseable by git" test_integration_profile_gitconfig_parseable
 run_test "re-run is idempotent (no duplicates)" test_integration_idempotent_rerun

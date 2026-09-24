@@ -1,76 +1,59 @@
 #!/usr/bin/env bash
-# tests/test_gh_extension.sh — Tests GitHub CLI extension wrapper
+# shellcheck disable=SC2015  # Test assertion idiom: pass/fail helpers return zero/nonzero explicitly.
+# GitHub CLI extension wrapper contract tests.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+EXT="$ROOT/packaging/gh-extension/gh-gitsetu"
+ALIAS="$ROOT/packaging/gh-extension/gh-setu"
 passed=0
 failed=0
+pass() { printf '  [PASS] %s\n' "$1"; passed=$((passed + 1)); }
+fail() { printf '  [FAIL] %s\n' "$1" >&2; failed=$((failed + 1)); }
 
-pass() {
-    printf "  \033[32m✔\033[0m %s\n" "$1"
-    passed=$((passed + 1))
-}
-
-fail() {
-    printf "  \033[31m✖\033[0m %s: %s\n" "$1" "$2"
-    failed=$((failed + 1))
-}
-
-echo "=== Running tests/test_gh_extension.sh ==="
-
-GH_EXT="$REPO_DIR/packaging/gh-extension/gh-gitsetu"
-
-# 1. Existence & syntax
-if [ -f "$GH_EXT" ]; then
-    pass "packaging/gh-extension/gh-gitsetu exists"
+[[ -f "$EXT" && -x "$EXT" ]] && pass "gh-gitsetu is an executable file" || fail "gh-gitsetu executable"
+[[ -f "$ALIAS" && -x "$ALIAS" ]] && pass "gh-setu is an executable file" || fail "gh-setu executable"
+bash -n "$EXT" && bash -n "$ALIAS" && pass "extension scripts pass Bash syntax" || fail "extension syntax"
+if diff -u <(tail -n +3 "$EXT") <(tail -n +3 "$ALIAS") >/dev/null; then
+    pass "gh setu uses the same verified extension implementation"
 else
-    fail "extension existence" "gh-gitsetu missing"
+    fail "gh setu implementation drift"
 fi
 
-if bash -n "$GH_EXT"; then
-    pass "gh-gitsetu passes bash syntax validation"
+version_output="$("$EXT" --version 2>&1)" || version_rc=$?
+version_rc=${version_rc:-0}
+if [[ "$version_rc" -eq 0 ]] && printf '%s' "$version_output" | grep -q 'gitsetu v1.1.0'; then
+    pass "checkout extension delegates to the physical checkout"
 else
-    fail "syntax" "syntax error in gh-gitsetu"
+    fail "checkout version delegation: $version_output"
 fi
-
-# 2. Test --version delegation
-ver_out=$(bash "$GH_EXT" --version 2>/dev/null || echo "")
-if [[ "$ver_out" == *"gitsetu v1.1.0"* ]]; then
-    pass "gh-gitsetu --version delegates and returns v1.1.0"
+help_output="$("$EXT" --help 2>&1)" || help_rc=$?
+help_rc=${help_rc:-0}
+if [[ "$help_rc" -eq 0 ]] && printf '%s' "$help_output" | grep -q 'USAGE'; then
+    pass "extension forwards help arguments"
 else
-    fail "gh-gitsetu --version" "output was '$ver_out'"
+    fail "extension help forwarding"
 fi
 
-# 3. Test --help delegation
-help_out=$(bash "$GH_EXT" --help 2>&1 || true)
-if echo "$help_out" | grep -q "USAGE"; then
-    pass "gh-gitsetu --help delegates and renders help menu"
+if "$EXT" definitely-not-a-command >/dev/null 2>&1; then
+    fail "extension forwards a failing status"
 else
-    fail "gh-gitsetu --help" "failed to render USAGE header"
+    pass "extension forwards a failing status"
 fi
 
-# 4. Test argument forwarding with status command
-if bash "$GH_EXT" status >/dev/null 2>&1; then
-    pass "gh-gitsetu status forwards subcommand cleanly"
+alias_output="$("$ALIAS" --version 2>&1)" || alias_rc=$?
+alias_rc=${alias_rc:-0}
+if [[ "$alias_rc" -eq 0 ]] && printf '%s' "$alias_output" | grep -q 'gitsetu v1.1.0'; then
+    pass "gh setu alias delegates to the physical checkout"
 else
-    fail "gh-gitsetu status" "subcommand failed to execute"
+    fail "gh setu alias: $alias_output"
 fi
 
-# 5. Test exit code forwarding for unknown command
-set +e
-bash "$GH_EXT" unknown-cmd-xyz >/dev/null 2>&1
-exit_code=$?
-set -e
-if [ "$exit_code" -ne 0 ]; then
-    pass "gh-gitsetu forwards non-zero exit code on failure"
+if grep -Eq 'command -v gitsetu|exec gitsetu|GITSETU_BASH' "$EXT" "$ALIAS"; then
+    fail "extension PATH delegation guard"
 else
-    fail "exit code forwarding" "expected non-zero exit code but got $exit_code"
+    pass "extension has no arbitrary installed-command delegation"
 fi
 
-echo ""
-echo "GitHub CLI Extension tests: $passed passed, $failed failed, $((passed + failed)) total"
-if [ "$failed" -gt 0 ]; then
-    exit 1
-fi
+printf 'GitHub extension tests: %d passed, %d failed\n' "$passed" "$failed"
+[[ "$failed" -eq 0 ]]

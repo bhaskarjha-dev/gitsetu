@@ -14,6 +14,24 @@ setup_repo() {
     git -C "$dir" init --quiet
 }
 
+# Write the strict v2 registry and its single identity source. The first record
+# is always the required global profile.
+seed_v2_work_profile() {
+    local dir="${1:-$HOME/work}" name="${2:-Test User}" email="${3:-work@example.com}"
+    GITSETU_DRY_RUN=0
+    PROFILE_LABELS=("global" "work")
+    PROFILE_NAMES=("Global User" "$name")
+    PROFILE_EMAILS=("global@example.com" "$email")
+    PROFILE_DIRS=("" "$dir")
+    PROFILE_PROVIDERS=("github.com" "github.com")
+    PROFILE_SIGNS=("0" "0")
+    PROFILE_KEYS=("$HOME/.ssh/id_ed25519_global" "$HOME/.ssh/id_ed25519_work")
+    PROFILE_USERS=("global_user" "work_user")
+    PROFILE_PATS=("" "")
+    PROFILE_COUNT=2
+    write_profiles_conf >/dev/null
+}
+
 # --- Tests ---
 test_install_guard() {
     GITSETU_DRY_RUN=0
@@ -28,10 +46,7 @@ test_install_guard() {
 
 test_guard_blocks_mismatch() {
     GITSETU_DRY_RUN=0
-    # Mock profiles.conf
-    mkdir -p "$(dirname "$GITSETU_PROFILES_CONF")"
-    echo "work:work@example.com:$HOME/work:github.com:0:" > "$GITSETU_PROFILES_CONF"
-    
+    seed_v2_work_profile "$HOME/work" "Test" "work@example.com"
     install_guard 2>/dev/null
     
     setup_repo "$HOME/work"
@@ -44,14 +59,13 @@ test_guard_blocks_mismatch() {
     local output
     output=$(git -C "$HOME/work" commit -m "Test" 2>&1 || echo "FAILED")
     
-    assert_contains "$output" "Identity mismatch detected" "hook blocks mismatch" || return 1
+    assert_contains "$output" "BLOCKING COMMIT" "hook blocks mismatch" || return 1
+    assert_contains "$output" "effective Git identity" "mismatch identifies effective config" || return 1
 }
 
 test_guard_allows_match() {
     GITSETU_DRY_RUN=0
-    mkdir -p "$(dirname "$GITSETU_PROFILES_CONF")"
-    echo "work:work@example.com:$HOME/work:github.com:0:" > "$GITSETU_PROFILES_CONF"
-    
+    seed_v2_work_profile "$HOME/work" "Test" "work@example.com"
     install_guard 2>/dev/null
     
     setup_repo "$HOME/work"
@@ -63,33 +77,34 @@ test_guard_allows_match() {
     
     local output
     # Git requires author/committer names, provide env to satisfy it since no global config
-    output=$(GIT_AUTHOR_NAME="T" GIT_AUTHOR_EMAIL="work@example.com" GIT_COMMITTER_NAME="T" GIT_COMMITTER_EMAIL="work@example.com" git -C "$HOME/work" commit -m "Test" 2>&1 || echo "FAILED")
+    output=$(GIT_AUTHOR_NAME="Test" GIT_AUTHOR_EMAIL="work@example.com" GIT_COMMITTER_NAME="Test" GIT_COMMITTER_EMAIL="work@example.com" git -C "$HOME/work" commit -m "Test" 2>&1 || echo "FAILED")
     
-    assert_not_contains "$output" "Identity mismatch detected" "hook allows match" || return 1
+    assert_not_contains "$output" "GitSetu Guard: BLOCKING" "hook allows match" || return 1
+    assert_not_contains "$output" "FAILED" "matched commit succeeds" || return 1
 }
 
-test_guard_blocks_missing_config() {
+test_guard_missing_registry_is_unmanaged_fail_open() {
     GITSETU_DRY_RUN=0
-    # DO NOT create profiles.conf
+    # With no registry and no managed global block, the repository is unmanaged;
+    # identity enforcement fails open while the normal Git commit rules apply.
     rm -f "$GITSETU_PROFILES_CONF"
-    
     install_guard 2>/dev/null
-    
+
     setup_repo "$HOME/work"
-    touch "$HOME/work/test.txt"
-    git -C "$HOME/work" add test.txt
-    
+    touch "$HOME/work/unmanaged.txt"
+    git -C "$HOME/work" add unmanaged.txt
+
     local output
-    output=$(git -C "$HOME/work" commit -m "Test" 2>&1 || echo "FAILED")
-    
-    assert_contains "$output" "Identity configuration not found" "hook blocks if config is missing" || return 1
-    assert_contains "$output" "FAILED" "commit failed" || return 1
+    output=$(GIT_AUTHOR_NAME="Test" GIT_AUTHOR_EMAIL="outside@example.com" \
+        GIT_COMMITTER_NAME="Test" GIT_COMMITTER_EMAIL="outside@example.com" \
+        git -C "$HOME/work" commit -m "Unmanaged" 2>&1 || echo "FAILED")
+    assert_not_contains "$output" "GitSetu Guard: BLOCKING" "unmanaged repo is not identity-blocked" || return 1
+    assert_not_contains "$output" "FAILED" "unmanaged commit can proceed" || return 1
 }
 
 test_guard_pass_through() {
     GITSETU_DRY_RUN=0
-    mkdir -p "$(dirname "$GITSETU_PROFILES_CONF")"
-    echo "work:work@example.com:$HOME/work:github.com:0:" > "$GITSETU_PROFILES_CONF"
+    seed_v2_work_profile "$HOME/work" "Test" "work@example.com"
     install_guard 2>/dev/null
     
     setup_repo "$HOME/work"
@@ -109,24 +124,15 @@ EOF
     git -C "$HOME/work" add test2.txt
     
     local output
-    output=$(GIT_AUTHOR_NAME="T" GIT_AUTHOR_EMAIL="work@example.com" GIT_COMMITTER_NAME="T" GIT_COMMITTER_EMAIL="work@example.com" git -C "$HOME/work" commit -m "Test 2" 2>&1 || echo "FAILED")
+    output=$(GIT_AUTHOR_NAME="Test" GIT_AUTHOR_EMAIL="work@example.com" GIT_COMMITTER_NAME="Test" GIT_COMMITTER_EMAIL="work@example.com" git -C "$HOME/work" commit -m "Test 2" 2>&1 || echo "FAILED")
     
     assert_contains "$output" "LOCAL HOOK PASSTHROUGH SUCCESS" "local hook ran" || return 1
 }
-test_guard_dual_state_desync_recovery() {
-    # Test that guard reads from profile.gitconfig instead of the registry
+test_guard_reads_v2_profile_identity() {
+    # The v2 registry stores no email; the linked profile gitconfig is the
+    # single identity source loaded by core and consumed by the guard.
     GITSETU_DRY_RUN=0
-    mkdir -p "$(dirname "$GITSETU_PROFILES_CONF")"
-    mkdir -p "$GITSETU_PROFILES_DIR"
-    
-    # Registry has NO email
-    echo "work::$HOME/work:github.com:0:" > "$GITSETU_PROFILES_CONF"
-    # Local config has the truth
-    cat > "$GITSETU_PROFILES_DIR/work.gitconfig" <<EOF
-[user]
-    name = Test
-    email = new.truth@example.com
-EOF
+    seed_v2_work_profile "$HOME/work" "Test" "new.truth@example.com"
 
     install_guard 2>/dev/null
     
@@ -138,7 +144,7 @@ EOF
     git -C "$HOME/work" add test3.txt
     
     local output
-    output=$(GIT_AUTHOR_NAME="T" GIT_AUTHOR_EMAIL="new.truth@example.com" GIT_COMMITTER_NAME="T" GIT_COMMITTER_EMAIL="new.truth@example.com" git -C "$HOME/work" commit -m "Test 3" 2>&1 || echo "FAILED")
+    output=$(GIT_AUTHOR_NAME="Test" GIT_AUTHOR_EMAIL="new.truth@example.com" GIT_COMMITTER_NAME="Test" GIT_COMMITTER_EMAIL="new.truth@example.com" git -C "$HOME/work" commit -m "Test 3" 2>&1 || echo "FAILED")
     
     assert_not_contains "$output" "FAILED" "guard allowed commit using the dynamically read email" || return 1
 }
@@ -178,9 +184,9 @@ printf '\n%btest_guard.sh%b\n' "$T_BOLD" "$T_RESET"
 run_test "install_guard links hook" test_install_guard
 run_test "guard blocks mismatched email" test_guard_blocks_mismatch
 run_test "guard allows matched email" test_guard_allows_match
-run_test "guard blocks missing config" test_guard_blocks_missing_config
+run_test "missing registry is unmanaged and fails open" test_guard_missing_registry_is_unmanaged_fail_open
 run_test "guard passes through to local hooks" test_guard_pass_through
-run_test "guard dynamically reads email to prevent desync" test_guard_dual_state_desync_recovery
+run_test "guard reads identity from v2 profile config" test_guard_reads_v2_profile_identity
 run_test "guard prompt bypassed in test mode" test_guard_prompt_bypassed_in_test_mode
 run_test "guard prompt skipped if already installed" test_guard_prompt_skipped_if_already_installed
 run_test "guard prompt defaults to yes" test_guard_prompt_default_yes

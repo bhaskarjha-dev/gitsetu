@@ -19,8 +19,12 @@ GITSETU_EXE="${GITSETU_EXE%$'\r'}"
 # ------------------------------------------------------------------------------
 test_auto_runner_fails_without_email() {
     rm -rf "$GITSETU_CONFIG_DIR" "$HOME/.gitconfig"
-    git config --global --unset user.email 2>/dev/null || true
-    git config --global --unset user.name 2>/dev/null || true
+    if git config --global --get user.email >/dev/null 2>&1; then
+        git config --global --unset user.email || return 1
+    fi
+    if git config --global --get user.name >/dev/null 2>&1; then
+        git config --global --unset user.name || return 1
+    fi
 
     local output rc=0
     output=$(auto_setup_runner 2>&1) || rc=$?
@@ -68,21 +72,18 @@ test_cli_setup_auto_execution() {
 test_auto_runner_adopts_existing_blueprint() {
     rm -rf "$GITSETU_CONFIG_DIR" "$HOME/.gitconfig" "$HOME/.ssh"
     mkdir -p "$GITSETU_PROFILES_DIR"
-
-    cat << EOF > "$GITSETU_PROFILES_CONF"
-work::$HOME/work:github.com:0:$HOME/.ssh/id_ed25519_work:
-personal::$HOME/personal:github.com:0:$HOME/.ssh/id_ed25519_personal:
-EOF
-    cat << EOF > "$GITSETU_PROFILES_DIR/work.gitconfig"
-[user]
-    name = Worker
-    email = worker@corp.com
-EOF
-    cat << EOF > "$GITSETU_PROFILES_DIR/personal.gitconfig"
-[user]
-    name = Person
-    email = person@me.dev
-EOF
+    test_v2_profile_config global "Global User" "global@example.com"
+    test_v2_profile_config work "Worker" "worker@corp.com"
+    test_v2_profile_config personal "Person" "person@me.dev"
+    {
+        test_v2_registry_header
+        test_v2_registry_line global "" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_global" ""
+        test_v2_registry_line work "$HOME/work" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_work" ""
+        test_v2_registry_line personal "$HOME/personal" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_personal" ""
+    } > "$GITSETU_PROFILES_CONF"
 
     local output rc=0
     output=$(auto_setup_runner 2>&1) || rc=$?

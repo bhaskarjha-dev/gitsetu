@@ -18,11 +18,18 @@ if [[ "${USER:-${USERNAME:-}}" != "WDAGUtilityAccount" ]] && [[ -z "${SANDBOX_IS
         export HOME="$AUDIT_SANDBOX_TMP"
     fi
     export GITSETU_CONFIG_DIR="$HOME/.config/gitsetu"
+    export GITSETU_TEST_RUNTIME_DIR="$HOME/.gitsetu-audit-runtime"
+    export GITSETU_LOCK_DIR="$GITSETU_TEST_RUNTIME_DIR/profiles.lock"
     export SANDBOX_ISOLATED=1
     trap 'rm -rf "$AUDIT_SANDBOX_TMP"' EXIT
 elif [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]]; then
     HOME=$(cd "$HOME" && pwd -W 2>/dev/null || pwd)
 fi
+
+# Keep all audit subprocesses on a disposable runtime lock root, independent
+# of whichever config root each phase is exercising.
+export GITSETU_TEST_RUNTIME_DIR="$HOME/.gitsetu-audit-runtime"
+export GITSETU_LOCK_DIR="$GITSETU_TEST_RUNTIME_DIR/profiles.lock"
 
 BOLD='\033[1m'
 GREEN='\033[0;32m'
@@ -1172,8 +1179,12 @@ echo -e "\n${BOLD}${CYAN}[PHASE 26] Security Permission Assertions${RESET}"
 
 sec_sandbox=$(mktemp -d "${TMPDIR:-/tmp}/gitsetu_sec_audit.XXXXXX")
 SEC_OLD_HOME="$HOME"
+SEC_OLD_LOCK_DIR="${GITSETU_LOCK_DIR:-}"
+SEC_OLD_RUNTIME_DIR="${GITSETU_TEST_RUNTIME_DIR:-}"
 export HOME="$sec_sandbox"
 export GITSETU_CONFIG_DIR="$sec_sandbox/.config/gitsetu"
+export GITSETU_TEST_RUNTIME_DIR="$sec_sandbox/.gitsetu-audit-runtime"
+export GITSETU_LOCK_DIR="$GITSETU_TEST_RUNTIME_DIR/profiles.lock"
 mkdir -p "$sec_sandbox/.ssh"
 git config --file "$sec_sandbox/.gitconfig" user.name "Sec Audit User"
 git config --file "$sec_sandbox/.gitconfig" user.email "sec@audit.test"
@@ -1219,7 +1230,7 @@ else
 fi
 
 # 26.4 Lock directory cleaned up after operations
-lock_dir="$GITSETU_CONFIG_DIR/profiles.lock"
+lock_dir="$GITSETU_LOCK_DIR"
 if [[ ! -d "$lock_dir" ]]; then
     record_result "Security" "Lock Cleanup After Operations" "ls profiles.lock" "Lock directory removed" "PASS" "No stale lock directory"
 else
@@ -1238,6 +1249,16 @@ fi
 "$GITSETU" teardown --force >/dev/null 2>&1 || true
 export HOME="$SEC_OLD_HOME"
 export GITSETU_CONFIG_DIR="$SEC_OLD_HOME/.config/gitsetu"
+if [[ -n "$SEC_OLD_LOCK_DIR" ]]; then
+    export GITSETU_LOCK_DIR="$SEC_OLD_LOCK_DIR"
+else
+    unset GITSETU_LOCK_DIR
+fi
+if [[ -n "$SEC_OLD_RUNTIME_DIR" ]]; then
+    export GITSETU_TEST_RUNTIME_DIR="$SEC_OLD_RUNTIME_DIR"
+else
+    unset GITSETU_TEST_RUNTIME_DIR
+fi
 unset GITSETU_TEST_VAULT_PASS
 rm -rf "$sec_sandbox"
 
@@ -1248,8 +1269,12 @@ echo -e "\n${BOLD}${CYAN}[PHASE 27] Concurrency Locking Stress Test${RESET}"
 
 lock_sandbox=$(mktemp -d "${TMPDIR:-/tmp}/gitsetu_lock_audit.XXXXXX")
 LOCK_OLD_HOME="$HOME"
+LOCK_OLD_LOCK_DIR="${GITSETU_LOCK_DIR:-}"
+LOCK_OLD_RUNTIME_DIR="${GITSETU_TEST_RUNTIME_DIR:-}"
 export HOME="$lock_sandbox"
 export GITSETU_CONFIG_DIR="$lock_sandbox/.config/gitsetu"
+export GITSETU_TEST_RUNTIME_DIR="$lock_sandbox/.gitsetu-audit-runtime"
+export GITSETU_LOCK_DIR="$GITSETU_TEST_RUNTIME_DIR/profiles.lock"
 mkdir -p "$lock_sandbox/.ssh"
 git config --file "$lock_sandbox/.gitconfig" user.name "Lock Test User"
 git config --file "$lock_sandbox/.gitconfig" user.email "lock@test.com"
@@ -1272,7 +1297,7 @@ else
 fi
 
 # 27.2 Stale lock with dead PID is recovered
-stale_lock="$GITSETU_CONFIG_DIR/profiles.lock"
+stale_lock="$GITSETU_LOCK_DIR"
 mkdir -p "$stale_lock" 2>/dev/null || true
 echo "99999" > "$stale_lock/pid"
 date +%s > "$stale_lock/timestamp" 2>/dev/null || true
@@ -1320,6 +1345,16 @@ fi
 "$GITSETU" teardown --force >/dev/null 2>&1 || true
 export HOME="$LOCK_OLD_HOME"
 export GITSETU_CONFIG_DIR="$LOCK_OLD_HOME/.config/gitsetu"
+if [[ -n "$LOCK_OLD_LOCK_DIR" ]]; then
+    export GITSETU_LOCK_DIR="$LOCK_OLD_LOCK_DIR"
+else
+    unset GITSETU_LOCK_DIR
+fi
+if [[ -n "$LOCK_OLD_RUNTIME_DIR" ]]; then
+    export GITSETU_TEST_RUNTIME_DIR="$LOCK_OLD_RUNTIME_DIR"
+else
+    unset GITSETU_TEST_RUNTIME_DIR
+fi
 rm -rf "$lock_sandbox"
 
 # ==============================================================================

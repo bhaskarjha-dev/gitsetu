@@ -8,8 +8,10 @@ setup_test_home
 source_gitsetu_libs
 
 test_survives_malformed_gitconfig() {
+    _TEST_GITSETU_LIBS_READY=0
+    source_gitsetu_libs || return 1
     GITSETU_DRY_RUN=0
-    
+
     PROFILE_COUNT=1
     PROFILE_LABELS=("global")
     PROFILE_NAMES=("Test")
@@ -18,6 +20,8 @@ test_survives_malformed_gitconfig() {
     PROFILE_PROVIDERS=("github.com")
     PROFILE_SIGNS=("0")
     PROFILE_KEYS=("$HOME/.ssh/id_ed25519_global")
+    PROFILE_USERS=("")
+    PROFILE_PATS=("")
 
     # Create a corrupted gitconfig
     cat > "$HOME/.gitconfig" <<'EOF'
@@ -34,23 +38,32 @@ test_survives_malformed_gitconfig() {
     email = old@test.com
 EOF
 
-    # The awk script should safely append the managed block and preserve the bad syntax
-    write_global_gitconfig 2>/dev/null
-    
+    # A malformed external Git config is not safe to rewrite. The writer must
+    # fail closed and leave the user's file untouched for manual repair.
+    local status=0
+    write_global_gitconfig >/dev/null 2>&1 || status=$?
+    assert_equals "1" "$status" "malformed gitconfig must be rejected" || return 1
     assert_file_exists "$HOME/.gitconfig" "gitconfig preserved" || return 1
     assert_file_contains "$HOME/.gitconfig" "co = checkout" "preserves valid data" || return 1
     assert_file_contains "$HOME/.gitconfig" "[core" "preserves malformed data" || return 1
-    assert_file_contains "$HOME/.gitconfig" "useConfigOnly = true" "successfully appends managed block" || return 1
+    assert_file_not_contains "$HOME/.gitconfig" "useConfigOnly = true" "does not append state to malformed config" || return 1
 }
 
 test_survives_mismatched_managed_markers() {
+    _TEST_GITSETU_LIBS_READY=0
+    source_gitsetu_libs || return 1
     GITSETU_DRY_RUN=0
-    
+
     PROFILE_COUNT=1
     PROFILE_LABELS=("global")
     PROFILE_NAMES=("Test")
     PROFILE_EMAILS=("global@test.com")
     PROFILE_DIRS=("")
+    PROFILE_PROVIDERS=("github.com")
+    PROFILE_SIGNS=("0")
+    PROFILE_KEYS=("$HOME/.ssh/id_ed25519_global")
+    PROFILE_USERS=("")
+    PROFILE_PATS=("")
 
     # Create a gitconfig with a start marker but no end marker
     cat > "$HOME/.gitconfig" <<EOF
@@ -61,11 +74,12 @@ ${GITSETU_MANAGED_START}
     name = Bad Block
 EOF
 
-    write_global_gitconfig 2>/dev/null
-    
+    local status=0
+    write_global_gitconfig >/dev/null 2>&1 || status=$?
+    assert_equals "1" "$status" "mismatched managed markers must be rejected" || return 1
     assert_file_contains "$HOME/.gitconfig" "st = status" "preserves user block" || return 1
     assert_file_contains "$HOME/.gitconfig" "Bad Block" "safely preserves unclosed block to prevent data loss" || return 1
-    assert_file_contains "$HOME/.gitconfig" "useConfigOnly = true" "still safely appends valid managed block" || return 1
+    assert_file_not_contains "$HOME/.gitconfig" "useConfigOnly = true" "does not guess past malformed markers" || return 1
 }
 
 printf '\n%btest_resilience.sh%b\n' "$T_BOLD" "$T_RESET"

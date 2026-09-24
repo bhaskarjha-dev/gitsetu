@@ -12,12 +12,76 @@ setup_test_home
 source_gitsetu_libs
 detect_os
 
+# Headless `gitsetu add` derives the mandatory global profile from the
+# configured Git identity.  Seed that identity in the isolated HOME so path
+# and Unicode cases exercise setup rather than failing at global validation.
+if ! git config --global user.name "Global Stress User" ||
+   ! git config --global user.email "global-stress@example.test"; then
+    printf '  [FATAL] could not seed the global Git identity\n' >&2
+    exit 1
+fi
+
+# Avoid spawning a Win32 helper for every private path component in Cygwin;
+# the shim still recognizes ordinary symlinks and is used only by this suite.
+if [[ "${OSTYPE:-}" == "cygwin"* || "${OSTYPE:-}" == "msys"* ]]; then
+    # shellcheck disable=SC2329  # invoked indirectly by platform helpers
+    cygpath() {
+        printf '%s' "${!#}"
+    }
+    # shellcheck disable=SC2329  # invoked indirectly by platform helpers
+    fsutil.exe() {
+        local path="${!#}"
+        [[ -L "$path" ]] && return 0
+        return 1
+    }
+    export -f cygpath fsutil.exe
+fi
+
+ADVERSARIAL_LOCK_TIMEOUT_WAS_SET=0
+ADVERSARIAL_LOCK_TIMEOUT_VALUE=""
+set_adversarial_test_lock_timeout() {
+    if [[ -n "${GITSETU_LOCK_TIMEOUT+x}" ]]; then
+        ADVERSARIAL_LOCK_TIMEOUT_WAS_SET=1
+        ADVERSARIAL_LOCK_TIMEOUT_VALUE="$GITSETU_LOCK_TIMEOUT"
+    else
+        ADVERSARIAL_LOCK_TIMEOUT_WAS_SET=0
+        ADVERSARIAL_LOCK_TIMEOUT_VALUE=""
+    fi
+    export GITSETU_LOCK_TIMEOUT=120
+}
+
+restore_adversarial_test_lock_timeout() {
+    if [[ "$ADVERSARIAL_LOCK_TIMEOUT_WAS_SET" -eq 1 ]]; then
+        export GITSETU_LOCK_TIMEOUT="$ADVERSARIAL_LOCK_TIMEOUT_VALUE"
+    else
+        unset GITSETU_LOCK_TIMEOUT
+    fi
+}
+
+reset_adversarial_state() {
+    if ! rm -rf -- "$GITSETU_CONFIG_DIR" "$HOME/.ssh" "$HOME/.gitconfig"; then
+        printf '    FAIL: could not reset adversarial test state\n'
+        return 1
+    fi
+    if ! mkdir -p "$GITSETU_PROFILES_DIR" "$HOME/.ssh"; then
+        printf '    FAIL: could not initialize adversarial test state\n'
+        return 1
+    fi
+    if ! git config --global user.name "Global Stress User" ||
+       ! git config --global user.email "global-stress@example.test"; then
+        printf '    FAIL: could not seed the global Git identity\n'
+        return 1
+    fi
+    return 0
+}
+
 printf '\n%b=== Running tests/test_adversarial_stress.sh ===%b\n' "$T_BOLD" "$T_RESET"
 
 # ------------------------------------------------------------------------------
 # Test 1: Workspace paths with multiple spaces, parentheses, brackets, and plus signs
 # ------------------------------------------------------------------------------
 test_paths_with_spaces_and_special_chars() {
+    reset_adversarial_state || return 1
     local weird_dir="$HOME/My Projects (Work)/Client + Partner/team-alpha"
     mkdir -p "$weird_dir"
 
@@ -28,8 +92,12 @@ test_paths_with_spaces_and_special_chars() {
 
     assert_contains "$out" "Setup complete! You're ready to go." "Profile added and completion summary rendered" || return 1
 
-    # Verify profiles.conf stores path correctly
-    assert_file_contains "$GITSETU_PROFILES_CONF" "weird::" "profile recorded in registry" || return 1
+    # Verify the strict v2 registry and profile identity.
+    load_profiles
+    array_contains "weird" "${PROFILE_LABELS[@]}" || {
+        printf '    FAIL: weird profile missing from strict v2 registry\n'
+        return 1
+    }
     assert_file_contains "$GITSETU_PROFILES_DIR/weird.gitconfig" "email = weird@example.com" "email in profile gitconfig" || return 1
 
     # Verify includeIf in global gitconfig matches the escaped path
@@ -43,8 +111,12 @@ test_paths_with_spaces_and_special_chars() {
     pushd "$weird_dir" >/dev/null
     git init -q
     local resolved_name resolved_email
-    resolved_name=$(git config user.name || true)
-    resolved_email=$(git config user.email || true)
+    if ! resolved_name=$(git config user.name 2>/dev/null); then
+        resolved_name=""
+    fi
+    if ! resolved_email=$(git config user.email 2>/dev/null); then
+        resolved_email=""
+    fi
     popd >/dev/null
 
     assert_equals "Weird User" "$resolved_name" "Git correctly resolves user.name inside spaces/symbols directory" || return 1
@@ -55,6 +127,7 @@ test_paths_with_spaces_and_special_chars() {
 # Test 2: Deeply nested child repository inside workspace
 # ------------------------------------------------------------------------------
 test_deeply_nested_workspace_subdirectories() {
+    reset_adversarial_state || return 1
     local root_ws="$HOME/workspaces/mega-corp"
     local deep_repo="$root_ws/dept/subdept/team/project/services/backend/repo"
     mkdir -p "$deep_repo"
@@ -64,14 +137,15 @@ test_deeply_nested_workspace_subdirectories() {
     pushd "$deep_repo" >/dev/null
     git init -q
     local active_email
-    active_email=$(git config user.email || true)
-    
+    active_email=$(git config user.email 2>/dev/null)
+
     # Check prompt resolution 8 directories deep
-    local prompt_id
-    prompt_id=$(bash "$REPO_DIR/gitsetu" prompt 2>/dev/null || true)
+    local prompt_id prompt_rc=0
+    prompt_id=$(bash "$REPO_DIR/gitsetu" prompt 2>/dev/null) || prompt_rc=$?
     popd >/dev/null
 
     assert_equals "corp@megacorp.internal" "$active_email" "Git resolves identity 8 levels deep inside workspace" || return 1
+    assert_equals "0" "$prompt_rc" "gitsetu prompt exits successfully" || return 1
     assert_equals "megacorp" "$prompt_id" "gitsetu prompt correctly identifies active profile 8 levels deep" || return 1
 }
 
@@ -79,6 +153,7 @@ test_deeply_nested_workspace_subdirectories() {
 # Test 3: Path with single quote (apostrophe) in directory name
 # ------------------------------------------------------------------------------
 test_path_with_single_quote() {
+    reset_adversarial_state || return 1
     local quote_dir="$HOME/dev/o'reilly_media/books"
     mkdir -p "$quote_dir"
 
@@ -89,7 +164,9 @@ test_path_with_single_quote() {
     pushd "$quote_dir" >/dev/null
     git init -q
     local res_email
-    res_email=$(git config user.email || true)
+    if ! res_email=$(git config user.email 2>/dev/null); then
+        res_email=""
+    fi
     popd >/dev/null
 
     assert_equals "editor@oreilly.com" "$res_email" "Single quote path resolves identity via Git includeIf" || return 1
@@ -99,6 +176,7 @@ test_path_with_single_quote() {
 # Test 4: Unicode UTF-8 directory names (Accented characters & Japanese)
 # ------------------------------------------------------------------------------
 test_unicode_directory_paths() {
+    reset_adversarial_state || return 1
     local unicode_dir="$HOME/projets_étudiant/プロジェクト/日本語"
     mkdir -p "$unicode_dir"
 
@@ -109,7 +187,9 @@ test_unicode_directory_paths() {
     pushd "$unicode_dir" >/dev/null
     git init -q
     local res_email
-    res_email=$(git config user.email || true)
+    if ! res_email=$(git config user.email 2>/dev/null); then
+        res_email=""
+    fi
     popd >/dev/null
 
     assert_equals "tokyo@example.jp" "$res_email" "Unicode UTF-8 path resolves identity via Git" || return 1
@@ -118,34 +198,39 @@ test_unicode_directory_paths() {
 # ------------------------------------------------------------------------------
 # Test 5: CRLF-contaminated profiles.conf resilience
 # ------------------------------------------------------------------------------
-test_crlf_profiles_conf_resilience() {
+test_crlf_v2_registry_rejected() {
+    reset_adversarial_state || return 1
     local backup_conf=""
     if [[ -f "$GITSETU_PROFILES_CONF" ]]; then
         backup_conf=$(cat "$GITSETU_PROFILES_CONF")
     fi
 
-    # Write profiles.conf with Windows CRLF line endings
-    cat > "$GITSETU_PROFILES_CONF" <<EOF
-alpha:alpha@test.com:$HOME/alpha:github.com:0:$HOME/.ssh/id_ed25519_alpha:
-beta:beta@test.com:$HOME/beta:github.com:0:$HOME/.ssh/id_ed25519_beta:
-EOF
-    # Inject carriage returns (\r\n)
-    if command -v unix2dos >/dev/null 2>&1; then
-        unix2dos -q "$GITSETU_PROFILES_CONF"
-    else
-        sed -i -e 's/$/\r/' "$GITSETU_PROFILES_CONF"
-    fi
+    test_v2_profile_config global "Global User" "global@example.com"
+    test_v2_profile_config alpha "Alpha User" "alpha@example.com"
+    test_v2_profile_config beta "Beta User" "beta@example.com"
+    {
+        test_v2_registry_header
+        test_v2_registry_line global "" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_global" ""
+        test_v2_registry_line alpha "$HOME/alpha" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_alpha" ""
+        test_v2_registry_line beta "$HOME/beta" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_beta" ""
+    } > "$GITSETU_PROFILES_CONF"
 
-    # Check that status executes and parses labels without trailing \r
-    local status_out
-    status_out=$(bash "$REPO_DIR/gitsetu" status 2>&1)
-    assert_contains "$status_out" "alpha" "CRLF profiles.conf parsed cleanly for alpha" || return 1
-    assert_contains "$status_out" "beta" "CRLF profiles.conf parsed cleanly for beta" || return 1
+    # A CRLF-contaminated v2 record is malformed, not a legacy format to be
+    # silently migrated.  The loader must reject it without loading profiles.
+    local crlf_tmp="${GITSETU_PROFILES_CONF}.crlf.$$"
+    local crlf_line
+    while IFS= read -r crlf_line || [[ -n "$crlf_line" ]]; do
+        printf '%s\r\n' "$crlf_line"
+    done < "$GITSETU_PROFILES_CONF" > "$crlf_tmp"
+    mv "$crlf_tmp" "$GITSETU_PROFILES_CONF"
 
-    # Load profiles using library function and check that \r is stripped
-    load_profiles
-    assert_equals "alpha" "${PROFILE_LABELS[0]}" "First label has no carriage return" || return 1
-    assert_equals "alpha@test.com" "${PROFILE_EMAILS[0]}" "First email has no carriage return" || return 1
+    local rc=0
+    load_profiles >/dev/null 2>&1 || rc=$?
+    assert_equals "1" "$rc" "CRLF-contaminated v2 registry is rejected"
+    assert_equals "0" "$PROFILE_COUNT" "rejected CRLF registry loads no profiles"
 
     # Restore backup so subsequent tests have a clean or preserved state
     if [[ -n "$backup_conf" ]]; then
@@ -159,6 +244,7 @@ EOF
 # Test 6: Guard hook enforcement with Git commit edge cases (Detached HEAD, Cherry-pick)
 # ------------------------------------------------------------------------------
 test_guard_hook_edge_cases() {
+    reset_adversarial_state || return 1
     local repo="$HOME/repos/guard-test"
     mkdir -p "$repo"
 
@@ -213,6 +299,7 @@ test_guard_hook_edge_cases() {
 # Test 7: Adversarial input injection prevention
 # ------------------------------------------------------------------------------
 test_adversarial_input_rejections() {
+    reset_adversarial_state || return 1
     # 1. Invalid labels with path traversal or command injection
     assert_exit_code 1 bash "$REPO_DIR/gitsetu" add "../hacker" "Hacker" "h@h.com" "/tmp/h" || return 1
     assert_exit_code 1 bash "$REPO_DIR/gitsetu" add "bad;rm" "Hacker" "h@h.com" "/tmp/h" || return 1
@@ -234,14 +321,43 @@ test_adversarial_input_rejections() {
 # Test 8: Concurrency & atomic lock stress under parallel profile operations
 # ------------------------------------------------------------------------------
 test_concurrent_parallel_profile_mutations() {
-    local i
-    for i in {1..5}; do
-        bash "$REPO_DIR/gitsetu" add "worker${i}" "Worker ${i}" "worker${i}@stress.test" "$HOME/ws/worker${i}" >/dev/null 2>&1 &
+    reset_adversarial_state || return 1
+    set_adversarial_test_lock_timeout
+
+    local i status output_file failed_count=0
+    local expected_workers=5
+    # MSYS/Cygwin process creation is expensive and can exhaust the process
+    # table when several full CLI children contend. Two workers still exercise
+    # real lock serialization without turning this into a Windows stress loop.
+    if [[ "${OSTYPE:-}" == "cygwin"* || "${OSTYPE:-}" == "msys"* || "${OSTYPE:-}" == "mingw"* ]]; then
+        expected_workers=2
+    fi
+    local -a child_pids=()
+    local -a child_logs=()
+    for ((i=1; i<=expected_workers; i++)); do
+        output_file="$TEST_HOME/stress-worker-$i.log"
+        rm -f "$output_file"
+        child_logs+=("$output_file")
+        bash "$REPO_DIR/gitsetu" add "worker${i}" "Worker ${i}" \
+            "worker${i}@stress.test" "$HOME/ws/worker${i}" >"$output_file" 2>&1 &
+        child_pids+=("$!")
     done
+    for i in "${!child_pids[@]}"; do
+        status=0
+        wait "${child_pids[$i]}" || status=$?
+        if [[ "$status" -ne 0 ]]; then
+            printf '    FAIL: stress worker %s exited %s\n' "$i" "$status"
+            if [[ -f "${child_logs[$i]}" ]]; then
+                cat "${child_logs[$i]}"
+            fi
+            failed_count=$((failed_count + 1))
+        fi
+    done
+    restore_adversarial_test_lock_timeout
+    [[ "$failed_count" -eq 0 ]] || return 1
+    rm -f "$TEST_HOME"/stress-worker-*.log
 
-    wait
-
-    # Verify all 5 profiles exist in profiles.conf
+    # Verify all expected workers exist in profiles.conf
     load_profiles
     local worker_count=0
     for (( i=0; i<PROFILE_COUNT; i++ )); do
@@ -250,7 +366,7 @@ test_concurrent_parallel_profile_mutations() {
         fi
     done
 
-    assert_equals 5 "$worker_count" "Exactly 5 worker profiles registered after parallel execution" || return 1
+    assert_equals "$expected_workers" "$worker_count" "expected worker profiles registered after parallel execution" || return 1
 }
 
 # ------------------------------------------------------------------------------
@@ -260,10 +376,10 @@ run_test "paths with spaces, parentheses, brackets, and plus signs" test_paths_w
 run_test "deeply nested workspace subdirectories (8 levels)" test_deeply_nested_workspace_subdirectories
 run_test "path with single quote (apostrophe)" test_path_with_single_quote
 run_test "unicode UTF-8 directory paths" test_unicode_directory_paths
-run_test "CRLF-contaminated profiles.conf resilience" test_crlf_profiles_conf_resilience
+run_test "CRLF-contaminated v2 registry is rejected" test_crlf_v2_registry_rejected
 run_test "guard hook edge cases (detached HEAD, author mismatch)" test_guard_hook_edge_cases
 run_test "adversarial input injection rejections" test_adversarial_input_rejections
-run_test "concurrent parallel profile mutations (8 workers)" test_concurrent_parallel_profile_mutations
+run_test "concurrent parallel profile mutations (bounded workers)" test_concurrent_parallel_profile_mutations
 
 print_results "Adversarial & Stress tests"
 teardown_test_home

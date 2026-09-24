@@ -94,25 +94,23 @@ test_f03_guard_longest_match_and_casing() {
     mkdir -p "$HOME/.config/gitsetu/hooks"
 
     # Profile 1: parent dir /workspace (shorter match)
-    cat > "$HOME/.config/gitsetu/profiles/general.gitconfig" <<EOF
-[user]
-    name = General
-    email = general@example.com
-EOF
+    test_v2_profile_config global "Global User" "global@example.com"
+    test_v2_profile_config general "General" "general@example.com"
 
     # Profile 2: nested dir /workspace/special (longer match)
-    cat > "$HOME/.config/gitsetu/profiles/special.gitconfig" <<EOF
-[user]
-    name = Special
-    email = special@example.com
-EOF
+    test_v2_profile_config special "Special" "special@example.com"
 
-    # Write profiles.conf with the shorter match AFTER the longer match (or vice versa)
-    # The longest match should win regardless of file order!
-    cat > "$HOME/.config/gitsetu/profiles.conf" <<EOF
-special::$HOME/workspace/special:github.com:0:$HOME/.ssh/id_special:
-general::$HOME/workspace:github.com:0:$HOME/.ssh/id_general:
-EOF
+    # Write a strict v2 registry.  The longest match should win regardless of
+    # record order; legacy colon records are not accepted by the loader.
+    {
+        test_v2_registry_header
+        test_v2_registry_line global "" "github.com" "0" \
+            "$HOME/.ssh/id_global" ""
+        test_v2_registry_line special "$HOME/workspace/special" "github.com" "0" \
+            "$HOME/.ssh/id_special" ""
+        test_v2_registry_line general "$HOME/workspace" "github.com" "0" \
+            "$HOME/.ssh/id_general" ""
+    } > "$GITSETU_PROFILES_CONF"
 
     # Install the guard hook
     install_guard
@@ -123,7 +121,10 @@ EOF
     # Test inside nested directory repo
     local repo_dir="$HOME/workspace/special/repo1"
     mkdir -p "$repo_dir/.git"
-    git init "$repo_dir" >/dev/null 2>&1 || true
+    if ! git init "$repo_dir" >/dev/null 2>&1; then
+        printf '    FAIL: could not initialize the guard fixture repository\n'
+        return 1
+    fi
     git -C "$repo_dir" config user.email "special@example.com"
     git -C "$repo_dir" config user.name "Special"
 
@@ -150,7 +151,7 @@ test_f04_key_path_spaces_quoted() {
     local content
     content=$(build_profile_gitconfig "work" "Work User" "work@company.com" "0" "$space_key")
 
-    assert_contains "$content" "sshCommand = ssh -i \"~/My Secret Keys/id_ed25519_work\"" "build_profile_gitconfig must quote key paths with spaces"
+    assert_contains "$content" "sshCommand = ssh -o IdentitiesOnly=yes -i '~/My Secret Keys/id_ed25519_work'" "build_profile_gitconfig must safely quote key paths with spaces"
 }
 
 # ==============================================================================
@@ -169,17 +170,26 @@ test_f05_xdg_config_home_support() {
     assert_file_exists "$ssh_config" "SSH config must exist"
     assert_file_contains "$ssh_config" "custom_xdg" "SSH config Include directive must reference XDG_CONFIG_HOME"
 
-    # 2. Test Keychain fallback token storage
+    # 2. Test the explicit zero-dependency plaintext backend under a custom
+    # XDG root. Native storage remains the default; this opt-in is intentional.
     local saved_os="${GITSETU_OS:-}"
+    local saved_backend="${GITSETU_CREDENTIAL_BACKEND:-}"
     GITSETU_OS="unknown"
+    export GITSETU_CREDENTIAL_BACKEND=file
     keychain_store "test_label" "github.com" "test_user" "secret_token_123"
     assert_file_exists "$custom_xdg/gitsetu/.tokens" "Tokens must be saved under custom XDG_CONFIG_HOME"
     local loaded
     loaded=$(keychain_get "test_label" "github.com" | grep "password=" | cut -d= -f2)
     assert_equals "secret_token_123" "$loaded" "Token loaded from custom XDG_CONFIG_HOME"
+    if [[ -n "$saved_backend" ]]; then
+        export GITSETU_CREDENTIAL_BACKEND="$saved_backend"
+    else
+        unset GITSETU_CREDENTIAL_BACKEND
+    fi
     GITSETU_OS="$saved_os"
 
-    # 3. Test Teardown dynamic Include cleanup
+    # 3. Test Teardown dynamic Include cleanup while preserving user content.
+    printf '\nHost user-owned\n    HostName example.invalid\n' >> "$ssh_config"
     teardown_all 0
     assert_file_not_contains "$ssh_config" "custom_xdg" "Teardown must clean up custom XDG SSH Include directive"
 }
@@ -206,19 +216,17 @@ test_f06_dry_run_prevents_directory_creation() {
 # ==============================================================================
 test_f07_cleanup_restores_cursor() {
     setup_test_home
+    source_gitsetu_libs
 
-    local root_bin="$SCRIPT_DIR/../gitsetu"
-    # 1. Check statically that both cleanup traps restore cursor
-    assert_file_contains "$root_bin" "printf '\033[?25h'" "gitsetu must contain cursor restore code"
+    # The cursor helper lives in the shared UI module; the root trampoline
+    # should not need to duplicate terminal escape literals.
+    local ui_file="$SCRIPT_DIR/../lib/ui.sh"
+    assert_file_contains "$ui_file" "printf '\\033[?25h'" "UI cleanup must contain cursor restore code"
 
-    # 2. Run gitsetu and capture stderr to verify the escape sequence is emitted on exit
+    GITSETU_CURSOR_HIDDEN=1
     local out
-    out=$(bash "$root_bin" --version 2>&1 || true)
-    local has_cursor=0
-    if [[ "$out" == *$'\033[?25h'* ]]; then
-        has_cursor=1
-    fi
-    assert_equals "1" "$has_cursor" "gitsetu execution must output \\033[?25h on exit"
+    out=$(ui_show_cursor 2>&1)
+    assert_contains "$out" $'\033[?25h' "ui_show_cursor must emit the restore sequence"
 }
 
 # ==============================================================================
@@ -228,41 +236,57 @@ test_f08_cli_label_lowercase_normalization() {
     setup_test_home
     source_gitsetu_libs
 
-    # Setup baseline
-    mkdir -p "$HOME/.config/gitsetu"
+    # Setup a valid strict-v2 baseline so the CLI add path is isolated from
+    # onboarding prompts and can be tested independently.
+    mkdir -p "$HOME/.config/gitsetu" "$HOME/.ssh" "$HOME/work"
+    touch "$HOME/.ssh/id_ed25519_global" "$HOME/.ssh/id_ed25519_global.pub"
+    PROFILE_COUNT=1
+    PROFILE_LABELS=("global")
+    PROFILE_NAMES=("Global User")
+    PROFILE_EMAILS=("global@example.com")
+    PROFILE_DIRS=("")
+    PROFILE_PROVIDERS=("github.com")
+    PROFILE_SIGNS=("0")
+    PROFILE_KEYS=("$HOME/.ssh/id_ed25519_global")
+    PROFILE_USERS=("")
+    PROFILE_PATS=("")
+    GITSETU_DRY_RUN=0
+    ensure_dirs
+    write_global_gitconfig >/dev/null
+    write_profiles_conf >/dev/null
+    export GITSETU_TEST=1
     local root_bin="$SCRIPT_DIR/../gitsetu"
 
     # Add profile with uppercase label "WorkProfile" via gitsetu add CLI
     bash "$root_bin" add "WorkProfile" "Aditya Work" "work@company.com" "$HOME/work" >/dev/null 2>&1
 
-    # Read profiles.conf and verify label was lowercased to "workprofile"
+    # Read the strict v2 registry through the real loader and verify the
+    # normalized label.  Raw encoded fields are not a compatibility contract.
+    load_profiles
     local found_label=""
-    while IFS=: read -r label rest || [[ -n "$label" ]]; do
-        [[ "$label" == "#"* ]] && continue
-        [[ -z "$label" ]] && continue
-        if [[ "$label" == "workprofile" ]]; then
-            found_label="$label"
+    local i
+    for ((i=0; i<PROFILE_COUNT; i++)); do
+        if [[ "${PROFILE_LABELS[$i]}" == "workprofile" ]]; then
+            found_label="${PROFILE_LABELS[$i]}"
             break
         fi
-    done < "$HOME/.config/gitsetu/profiles.conf"
-
-    assert_equals "workprofile" "$found_label" "gitsetu add must normalize profile label to lowercase"
+    done
+    assert_equals "workprofile" "$found_label" "gitsetu add writes a normalized v2 label"
 
     # Test removing with mixed case "WorkProfile" via gitsetu profile remove CLI
     bash "$root_bin" profile remove "WorkProfile" >/dev/null 2>&1
 
-    # Verify profile was removed
+    # Verify the profile is absent after reloading the v2 registry.
+    load_profiles
     local still_exists=0
-    while IFS=: read -r label rest || [[ -n "$label" ]]; do
-        [[ "$label" == "#"* ]] && continue
-        [[ -z "$label" ]] && continue
-        if [[ "$label" == "workprofile" ]]; then
+    for ((i=0; i<PROFILE_COUNT; i++)); do
+        if [[ "${PROFILE_LABELS[$i]}" == "workprofile" ]]; then
             still_exists=1
             break
         fi
-    done < "$HOME/.config/gitsetu/profiles.conf"
+    done
 
-    assert_equals "0" "$still_exists" "gitsetu remove must normalize label to lowercase"
+    assert_equals "0" "$still_exists" "gitsetu remove updates the v2 registry"
 }
 
 # ==============================================================================

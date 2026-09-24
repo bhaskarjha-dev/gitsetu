@@ -42,35 +42,37 @@ test_doctor_detects_missing_managed_blocks() {
     
     # shellcheck disable=SC2088
     assert_contains "$output" "~/.gitconfig: " "checks gitconfig" || return 1
-    assert_contains "$output" "WARNING (Managed blocks missing)" "detects missing block in gitconfig" || return 1
+    assert_contains "$output" "ERROR: Registry missing" "detects missing required registry" || return 1
+    assert_contains "$output" "~/.gitconfig: ERROR" "detects missing gitconfig state" || return 1
     assert_contains "$output" "gitsetu doctor --repair" "suggests repair when issues found" || return 1
 }
 
 test_doctor_success_state() {
-    # Setup a clean environment
-    mkdir -p "$(dirname "$GITSETU_PROFILES_CONF")"
-    touch "$GITSETU_PROFILES_CONF"
-    
-    cat > "$HOME/.gitconfig" <<EOF
-${GITSETU_MANAGED_START}
-[user]
-    useConfigOnly = true
-EOF
-
-    mkdir -p "$HOME/.ssh"
-    cat > "$HOME/.ssh/config" <<EOF
-Include $GITSETU_PROFILES_DIR/ssh_config
-Host test
-EOF
+    # Build a genuinely healthy strict-v2 state. An empty registry is not a
+    # healthy fixture: required identity/key checks must remain strict.
+    rm -rf "$GITSETU_CONFIG_DIR" "$HOME/.ssh" "$HOME/.gitconfig"
+    mkdir -p "$GITSETU_PROFILES_DIR" "$HOME/.ssh"
+    ssh-keygen -q -t ed25519 -N '' -f "$HOME/.ssh/id_ed25519_global"
+    test_v2_profile_config global "Global User" "global@example.com"
+    local global_key
+    global_key=$(normalize_path "$HOME/.ssh/id_ed25519_global")
+    {
+        test_v2_registry_header
+        test_v2_registry_line global "" "github.com" "0" "$global_key" ""
+    } > "$GITSETU_PROFILES_CONF"
+    load_profiles || return 1
+    write_global_gitconfig >/dev/null 2>&1 || return 1
+    write_ssh_config >/dev/null 2>&1 || return 1
 
     local output
     output=$(run_doctor 2>&1 || true)
-    
+
     assert_contains "$output" "Registry: OK" "registry ok" || return 1
     # shellcheck disable=SC2088
     assert_contains "$output" "~/.gitconfig: OK" "gitconfig ok" || return 1
     # shellcheck disable=SC2088
     assert_contains "$output" "~/.ssh/config: OK" "ssh config ok" || return 1
+    assert_contains "$output" "All required offline diagnostics passed" "healthy diagnostics report success" || return 1
     assert_not_contains "$output" "gitsetu doctor --repair" "does not suggest repair when clean" || return 1
 }
 

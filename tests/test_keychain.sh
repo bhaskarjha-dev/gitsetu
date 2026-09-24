@@ -10,7 +10,9 @@ setup_test_home
 
 source_gitsetu_libs
 
-# Force OS to unknown so all tests use the file fallback
+# Select the deliberate zero-dependency backend explicitly. Native-only is the
+# default and is exercised separately below.
+GITSETU_CREDENTIAL_BACKEND="file"
 GITSETU_OS="unknown"
 
 # Helper: sets up a clean test environment with the config dir
@@ -18,8 +20,135 @@ _keychain_setup() {
     setup_test_home
     source_gitsetu_libs
     GITSETU_OS="unknown"
+    export GITSETU_CREDENTIAL_BACKEND=file
+
+    # Supply a test-only stat shim so mode/owner checks are deterministic on
+    # Git Bash/NTFS as well as POSIX hosts.
+    local mock_bin="$HOME/test-bin"
+    mkdir -p "$mock_bin"
+    cat > "$mock_bin/stat" <<'EOF'
+#!/usr/bin/env sh
+format=""
+path=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -c|-f) format="$2"; shift 2 ;;
+        -*) shift ;;
+        *) path="$1"; shift ;;
+    esac
+done
+case "$format" in
+    %U|%Su) id -un ;;
+    %u) id -u ;;
+    *)
+        case "$path" in
+            */.tokens|*/.tokens.tmp.*) printf '600\n' ;;
+            *) printf '700\n' ;;
+        esac
+        ;;
+esac
+EOF
+    chmod +x "$mock_bin/stat"
+    case ":$PATH:" in
+        *":$mock_bin:"*) ;;
+        *) export PATH="$mock_bin:$PATH" ;;
+    esac
+
     # keychain_store expects the config dir to exist (ensure_dirs creates it in production)
     mkdir -p "$HOME/.config/gitsetu"
+}
+
+# Remove a test-created directory symlink/junction without allowing cleanup
+# behavior to change the product result.  Git Bash may expose a Windows
+# junction as a directory, so rm -f is insufficient; PowerShell removes the
+# reparse point itself when available, with rm -rf as a portable fallback.
+cleanup_keychain_fixture_path() {
+    local path="$1"
+    local cleanup_status=0
+    local windows_path
+
+    if [[ -z "$path" ]]; then
+        return 0
+    fi
+
+    if [[ "${OSTYPE:-}" == "msys"* || "${OSTYPE:-}" == "cygwin"* || "${OSTYPE:-}" == "win"* ]] &&
+       command -v powershell.exe >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
+        if windows_path=$(cygpath -w "$path" 2>/dev/null); then
+            export GITSETU_TEST_FIXTURE_PATH="$windows_path"
+            # shellcheck disable=SC2016  # PowerShell expands the environment variable at runtime
+            if ! powershell.exe -NoProfile -Command \
+                '$p=$env:GITSETU_TEST_FIXTURE_PATH; if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force -Recurse -ErrorAction Stop }' \
+                >/dev/null 2>&1; then
+                cleanup_status=1
+            fi
+            unset GITSETU_TEST_FIXTURE_PATH
+        else
+            cleanup_status=1
+        fi
+    fi
+
+    if [[ -e "$path" || -L "$path" ]]; then
+        if ! rm -rf -- "$path"; then
+            cleanup_status=1
+        fi
+    fi
+    return "$cleanup_status"
+}
+
+create_keychain_directory_link() {
+    local target="$1"
+    local link="$2"
+    local windows_target windows_link
+
+    if [[ "${OSTYPE:-}" == "msys"* || "${OSTYPE:-}" == "cygwin"* || "${OSTYPE:-}" == "win"* ]] &&
+       command -v powershell.exe >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
+        if ! windows_target=$(cygpath -w "$target" 2>/dev/null) ||
+           ! windows_link=$(cygpath -w "$link" 2>/dev/null); then
+            return 1
+        fi
+        export GITSETU_TEST_LINK_TARGET="$windows_target"
+        export GITSETU_TEST_LINK_PATH="$windows_link"
+        # A junction is the Windows directory-link equivalent of a POSIX
+        # symlink and can be removed without traversing its target.
+        # shellcheck disable=SC2016  # PowerShell expands environment variables
+        if ! powershell.exe -NoProfile -Command \
+            '$target=$env:GITSETU_TEST_LINK_TARGET; $link=$env:GITSETU_TEST_LINK_PATH; if (Test-Path -LiteralPath $link) { Remove-Item -LiteralPath $link -Force -Recurse -ErrorAction Stop }; New-Item -ItemType Junction -Path $link -Target $target -ErrorAction Stop | Out-Null' \
+            >/dev/null 2>&1; then
+            unset GITSETU_TEST_LINK_TARGET GITSETU_TEST_LINK_PATH
+            return 1
+        fi
+        unset GITSETU_TEST_LINK_TARGET GITSETU_TEST_LINK_PATH
+        return 0
+    fi
+
+    ln -s "$target" "$link" 2>/dev/null && [[ -L "$link" ]]
+}
+
+create_keychain_file_link() {
+    local target="$1"
+    local link="$2"
+    local windows_target windows_link
+
+    if [[ "${OSTYPE:-}" == "msys"* || "${OSTYPE:-}" == "cygwin"* || "${OSTYPE:-}" == "win"* ]] &&
+       command -v powershell.exe >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
+        if ! windows_target=$(cygpath -w "$target" 2>/dev/null) ||
+           ! windows_link=$(cygpath -w "$link" 2>/dev/null); then
+            return 1
+        fi
+        export GITSETU_TEST_LINK_TARGET="$windows_target"
+        export GITSETU_TEST_LINK_PATH="$windows_link"
+        # shellcheck disable=SC2016  # PowerShell expands environment variables
+        if ! powershell.exe -NoProfile -Command \
+            '$target=$env:GITSETU_TEST_LINK_TARGET; $link=$env:GITSETU_TEST_LINK_PATH; if (Test-Path -LiteralPath $link) { Remove-Item -LiteralPath $link -Force -ErrorAction Stop }; New-Item -ItemType SymbolicLink -Path $link -Target $target -ErrorAction Stop | Out-Null' \
+            >/dev/null 2>&1; then
+            unset GITSETU_TEST_LINK_TARGET GITSETU_TEST_LINK_PATH
+            return 1
+        fi
+        unset GITSETU_TEST_LINK_TARGET GITSETU_TEST_LINK_PATH
+        return 0
+    fi
+
+    ln -s "$target" "$link" 2>/dev/null && [[ -L "$link" ]]
 }
 
 # ==============================================================================
@@ -54,7 +183,10 @@ test_keychain_store_overwrites() {
 
     # Verify only one entry in file
     local count
-    count=$(grep -c "gitsetu:work:github.com" "$HOME/.config/gitsetu/.tokens" 2>/dev/null || echo "0")
+    if ! count=$(grep -c '^v2' "$HOME/.config/gitsetu/.tokens" 2>/dev/null); then
+        printf '    FAIL: token store is missing or has no v2 record\n'
+        return 1
+    fi
     assert_equals "1" "$count" "only one entry in tokens file"
 }
 
@@ -136,7 +268,10 @@ test_keychain_file_permissions() {
     assert_file_exists "$tokens_file" "tokens file created" || return 1
 
     # Skip numeric assertion on filesystems that ignore chmod (CI containers, VM mounts)
-    can_chmod_600 || return 0
+    if ! can_chmod_600; then
+        skip_test "tokens file has 600 permissions" "filesystem does not enforce mode 600"
+        return 0
+    fi
 
     local perms
     perms=$(stat -c '%a' "$tokens_file" 2>/dev/null || stat -f '%Lp' "$tokens_file" 2>/dev/null || echo "???")
@@ -157,8 +292,14 @@ test_keychain_tokens_permissions_from_inception() {
             echo "CHMOD_CALLED:$*" >> "$HOME/.chmod_calls"
             return 0
         }
-        chmod "$tokens_file" >/dev/null 2>&1 || true
-        export -f chmod 2>/dev/null || true
+        if ! chmod "$tokens_file" >/dev/null 2>&1; then
+            printf '    FAIL: chmod mock could not be initialized\n'
+            exit 1
+        fi
+        if ! export -f chmod; then
+            printf '    FAIL: chmod mock could not be exported\n'
+            exit 1
+        fi
         umask 0000
 
         keychain_store "prod" "github.com" "deploy_user" "secret_token_123"
@@ -229,6 +370,169 @@ test_keychain_no_tmp_predictable_files() {
     assert_equals "$initial_tmp_count" "$final_tmp_count" "no predictable tokens temp files created in /tmp"
 }
 
+test_keychain_gcm_native_backend_keeps_exact_tuple() {
+    local mock_bin="$HOME/gcm-bin"
+    local record_file="$HOME/gcm-record"
+    mkdir -p "$mock_bin"
+    cat > "$mock_bin/git-credential-manager" <<'EOF'
+#!/usr/bin/env bash
+set -e
+case "$1" in
+    store)
+        cat > "$GCM_INPUT_FILE"
+        sed -n 's/^password=//p' "$GCM_INPUT_FILE" > "$GCM_RECORD_FILE"
+        ;;
+    get)
+        printf 'protocol=https\n'
+        sed -n 's/^host=/host=/p; s/^username=/username=/p' "$GCM_INPUT_FILE"
+        printf 'password='
+        cat "$GCM_RECORD_FILE"
+        ;;
+    erase)
+        : > "$GCM_RECORD_FILE"
+        ;;
+    *) exit 2 ;;
+esac
+EOF
+    chmod +x "$mock_bin/git-credential-manager"
+    local old_path="$PATH" old_os="${GITSETU_OS:-}" old_backend="${GITSETU_CREDENTIAL_BACKEND:-}"
+    export PATH="$mock_bin:$PATH" GITSETU_OS=gitbash GITSETU_CREDENTIAL_BACKEND=native
+    export GCM_INPUT_FILE="$HOME/gcm-input" GCM_RECORD_FILE="$record_file"
+    keychain_store "work" "github.com" "user" "secret" "/org/repo" >/dev/null
+    local output
+    output=$(keychain_get "work" "github.com" "/org/repo")
+    assert_contains "$output" "username=user" "GCM returns exact username" || return 1
+    assert_contains "$output" "password=secret" "GCM returns exact password" || return 1
+    if keychain_get "work" "github.com" "/other" >/dev/null 2>&1; then
+        printf '    FAIL: GCM lookup ignored credential path\n'
+        return 1
+    fi
+    keychain_erase "work" "github.com" "/org/repo" >/dev/null
+    export PATH="$old_path" GITSETU_OS="$old_os" GITSETU_CREDENTIAL_BACKEND="$old_backend"
+    unset GCM_INPUT_FILE GCM_RECORD_FILE
+}
+
+# ==============================================================================
+# Exact records, explicit backend selection, and no legacy reader
+# ==============================================================================
+test_keychain_exact_record_and_explicit_warning() {
+    _keychain_setup
+
+    local output
+    output=$(keychain_store "work profile" "github.com:443" "name=user" "token: with=exact spacing" "/org/repo" 2>&1)
+    assert_contains "$output" "explicit zero-dependency PLAINTEXT" "plaintext mode is clearly warned" || return 1
+
+    output=$(keychain_get "work profile" "github.com:443" "/org/repo" 2>&1)
+    assert_contains "$output" "username=name=user" "equals sign is preserved" || return 1
+    assert_contains "$output" "password=token: with=exact spacing" "credential value is exact" || return 1
+
+    local empty_path
+    if keychain_get "work profile" "github.com:443" "" >/dev/null 2>&1; then
+        printf '    FAIL: credential path lookup was not exact\n'
+        return 1
+    fi
+}
+
+test_keychain_native_default_never_implicitly_falls_back() {
+    _keychain_setup
+    unset GITSETU_CREDENTIAL_BACKEND
+    GITSETU_OS=unknown
+
+    local output status=0
+    output=$(keychain_store "work" "github.com" "user" "token" 2>&1) || status=$?
+    assert_equals "2" "$status" "missing native backend is an error" || return 1
+    assert_contains "$output" "GITSETU_CREDENTIAL_BACKEND=file" "error explains explicit opt-in" || return 1
+    assert_contains "$(keychain_print_backend_help)" "GITSETU_CREDENTIAL_BACKEND=file" "backend help is discoverable" || return 1
+    if [[ -e "$HOME/.config/gitsetu/.tokens" ]]; then
+        printf '    FAIL: native failure silently created a plaintext store\n'
+        return 1
+    fi
+}
+
+test_keychain_rejects_legacy_plaintext_record() {
+    _keychain_setup
+    printf '%s\n' 'gitsetu:work:github.com:user:secret' > "$HOME/.config/gitsetu/.tokens"
+    local status=0 output
+    output=$(keychain_get "work" "github.com" 2>&1) || status=$?
+    assert_equals "2" "$status" "legacy record is rejected" || return 1
+    assert_contains "$output" "legacy records are not supported" "no migration reader is advertised" || return 1
+}
+
+test_keychain_rejects_symlinked_config_directory() {
+    _keychain_setup
+    local outside="$HOME/outside-secret-dir"
+    local link="$HOME/config-link"
+    local real_config="$GITSETU_CONFIG_DIR"
+    local status=0
+    local cleanup_status=0
+
+    mkdir -p "$outside"
+    if ! cleanup_keychain_fixture_path "$link"; then
+        printf '    FAIL: could not clean the previous config-link fixture\n'
+        return 1
+    fi
+    if ! create_keychain_directory_link "$outside" "$link"; then
+        cleanup_keychain_fixture_path "$link" || cleanup_status=1
+        if [[ "$cleanup_status" -ne 0 ]]; then
+            printf '    FAIL: could not clean an unavailable directory-link fixture\n'
+            return 1
+        fi
+        skip_test "symlinked config directory" "directory symlink/junction creation is unavailable"
+        return 0
+    fi
+
+    GITSETU_CONFIG_DIR="$link"
+    keychain_store "work" "github.com" "user" "secret" >/dev/null 2>&1 || status=$?
+    if ! assert_equals "1" "$status" "symlinked config directory is rejected"; then
+        status=1
+    fi
+    if ! assert_file_not_exists "$outside/.tokens" "symlinked config did not redirect plaintext output"; then
+        status=1
+    fi
+    if ! cleanup_keychain_fixture_path "$link"; then
+        printf '    FAIL: config-link cleanup failed\n'
+        return 1
+    fi
+    GITSETU_CONFIG_DIR="$real_config"
+    [[ "$status" -eq 1 ]] || return 1
+}
+
+test_keychain_rejects_symlinked_token_file() {
+    _keychain_setup
+    local outside="$HOME/outside-secret-dir"
+    local token_link="$GITSETU_CONFIG_DIR/.tokens"
+    local status=0
+    local cleanup_status=0
+
+    mkdir -p "$outside" "$GITSETU_CONFIG_DIR"
+    if ! cleanup_keychain_fixture_path "$token_link"; then
+        printf '    FAIL: could not clean the previous token-link fixture\n'
+        return 1
+    fi
+    if ! create_keychain_file_link "$outside/redirected.tokens" "$token_link"; then
+        cleanup_keychain_fixture_path "$token_link" || cleanup_status=1
+        if [[ "$cleanup_status" -ne 0 ]]; then
+            printf '    FAIL: could not clean an unavailable file-link fixture\n'
+            return 1
+        fi
+        skip_test "symlinked token file" "file symlink creation is unavailable"
+        return 0
+    fi
+
+    keychain_store "work" "github.com" "user" "secret" >/dev/null 2>&1 || status=$?
+    if ! assert_equals "1" "$status" "symlinked token file is rejected"; then
+        status=1
+    fi
+    if ! assert_file_not_exists "$outside/redirected.tokens" "symlinked token file was not written through"; then
+        status=1
+    fi
+    if ! cleanup_keychain_fixture_path "$token_link"; then
+        printf '    FAIL: token-link cleanup failed\n'
+        return 1
+    fi
+    [[ "$status" -eq 1 ]] || return 1
+}
+
 # ==============================================================================
 # Run
 # ==============================================================================
@@ -243,4 +547,10 @@ run_test "tokens file has 600 permissions" test_keychain_file_permissions
 run_test "tokens file permissions from inception" test_keychain_tokens_permissions_from_inception
 run_test "erase maintains 600 permissions" test_keychain_erase_maintains_600_permissions
 run_test "no predictable tokens temp files in /tmp" test_keychain_no_tmp_predictable_files
+run_test "exact record and explicit plaintext warning" test_keychain_exact_record_and_explicit_warning
+run_test "native default never implicitly falls back" test_keychain_native_default_never_implicitly_falls_back
+run_test "GCM native backend preserves exact tuple" test_keychain_gcm_native_backend_keeps_exact_tuple
+run_test "legacy plaintext record is rejected" test_keychain_rejects_legacy_plaintext_record
+run_test "symlinked config directory is rejected" test_keychain_rejects_symlinked_config_directory
+run_test "symlinked token file is rejected" test_keychain_rejects_symlinked_token_file
 print_results "Keychain tests"

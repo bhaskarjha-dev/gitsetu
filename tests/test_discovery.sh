@@ -135,6 +135,66 @@ EOF
     assert_equals "" "$result" "does not match client_work_dir when searching for work" || return 1
 }
 
+test_discovery_rejects_malformed_identity() {
+    rm -rf "$HOME/.config/gitsetu" "$HOME/.ssh"
+    mkdir -p "$HOME/.config/gitsetu/profiles" "$HOME/.ssh"
+    git config --file "$HOME/.gitconfig" user.name $'Safe\n[core]\n    pager = false'
+    git config --file "$HOME/.gitconfig" user.email 'not-an-email'
+
+    discover_global_git_identity
+    assert_equals "" "$DISCOVERED_GLOBAL_NAME" "malformed discovered name is rejected" || return 1
+    assert_equals "" "$DISCOVERED_GLOBAL_EMAIL" "malformed discovered email is rejected" || return 1
+    assert_equals "1" "$DISCOVERY_INVALID" "discovery reports invalid untrusted identity" || return 1
+}
+
+test_discovery_uses_configured_v2_profile_location() {
+    rm -f "$HOME/.gitconfig"
+    rm -rf "$HOME/work"
+    local xdg_root="${XDG_CONFIG_HOME:-$HOME/.config}"
+    mkdir -p "$xdg_root/gitsetu/profiles"
+    git config --file "$xdg_root/gitsetu/profiles/global.gitconfig" user.name 'Configured Global'
+    git config --file "$xdg_root/gitsetu/profiles/global.gitconfig" user.email global@example.com
+
+    discover_global_git_identity
+    assert_equals "Configured Global" "$DISCOVERED_GLOBAL_NAME" "configured profile directory is used" || return 1
+    assert_equals "global@example.com" "$DISCOVERED_GLOBAL_EMAIL" "configured global email is used" || return 1
+}
+
+test_discovery_does_not_fallback_candidate_to_global_identity() {
+    rm -f "$HOME/.gitconfig"
+    rm -rf "$HOME/.config/gitsetu" "$HOME/work" "$HOME/.ssh"
+    mkdir -p "$HOME/.config/gitsetu/profiles" "$HOME/.ssh"
+    git config --file "$HOME/.config/gitsetu/profiles/global.gitconfig" user.name 'Global User'
+    git config --file "$HOME/.config/gitsetu/profiles/global.gitconfig" user.email global@example.com
+    mkdir -p "$HOME/work" "$HOME/.ssh"
+    : > "$HOME/.ssh/id_ed25519_work"
+    printf 'ssh-ed25519 AAAA no-email-comment\n' > "$HOME/.ssh/id_ed25519_work.pub"
+
+    PROFILE_COUNT=0
+    generate_initial_blueprint
+    assert_equals "1" "$PROFILE_COUNT" "incomplete discovered work profile is not registered" || return 1
+    assert_equals "global" "${PROFILE_LABELS[0]}" "only the complete global profile remains" || return 1
+}
+
+test_validate_profile_blueprint_complete_mode() {
+    PROFILE_COUNT=1
+    PROFILE_LABELS=(global)
+    PROFILE_NAMES=("")
+    PROFILE_EMAILS=(global@example.com)
+    PROFILE_DIRS=("")
+    PROFILE_PROVIDERS=(github.com)
+    PROFILE_SIGNS=(0)
+    PROFILE_KEYS=("$HOME/.ssh/id_ed25519_global")
+    PROFILE_USERS=("")
+    PROFILE_PATS=("")
+
+    local shape_status=0 complete_status=0
+    validate_profile_blueprint 0 || shape_status=$?
+    validate_profile_blueprint 1 || complete_status=$?
+    assert_equals "0" "$shape_status" "interactive shape validation permits an empty name" || return 1
+    assert_equals "1" "$complete_status" "pre-mutation validation rejects an incomplete identity" || return 1
+}
+
 printf '\n%btest_discovery.sh%b\n' "$T_BOLD" "$T_RESET"
 run_test "extracts email from ssh public key" test_discover_global_git_identity_from_ssh
 run_test "extracts identity from gitconfig" test_discover_global_git_identity_from_gitconfig
@@ -146,4 +206,8 @@ run_test "ignores global/default labels" test_discover_workspace_dir_ignores_glo
 run_test "resolves work_dir avoiding substring shadowing (Challenger 3.4)" test_discover_workspace_dir_multi_profile_substring_shadowing
 run_test "resolves exact directory component over prefix" test_discover_workspace_dir_exact_component_match
 run_test "rejects substring collision without profile match" test_discover_workspace_dir_no_false_positive_substring
+run_test "rejects malformed discovered identity values" test_discovery_rejects_malformed_identity
+run_test "discovers global identity from configured v2 profile path" test_discovery_uses_configured_v2_profile_location
+run_test "does not apply global identity to an incomplete candidate" test_discovery_does_not_fallback_candidate_to_global_identity
+run_test "blueprint validation separates shape from complete identity" test_validate_profile_blueprint_complete_mode
 print_results "Discovery tests"

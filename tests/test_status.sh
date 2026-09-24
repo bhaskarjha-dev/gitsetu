@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/test_status.sh — GitSetu Status Command Suite
 # Verifies cmd_status active identity detection, profile registry rendering,
-# and guard bypass warnings.
+# and explicit guard-policy diagnostics.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,12 +20,16 @@ GITSETU_EXE="${GITSETU_EXE%$'\r'}"
 # ------------------------------------------------------------------------------
 test_status_not_set() {
     rm -rf "$GITSETU_CONFIG_DIR" "$HOME/.gitconfig"
-    git config --global --unset user.name 2>/dev/null || true
-    git config --global --unset user.email 2>/dev/null || true
+    if git config --global --get user.name >/dev/null 2>&1; then
+        git config --global --unset user.name || return 1
+    fi
+    if git config --global --get user.email >/dev/null 2>&1; then
+        git config --global --unset user.email || return 1
+    fi
 
-    local output
-    output=$(bash "$GITSETU_EXE" status 2>&1 || true)
-
+    local output status=0
+    output=$(bash "$GITSETU_EXE" status 2>&1) || status=$?
+    assert_equals "0" "$status" "status command exits successfully" || return 1
     assert_contains "$output" "Active Identity" "displays active identity box" || return 1
     assert_contains "$output" "Name:  (not set)" "displays name not set" || return 1
     assert_contains "$output" "Email: (not set)" "displays email not set" || return 1
@@ -41,9 +45,9 @@ test_status_repo_identity() {
     git -C "$repo_dir" config user.name "Alice Dev"
     git -C "$repo_dir" config user.email "alice@company.com"
 
-    local output
-    output=$(cd "$repo_dir" && bash "$GITSETU_EXE" status 2>&1 || true)
-
+    local output status=0
+    output=$(cd "$repo_dir" && bash "$GITSETU_EXE" status 2>&1) || status=$?
+    assert_equals "0" "$status" "status command exits successfully in a repository" || return 1
     assert_contains "$output" "Alice Dev" "displays active repo name" || return 1
     assert_contains "$output" "alice@company.com" "displays active repo email" || return 1
     assert_contains "$output" "SSH:   (default)" "displays default SSH command in git repo" || return 1
@@ -52,7 +56,7 @@ test_status_repo_identity() {
 # ------------------------------------------------------------------------------
 # Test 3: cmd_status warns on local core.hooksPath guard subversion
 # ------------------------------------------------------------------------------
-test_status_warns_hooks_subversion() {
+test_status_reports_local_hooks_override() {
     local repo_dir="$TEST_HOME/repos/subverted-repo"
     mkdir -p "$repo_dir"
     git -C "$repo_dir" init -q
@@ -60,33 +64,33 @@ test_status_warns_hooks_subversion() {
     git -C "$repo_dir" config user.email "hacker@evil.dev"
     git -C "$repo_dir" config --local core.hooksPath ".local-hooks"
 
-    local output
-    output=$(cd "$repo_dir" && bash "$GITSETU_EXE" status 2>&1 || true)
-
-    assert_contains "$output" "SECURITY WARNING" "displays security warning banner" || return 1
-    assert_contains "$output" "locally overrides core.hooksPath (.local-hooks)" "identifies subverting path" || return 1
-    assert_contains "$output" "guard is completely bypassed" "warns of guard bypass" || return 1
+    local output status=0
+    output=$(cd "$repo_dir" && bash "$GITSETU_EXE" status 2>&1) || status=$?
+    assert_equals "0" "$status" "status command exits successfully with a hooks override" || return 1
+    assert_contains "$output" "Local core.hooksPath override:" "reports the explicit local hooks override" || return 1
+    assert_contains "$output" ".local-hooks" "shows the local hooks path" || return 1
+    assert_contains "$output" "Unmanaged repository: fail-open" "reports the unmanaged repository policy" || return 1
+    assert_contains "$output" "Local hook policy: this repository override can bypass the global guard." \
+        "explains the local guard override" || return 1
+    assert_not_contains "$output" "SECURITY WARNING" "does not restore the obsolete blocking banner" || return 1
 }
 
 # ------------------------------------------------------------------------------
 # Test 4: cmd_status displays configured profiles and active match checkmark
 # ------------------------------------------------------------------------------
 test_status_displays_profiles_and_active_check() {
-    mkdir -p "$GITSETU_PROFILES_DIR"
-    cat << EOF > "$GITSETU_PROFILES_CONF"
-work::$HOME/work:github.com:0:$HOME/.ssh/id_ed25519_work:
-personal::$HOME/personal:github.com:0:$HOME/.ssh/id_ed25519_personal:
-EOF
-    cat << EOF > "$GITSETU_PROFILES_DIR/work.gitconfig"
-[user]
-    name = Alice Work
-    email = alice@corp.com
-EOF
-    cat << EOF > "$GITSETU_PROFILES_DIR/personal.gitconfig"
-[user]
-    name = Alice Personal
-    email = alice@me.dev
-EOF
+    test_v2_profile_config global "Global User" "global@example.com"
+    test_v2_profile_config work "Alice Work" "alice@corp.com"
+    test_v2_profile_config personal "Alice Personal" "alice@me.dev"
+    {
+        test_v2_registry_header
+        test_v2_registry_line global "" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_global" ""
+        test_v2_registry_line work "$HOME/work" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_work" ""
+        test_v2_registry_line personal "$HOME/personal" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_personal" ""
+    } > "$GITSETU_PROFILES_CONF"
 
     # Test inside work directory
     local work_repo="$TEST_HOME/work/repo1"
@@ -95,10 +99,12 @@ EOF
     git -C "$work_repo" config user.name "Alice Work"
     git -C "$work_repo" config user.email "alice@corp.com"
 
-    local output
-    output=$(cd "$work_repo" && bash "$GITSETU_EXE" status 2>&1 || true)
-
+    local output status=0
+    output=$(cd "$work_repo" && bash "$GITSETU_EXE" status 2>&1) || status=$?
+    assert_equals "0" "$status" "status command exits successfully with configured profiles" || return 1
     assert_contains "$output" "Configured Profiles" "displays configured profiles header" || return 1
+    assert_contains "$output" "global" "renders the global profile" || return 1
+    assert_contains "$output" "global@example.com" "renders the global profile email" || return 1
     assert_contains "$output" "✓ work" "renders active checkmark next to matching work profile" || return 1
     assert_contains "$output" "personal" "renders personal profile" || return 1
     assert_contains "$output" "alice@corp.com" "renders work profile email" || return 1
@@ -106,23 +112,23 @@ EOF
 }
 
 # ------------------------------------------------------------------------------
-# Test 5: cmd_status displays [Manual Mode] for profile without directory
+# Test 5: cmd_status displays the configured global profile outside a repository
 # ------------------------------------------------------------------------------
-test_status_manual_mode_display() {
-    mkdir -p "$GITSETU_PROFILES_DIR"
-    cat << EOF > "$GITSETU_PROFILES_CONF"
-global:::github.com:0:$HOME/.ssh/id_ed25519_global:
-EOF
-    cat << EOF > "$GITSETU_PROFILES_DIR/global.gitconfig"
-[user]
-    name = Solo Dev
-    email = solo@example.com
-EOF
+test_status_global_profile_display() {
+    test_v2_profile_config global "Solo Dev" "solo@example.com"
+    {
+        test_v2_registry_header
+        test_v2_registry_line global "" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_global" ""
+    } > "$GITSETU_PROFILES_CONF"
 
-    local output
-    output=$(bash "$GITSETU_EXE" status 2>&1 || true)
-
-    assert_contains "$output" "[Manual Mode]" "displays manual mode for unbound directory" || return 1
+    local output status=0
+    output=$(bash "$GITSETU_EXE" status 2>&1) || status=$?
+    assert_equals "0" "$status" "status command exits successfully for a global profile" || return 1
+    assert_contains "$output" "Configured Profiles" "displays configured profiles" || return 1
+    assert_contains "$output" "global" "renders the global profile" || return 1
+    assert_contains "$output" "solo@example.com" "renders the global profile email" || return 1
+    assert_not_contains "$output" "[Manual Mode]" "does not use the obsolete manual-mode label" || return 1
 }
 
 # ------------------------------------------------------------------------------
@@ -131,7 +137,7 @@ EOF
 printf '\n%btest_status.sh%b\n' "$T_BOLD" "$T_RESET"
 run_test "cmd_status displays (not set) for unconfigured identity" test_status_not_set
 run_test "cmd_status displays active identity when set in repo" test_status_repo_identity
-run_test "cmd_status warns on local core.hooksPath guard subversion" test_status_warns_hooks_subversion
+run_test "cmd_status reports local core.hooksPath override policy" test_status_reports_local_hooks_override
 run_test "cmd_status displays profiles and active checkmark" test_status_displays_profiles_and_active_check
-run_test "cmd_status displays [Manual Mode] for unbound directory" test_status_manual_mode_display
+run_test "cmd_status displays configured global profile" test_status_global_profile_display
 print_results "Status tests"

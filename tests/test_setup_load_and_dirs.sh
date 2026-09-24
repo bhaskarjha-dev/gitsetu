@@ -2,7 +2,7 @@
 # tests/test_setup_load_and_dirs.sh — Regression tests for setup profile loading & workspace directory auto-creation
 #
 # Validates:
-# 1. Existing profiles in profiles.conf are not erased when setup runs.
+# 1. Existing strict v2 profiles in profiles.conf are not erased when setup runs.
 # 2. Workspace directories for configured profiles are created automatically if missing.
 # 3. Existing directories remain untouched.
 # 4. Dry-run mode does not create directories on disk.
@@ -16,20 +16,20 @@ test_setup_preserves_existing_profiles() {
     setup_test_home
     source_gitsetu_libs
 
-    # Seed 3 profiles into profiles.conf and profile gitconfigs
-    mkdir -p "$GITSETU_CONFIG_DIR/profiles"
-    cat > "$GITSETU_PROFILES_CONF" <<EOF
-global::github.com:0:$HOME/.ssh/id_ed25519_global:
-work:$HOME/work:github.com:0:$HOME/.ssh/id_ed25519_work:
-personal:$HOME/personal:github.com:0:$HOME/.ssh/id_ed25519_personal:
-EOF
-
-    git config -f "$GITSETU_CONFIG_DIR/profiles/global.gitconfig" user.name "Global User"
-    git config -f "$GITSETU_CONFIG_DIR/profiles/global.gitconfig" user.email "global@example.com"
-    git config -f "$GITSETU_CONFIG_DIR/profiles/work.gitconfig" user.name "Work User"
-    git config -f "$GITSETU_CONFIG_DIR/profiles/work.gitconfig" user.email "work@example.com"
-    git config -f "$GITSETU_CONFIG_DIR/profiles/personal.gitconfig" user.name "Personal User"
-    git config -f "$GITSETU_CONFIG_DIR/profiles/personal.gitconfig" user.email "personal@example.com"
+    # Seed a strict v2 registry and profile gitconfigs.  Legacy seven-field
+    # records are rejection fixtures, never setup inputs.
+    test_v2_profile_config global "Global User" "global@example.com"
+    test_v2_profile_config work "Work User" "work@example.com"
+    test_v2_profile_config personal "Personal User" "personal@example.com"
+    {
+        test_v2_registry_header
+        test_v2_registry_line global "" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_global" ""
+        test_v2_registry_line work "$HOME/work" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_work" ""
+        test_v2_registry_line personal "$HOME/personal" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_personal" ""
+    } > "$GITSETU_PROFILES_CONF"
 
     # Simulate setup bootstrap logic (load_profiles + conditional generate_initial_blueprint)
     PROFILE_COUNT=0
@@ -104,7 +104,7 @@ test_ensure_workspace_dirs_dry_run_creates_nothing() {
 }
 
 # Run all tests
-run_test "Setup preserves existing profiles from profiles.conf" test_setup_preserves_existing_profiles
+run_test "Setup preserves existing strict v2 profiles" test_setup_preserves_existing_profiles
 run_test "ensure_workspace_dirs creates missing workspace directories" test_ensure_workspace_dirs_creates_missing_dirs
 run_test "ensure_workspace_dirs is idempotent on existing directories" test_ensure_workspace_dirs_idempotent_on_existing_dirs
 run_test "ensure_workspace_dirs does not create directories in dry-run mode" test_ensure_workspace_dirs_dry_run_creates_nothing

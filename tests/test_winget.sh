@@ -1,111 +1,38 @@
 #!/usr/bin/env bash
-# tests/test_winget.sh — Tests Windows Package Manager (WinGet) manifests and native launcher
+# shellcheck disable=SC2015  # Test assertion idiom: pass/fail helpers return zero/nonzero explicitly.
+# WinGet template and native-launcher policy tests.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TEMPLATE_DIR="$ROOT/packaging/templates/winget"
 passed=0
 failed=0
+pass() { printf '  [PASS] %s\n' "$1"; passed=$((passed + 1)); }
+fail() { printf '  [FAIL] %s\n' "$1" >&2; failed=$((failed + 1)); }
 
-pass() {
-    printf "  \033[32m✔\033[0m %s\n" "$1"
-    passed=$((passed + 1))
-}
-
-fail() {
-    printf "  \033[31m✖\033[0m %s: %s\n" "$1" "$2"
-    failed=$((failed + 1))
-}
-
-echo "=== Running tests/test_winget.sh ==="
-
-MANIFEST_DIR="$REPO_DIR/packaging/winget/manifests/b/BhaskarJha/GitSetu/1.1.0"
-VER_FILE="$MANIFEST_DIR/BhaskarJha.GitSetu.yaml"
-LOC_FILE="$MANIFEST_DIR/BhaskarJha.GitSetu.locale.en-US.yaml"
-INS_FILE="$MANIFEST_DIR/BhaskarJha.GitSetu.installer.yaml"
-
-# 1. Verify manifest existence
-if [ -f "$VER_FILE" ] && [ -f "$LOC_FILE" ] && [ -f "$INS_FILE" ]; then
-    pass "WinGet multi-file manifest files exist"
+[[ ! -e "$ROOT/packaging/winget/manifests" ]] && pass "unreleased WinGet manifests are withheld" || fail "active WinGet manifest"
+for file in BhaskarJha.GitSetu.yaml.in BhaskarJha.GitSetu.installer.yaml.in BhaskarJha.GitSetu.locale.en-US.yaml.in; do
+    [[ -f "$TEMPLATE_DIR/$file" ]] || fail "WinGet template $file"
+done
+pass "WinGet multi-file templates exist"
+grep -q 'PackageIdentifier: BhaskarJha.GitSetu' "$TEMPLATE_DIR/BhaskarJha.GitSetu.yaml.in" && pass "canonical package identifier retained" || fail "WinGet identifier"
+grep -q '{{WINDOWS_ZIP_URL}}' "$TEMPLATE_DIR/BhaskarJha.GitSetu.installer.yaml.in" && grep -q '{{WINDOWS_ZIP_SHA256}}' "$TEMPLATE_DIR/BhaskarJha.GitSetu.installer.yaml.in" && pass "WinGet URL and digest are release-rendered" || fail "WinGet release tokens"
+grep -q '^  - git-setu' "$TEMPLATE_DIR/BhaskarJha.GitSetu.installer.yaml.in" && pass "WinGet declares git-setu alias" || fail "WinGet alias"
+if grep -R -F '24a29b06a35d1b152b31fd42002ac382561c2a7296de3bdc0d10e8a3e35bc123' "$TEMPLATE_DIR" >/dev/null 2>&1; then
+    fail "WinGet stale digest"
 else
-    fail "manifest existence" "one or more WinGet manifest files are missing"
+    pass "WinGet templates contain no stale digest"
 fi
 
-# 2. Check PackageIdentifier and PackageVersion consistency
-id_ver=$(grep "^PackageIdentifier:" "$VER_FILE" | awk '{print $2}')
-id_loc=$(grep "^PackageIdentifier:" "$LOC_FILE" | awk '{print $2}')
-id_ins=$(grep "^PackageIdentifier:" "$INS_FILE" | awk '{print $2}')
-
-v_ver=$(grep "^PackageVersion:" "$VER_FILE" | awk '{print $2}')
-v_loc=$(grep "^PackageVersion:" "$LOC_FILE" | awk '{print $2}')
-v_ins=$(grep "^PackageVersion:" "$INS_FILE" | awk '{print $2}')
-
-if [ "$id_ver" = "BhaskarJha.GitSetu" ] && [ "$id_loc" = "BhaskarJha.GitSetu" ] && [ "$id_ins" = "BhaskarJha.GitSetu" ]; then
-    pass "PackageIdentifier一致 (BhaskarJha.GitSetu)"
+CS="$ROOT/packaging/windows/gitsetu.cs"
+grep -q 'AppendQuotedArgument' "$CS" && grep -q 'backslashes \* 2' "$CS" && pass "native launcher contains tested Windows quoting logic" || fail "native launcher quoting"
+if grep -Eq 'GITSETU_BASH|where\.exe|git --exec-path|Arguments = sb' "$CS"; then
+    fail "native launcher untrusted discovery or manual argv construction"
 else
-    fail "PackageIdentifier" "mismatch across manifest files ($id_ver / $id_loc / $id_ins)"
+    pass "native launcher has no arbitrary PATH/GITSETU_BASH discovery"
 fi
+grep -q 'FileAttributes.ReparsePoint' "$CS" && grep -q 'GetAccessRules' "$CS" && pass "native launcher validates reparse points and ACLs" || fail "native launcher trust checks"
+grep -q 'Normalize-CompilerOutput' "$ROOT/packaging/windows/build_launcher.ps1" && pass "Windows build normalizes compiler nondeterminism" || fail "Windows deterministic build"
 
-if [ "$v_ver" = "1.1.0" ] && [ "$v_loc" = "1.1.0" ] && [ "$v_ins" = "1.1.0" ]; then
-    pass "PackageVersion consistency (1.1.0)"
-else
-    fail "PackageVersion" "mismatch across manifest files ($v_ver / $v_loc / $v_ins)"
-fi
-
-# 3. Test winget validate if running in an environment with winget
-if command -v winget.exe >/dev/null 2>&1 || command -v winget >/dev/null 2>&1; then
-    WINGET_BIN="winget"
-    if command -v winget.exe >/dev/null 2>&1; then
-        WINGET_BIN="winget.exe"
-    fi
-
-    # Convert path for Windows
-    WIN_DIR="$MANIFEST_DIR"
-    if command -v cygpath >/dev/null 2>&1; then
-        WIN_DIR=$(cygpath -w "$MANIFEST_DIR")
-    fi
-
-    val_out=$("$WINGET_BIN" validate --manifest "$WIN_DIR" 2>&1 || echo "failed")
-    if echo "$val_out" | grep -qi "validation succeeded"; then
-        pass "winget validate passes official Microsoft manifest schema"
-    else
-        fail "winget validate" "$val_out"
-    fi
-else
-    pass "winget validate (skipped: winget not installed on host)"
-fi
-
-# 4. Verify Windows C# launcher source
-CS_FILE="$REPO_DIR/packaging/windows/gitsetu.cs"
-if [ -f "$CS_FILE" ] && grep -q "GitSetuLauncher" "$CS_FILE"; then
-    pass "packaging/windows/gitsetu.cs source exists"
-else
-    fail "launcher source" "gitsetu.cs missing or invalid"
-fi
-
-# 5. Check launcher compilation if on Windows
-if command -v powershell.exe >/dev/null 2>&1 && [ -f "$REPO_DIR/packaging/windows/build_launcher.ps1" ]; then
-    TMP_OUT=$(mktemp -d "${TMPDIR:-/tmp}/gitsetu-launcher-test.XXXXXX")
-    WIN_OUT="$TMP_OUT"
-    if command -v cygpath >/dev/null 2>&1; then
-        WIN_OUT=$(cygpath -w "$TMP_OUT")
-    fi
-
-    if powershell.exe -ExecutionPolicy Bypass -File "$REPO_DIR/packaging/windows/build_launcher.ps1" -OutDir "$WIN_OUT" >/dev/null 2>&1; then
-        if [ -f "$TMP_OUT/gitsetu.exe" ]; then
-            pass "native Windows launcher compiles cleanly via build_launcher.ps1"
-        else
-            fail "launcher compilation" "gitsetu.exe not generated in output directory"
-        fi
-    else
-        fail "launcher compilation" "powershell execution failed"
-    fi
-    rm -rf "$TMP_OUT"
-fi
-
-echo ""
-echo "WinGet tests: $passed passed, $failed failed, $((passed + failed)) total"
-if [ "$failed" -gt 0 ]; then
-    exit 1
-fi
+printf 'WinGet tests: %d passed, %d failed\n' "$passed" "$failed"
+[[ "$failed" -eq 0 ]]

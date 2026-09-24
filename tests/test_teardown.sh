@@ -13,6 +13,7 @@ source "$TEST_DIR/helpers.sh"
 # Source gitsetu modules needed for testing
 source "$GITSETU_ROOT/lib/core.sh"
 source "$GITSETU_ROOT/lib/platform.sh"
+source "$GITSETU_ROOT/lib/validate.sh"
 source "$GITSETU_ROOT/lib/ui.sh"
 source "$GITSETU_ROOT/lib/backup.sh"
 source "$GITSETU_ROOT/lib/ssh.sh"
@@ -22,18 +23,42 @@ source "$GITSETU_ROOT/lib/teardown.sh"
 
 detect_os
 
+# Git Bash fsutil.exe is an expensive Win32 process for every path component.
+# These fixtures contain ordinary private directories and no junction by
+# contract; use a test-only shim while retaining ordinary symlink checks.
+if [[ "${OSTYPE:-}" == "cygwin"* || "${OSTYPE:-}" == "msys"* || "${OSTYPE:-}" == "mingw"* ]]; then
+    # shellcheck disable=SC2329  # invoked indirectly by platform helpers
+    cygpath() {
+        printf '%s' "${!#}"
+    }
+    # shellcheck disable=SC2329  # invoked indirectly by platform helpers
+    fsutil.exe() {
+        local path="${!#}"
+        [[ -L "$path" ]] && return 0
+        return 1
+    }
+fi
+
 # ------------------------------------------------------------------------------
 # Test Setup
 # ------------------------------------------------------------------------------
 
 setup() {
     setup_test_home
+    # setup_test_home clears inherited GITSETU_* variables, including the
+    # immutable module constants; refresh every module so per-process path
+    # caches cannot survive a deleted test HOME.
+    _TEST_GITSETU_LIBS_READY=0
+    source_gitsetu_libs || return 1
     
     # Pre-populate state to simulate a successful setup
     PROFILE_LABELS=("global" "pro")
     PROFILE_NAMES=("Global Name" "Pro Name")
     PROFILE_EMAILS=("global@example.com" "pro@example.com")
     PROFILE_DIRS=("" "$HOME/pro")
+    PROFILE_PROVIDERS=("github.com" "github.com")
+    PROFILE_SIGNS=("0" "0")
+    PROFILE_KEYS=("$HOME/.ssh/id_ed25519_global" "$HOME/.ssh/id_ed25519_pro")
     PROFILE_USERS=("" "")
     PROFILE_PATS=("" "")
     PROFILE_COUNT=2
@@ -49,6 +74,7 @@ setup() {
     printf 'Host my-server\n    HostName 10.0.0.1\n' > "$HOME/.ssh/config"
 
     # Run the setup logic
+    GITSETU_DRY_RUN=0
     ensure_dirs
     write_global_gitconfig >/dev/null 2>&1
     write_profile_gitconfig "pro" "Pro Name" "pro@example.com" >/dev/null 2>&1
@@ -163,14 +189,28 @@ test_teardown_deep_strips_local_configs() {
 }
 
 test_teardown_dos_prevention() {
-    # Test that teardown_deep refuses to traverse / or $HOME
-    mkdir -p "$(dirname "$GITSETU_PROFILES_CONF")"
-    echo "dos::$HOME:github.com:0:" > "$GITSETU_PROFILES_CONF"
-    
+    # Test that teardown_deep refuses to traverse / or $HOME.  The registry
+    # fixture is strict v2: the global record must be first, and every field
+    # is percent-encoded by the normal writer.
+    setup_test_home
+    _TEST_GITSETU_LIBS_READY=0
+    source_gitsetu_libs || return 1
+    PROFILE_LABELS=("global" "dos")
+    PROFILE_NAMES=("Global Name" "DoS Profile")
+    PROFILE_EMAILS=("global@example.com" "dos@example.com")
+    PROFILE_DIRS=("" "$HOME")
+    PROFILE_PROVIDERS=("github.com" "github.com")
+    PROFILE_SIGNS=("0" "0")
+    PROFILE_KEYS=("$HOME/.ssh/id_ed25519_global" "$HOME/.ssh/id_ed25519_dos")
+    PROFILE_USERS=("" "")
+    PROFILE_PATS=("" "")
+    PROFILE_COUNT=2
+    write_profiles_conf >/dev/null 2>&1
+
     local output
     output=$(teardown_deep 2>&1 || true)
-    
-    assert_contains "$output" "Skipping deep cleanup for '$HOME' to prevent Denial of Service traversal" "blocks $HOME traversal" || return 1
+
+    assert_contains "$output" "Skipping deep cleanup for '$HOME' to prevent filesystem traversal" "blocks HOME traversal" || return 1
 }
 
 # ------------------------------------------------------------------------------

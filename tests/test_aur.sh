@@ -1,81 +1,31 @@
 #!/usr/bin/env bash
-# tests/test_aur.sh — Tests Arch Linux AUR package definition (PKGBUILD & .SRCINFO)
+# shellcheck disable=SC2015  # Test assertion idiom: pass/fail helpers return zero/nonzero explicitly.
+# AUR template/policy tests. No unreleased package definition is active.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PKGBUILD_TEMPLATE="$ROOT/packaging/templates/aur/PKGBUILD.in"
+SRCINFO_TEMPLATE="$ROOT/packaging/templates/aur/.SRCINFO.in"
 passed=0
 failed=0
+pass() { printf '  [PASS] %s\n' "$1"; passed=$((passed + 1)); }
+fail() { printf '  [FAIL] %s\n' "$1" >&2; failed=$((failed + 1)); }
 
-pass() {
-    printf "  \033[32m✔\033[0m %s\n" "$1"
-    passed=$((passed + 1))
-}
-
-fail() {
-    printf "  \033[31m✖\033[0m %s: %s\n" "$1" "$2"
-    failed=$((failed + 1))
-}
-
-echo "=== Running tests/test_aur.sh ==="
-
-AUR_DIR="$REPO_DIR/packaging/aur"
-PKGBUILD="$AUR_DIR/PKGBUILD"
-SRCINFO="$AUR_DIR/.SRCINFO"
-
-# 1. Existence
-if [ -f "$PKGBUILD" ] && [ -f "$SRCINFO" ]; then
-    pass "PKGBUILD and .SRCINFO files exist"
+[[ -f "$PKGBUILD_TEMPLATE" && -f "$SRCINFO_TEMPLATE" ]] && pass "AUR templates exist" || fail "AUR templates"
+[[ ! -e "$ROOT/packaging/aur/PKGBUILD" && ! -e "$ROOT/packaging/aur/.SRCINFO" ]] && pass "unreleased AUR manifests are withheld" || fail "active AUR manifest"
+grep -q '^depends=.*bash' "$PKGBUILD_TEMPLATE" && pass "AUR preserves Bash 3.2 support" || fail "AUR Bash policy"
+if grep -q "bash>=4" "$PKGBUILD_TEMPLATE"; then fail "AUR stale Bash floor"; else pass "AUR has no stale Bash 4 floor"; fi
+for dependency in git openssh openssl coreutils; do
+    grep -q "'$dependency'" "$PKGBUILD_TEMPLATE" || fail "AUR dependency $dependency"
+done
+grep -q 'usr/bin/gitsetu' "$PKGBUILD_TEMPLATE" && grep -q 'git-setu' "$PKGBUILD_TEMPLATE" && pass "AUR template declares both command aliases" || fail "AUR aliases"
+grep -q 'lib/completion.sh' "$PKGBUILD_TEMPLATE" && pass "AUR template packages completion metadata" || fail "AUR completion"
+grep -q '{{SOURCE_SHA256}}' "$PKGBUILD_TEMPLATE" && grep -q '{{SOURCE_SHA256}}' "$SRCINFO_TEMPLATE" && pass "AUR source digest comes only from release rendering" || fail "AUR digest token"
+if grep -R -E 'af0a75748e5c55a71bf8007daff4966b56db6fab0ce3d201ed06e5737f9a28a5|24a29b06a35d1b152b31fd42002ac382561c2a7296de3bdc0d10e8a3e35bc123' "$ROOT/packaging/templates" >/dev/null 2>&1; then
+    fail "AUR stale release digest"
 else
-    fail "aur files" "PKGBUILD or .SRCINFO missing"
+    pass "AUR templates contain no stale release digest"
 fi
 
-# 2. Syntax check with bash -n
-if bash -n "$PKGBUILD"; then
-    pass "PKGBUILD passes bash syntax validation (bash -n)"
-else
-    fail "PKGBUILD syntax" "syntax error in PKGBUILD"
-fi
-
-# 3. Validate metadata
-pkgname=$(grep "^pkgname=" "$PKGBUILD" | cut -d= -f2)
-pkgver=$(grep "^pkgver=" "$PKGBUILD" | cut -d= -f2)
-pkgrel=$(grep "^pkgrel=" "$PKGBUILD" | cut -d= -f2)
-
-if [ "$pkgname" = "gitsetu" ] && [ "$pkgver" = "1.1.0" ] && [ "$pkgrel" = "1" ]; then
-    pass "PKGBUILD package metadata valid (gitsetu v1.1.0-1)"
-else
-    fail "PKGBUILD metadata" "name=$pkgname, ver=$pkgver, rel=$pkgrel"
-fi
-
-# 4. Check dependencies in PKGBUILD
-if grep -q "bash>=4.0" "$PKGBUILD" && grep -q "'git'" "$PKGBUILD" && grep -q "'openssh'" "$PKGBUILD"; then
-    pass "PKGBUILD declares required runtime dependencies (bash, git, openssh)"
-else
-    fail "PKGBUILD depends" "missing required dependency declarations"
-fi
-
-# 5. Check .SRCINFO parity
-src_name=$(grep "pkgname = " "$SRCINFO" | awk '{print $3}')
-src_ver=$(grep "pkgver = " "$SRCINFO" | awk '{print $3}')
-src_rel=$(grep "pkgrel = " "$SRCINFO" | awk '{print $3}')
-
-if [ "$src_name" = "$pkgname" ] && [ "$src_ver" = "$pkgver" ] && [ "$src_rel" = "$pkgrel" ]; then
-    pass ".SRCINFO is synchronized with PKGBUILD"
-else
-    fail ".SRCINFO parity" "mismatch with PKGBUILD ($src_name vs $pkgname, $src_ver vs $pkgver)"
-fi
-
-# 6. Check installation commands
-if grep -q "usr/bin/gitsetu" "$PKGBUILD" && grep -q "usr/share/\$pkgname/lib" "$PKGBUILD"; then
-    pass "PKGBUILD correctly installs binary wrapper and libraries"
-else
-    fail "PKGBUILD installation" "missing binary or library installation targets"
-fi
-
-echo ""
-echo "AUR tests: $passed passed, $failed failed, $((passed + failed)) total"
-if [ "$failed" -gt 0 ]; then
-    exit 1
-fi
+printf 'AUR tests: %d passed, %d failed\n' "$passed" "$failed"
+[[ "$failed" -eq 0 ]]

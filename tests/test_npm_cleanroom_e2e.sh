@@ -24,8 +24,8 @@ echo "=================================================================="
 
 # Check node & npm
 if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
-    echo "Node or npm not found in PATH. Skipping."
-    exit 0
+    printf '  [SKIP] npm clean-room E2E: Node.js and npm are required\n'
+    exit 77
 fi
 
 # 1. Prepare sterile clean-room sandbox
@@ -33,9 +33,44 @@ SANDBOX_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/gitsetu-npm-e2e.XXXXXX")
 if [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]]; then
     SANDBOX_ROOT=$(cd "$SANDBOX_ROOT" && pwd -W)
 fi
-# Normalize path with forward slashes
-SANDBOX_ROOT="${SANDBOX_ROOT//\\//}"
-trap 'rm -rf "$SANDBOX_ROOT"' EXIT
+# Normalize Windows paths with forward slashes without stripping the drive separator.
+if command -v cygpath >/dev/null 2>&1; then
+    SANDBOX_ROOT=$(cygpath -m "$SANDBOX_ROOT")
+else
+    SANDBOX_ROOT=$(printf '%s' "$SANDBOX_ROOT" | tr '\\' '/')
+fi
+_npm_e2e_matching_pids() {
+    ps -ef 2>/dev/null | awk -v root="$SANDBOX_ROOT" '
+        index($0, root) > 0 && $0 !~ /awk/ && $0 !~ /grep/ { print $2 }
+    '
+}
+
+_npm_e2e_kill_descendants() {
+    local round pids
+    for round in 1 2 3; do
+        pids=$(_npm_e2e_matching_pids)
+        [[ -n "$pids" ]] || return 0
+        for p in $pids; do
+            kill -TERM "$p" 2>/dev/null || true
+        done
+        sleep 1
+        pids=$(_npm_e2e_matching_pids)
+        for p in $pids; do
+            kill -KILL "$p" 2>/dev/null || true
+        done
+        sleep 1
+    done
+}
+
+cleanup_npm_sandbox() {
+    local exit_status=$?
+    trap - EXIT
+    _npm_e2e_kill_descendants
+    cd / 2>/dev/null || true
+    rm -rf "$SANDBOX_ROOT" 2>/dev/null || true
+    return "$exit_status"
+}
+trap cleanup_npm_sandbox EXIT
 
 STAGING_DIR="$SANDBOX_ROOT/staging"
 CLEAN_HOME="$SANDBOX_ROOT/home"
@@ -46,6 +81,10 @@ mkdir -p "$STAGING_DIR" "$CLEAN_HOME/.config/gitsetu" "$CLEAN_HOME/.ssh" "$NPM_P
 export HOME="$CLEAN_HOME"
 export XDG_CONFIG_HOME="$CLEAN_HOME/.config"
 export GIT_CONFIG_GLOBAL="$CLEAN_HOME/.gitconfig"
+# The workflow is intentionally non-interactive.  This explicit test mode
+# suppresses optional GitHub/SSH/guard prompts; it is not a production
+# password or policy bypass and is unset before the final cleanup cases.
+export GITSETU_TEST=1
 git config -f "$GIT_CONFIG_GLOBAL" user.name "John Doe"
 git config -f "$GIT_CONFIG_GLOBAL" user.email "john@example.com"
 
@@ -60,6 +99,9 @@ else
     fail "npm pack" "Failed to generate tarball in $STAGING_DIR ($PACK_OUTPUT)"
     exit 1
 fi
+# Do not keep the parent shell inside staging while npm child processes and
+# the EXIT cleanup trap manipulate the sandbox on Windows.
+cd "$SANDBOX_ROOT"
 
 # 3. Test npx execution directly from tarball
 NPX_VER=$(npx --yes --package "$TARBALL" gitsetu --version 2>&1 || true)
@@ -117,13 +159,54 @@ else
     fail "entrypoint execution" "Unexpected output: $VER_CHECK"
 fi
 
-# 5. Execute 22-feature workflow using the installed npm package wrapper
-RUN_CMD() {
+# 5. Execute the feature workflow using the installed npm package wrapper.
+# Run each command in a small process group and reap any MSYS descendants
+# before the next command starts; otherwise repeated clean-room commands can
+# accumulate orphaned Git Bash/fsutil processes and make the next lock wait
+# appear to hang.
+_npm_e2e_run_command() {
+    local output_file command_rc=0 command_pid
+    output_file=$(umask 077; mktemp "$SANDBOX_ROOT/.command-output.XXXXXX") || return 1
+
     if [ -n "$PACKAGE_JS" ]; then
+        node "$PACKAGE_JS" "$@" >"$output_file" 2>&1 &
+    else
+        "$INSTALLED_BIN" "$@" >"$output_file" 2>&1 &
+    fi
+    command_pid=$!
+    if wait "$command_pid"; then
+        command_rc=0
+    else
+        command_rc=$?
+    fi
+    _npm_e2e_kill_descendants
+    cat "$output_file"
+    rm -f "$output_file" 2>/dev/null || true
+    return "$command_rc"
+}
+
+RUN_CMD() {
+    _npm_e2e_run_command "$@"
+}
+
+# Keep clean-room failures bounded where the operation is safe to interrupt;
+# always reap descendants after the timeout as well.
+RUN_CMD_BOUNDED() {
+    local command_rc=0
+    if command -v timeout >/dev/null 2>&1; then
+        if [ -n "$PACKAGE_JS" ]; then
+            timeout --kill-after=10s 120s node "$PACKAGE_JS" "$@"
+        else
+            timeout --kill-after=10s 120s "$INSTALLED_BIN" "$@"
+        fi
+    elif [ -n "$PACKAGE_JS" ]; then
         node "$PACKAGE_JS" "$@"
     else
         "$INSTALLED_BIN" "$@"
     fi
+    command_rc=$?
+    _npm_e2e_kill_descendants
+    return "$command_rc"
 }
 
 # F1: --version
@@ -238,25 +321,70 @@ else
 fi
 
 # F13: backup
+export GITSETU_TEST=1
+export GITSETU_TEST_VAULT_MODE=1
 export GITSETU_TEST_VAULT_PASS="SecretPassword123!"
 BACKUP_FILE="$SANDBOX_ROOT/vault.tar.gz.enc"
-RUN_CMD backup "$BACKUP_FILE" >/dev/null 2>&1
-if [ -f "$BACKUP_FILE" ]; then
-    pass "Feature 13: backup creates AES-256 encrypted archive"
+BACKUP_RC=0
+# Vault KDF work can exceed the generic Windows/Cygwin timeout on clean-room
+# CI hosts; run the vault operation directly so the wrapper is not SIGTERM'd
+# by the process-group helper.
+BACKUP_OUT=$(RUN_CMD backup "$BACKUP_FILE" 2>&1) || BACKUP_RC=$?
+BACKUP_RC=${BACKUP_RC:-0}
+if [ "$BACKUP_RC" -eq 0 ] && [ -f "$BACKUP_FILE" ]; then
+    pass "Feature 13: backup creates an authenticated v2 vault"
 else
-    fail "Feature 13" "Backup file not created"
+    fail "Feature 13" "backup failed (rc=$BACKUP_RC): $BACKUP_OUT"
 fi
 
 # F14: restore
 OUT_RESTORE=$(RUN_CMD restore "$BACKUP_FILE" 2>&1 || true)
-if [[ "$OUT_RESTORE" == *"Restore complete"* ]]; then
-    pass "Feature 14: restore unpacks vault and reactivates profiles"
+
+# F14b: Exercise the npm wrapper with MSYS-form HOME/XDG paths.  The wrapper
+# must hand the Bash child canonical Windows paths so a vault created in this
+# environment can be restored in the same clean room.
+CROSS_BACKUP="$SANDBOX_ROOT/cross-environment.vault"
+CROSS_OUT=""
+CROSS_RC=0
+if command -v cygpath >/dev/null 2>&1; then
+    SAVED_NPM_HOME="$HOME"
+    SAVED_NPM_XDG="$XDG_CONFIG_HOME"
+    MSYS_HOME=$(cygpath -u "$CLEAN_HOME" 2>/dev/null || printf '')
+    MSYS_XDG=$(cygpath -u "$XDG_CONFIG_HOME" 2>/dev/null || printf '')
+    if [[ -n "$MSYS_HOME" && -n "$MSYS_XDG" ]]; then
+        export HOME="$MSYS_HOME"
+        export XDG_CONFIG_HOME="$MSYS_XDG"
+        # The MSYS path round-trip is the regression under test; do not wrap
+        # it in the Windows/Cygwin `timeout` process-group helper, which can
+        # deliver SIGTERM to the Git Bash child instead of bounding it.
+        CROSS_OUT=$(RUN_CMD backup "$CROSS_BACKUP" 2>&1) || CROSS_RC=$?
+        if [[ "$CROSS_RC" -eq 0 && -f "$CROSS_BACKUP" ]]; then
+            CROSS_OUT=$(RUN_CMD restore "$CROSS_BACKUP" 2>&1) || CROSS_RC=$?
+        else
+            CROSS_RC=${CROSS_RC:-1}
+        fi
+    else
+        CROSS_RC=1
+    fi
+    export HOME="$SAVED_NPM_HOME"
+    export XDG_CONFIG_HOME="$SAVED_NPM_XDG"
+fi
+unset GITSETU_TEST GITSETU_TEST_VAULT_MODE GITSETU_TEST_VAULT_PASS
+if [[ "$OUT_RESTORE" == *"Authenticated v2 vault restored successfully"* ]]; then
+    pass "Feature 14: restore authenticates and reactivates profiles"
 else
     fail "Feature 14" "$OUT_RESTORE"
 fi
+if command -v cygpath >/dev/null 2>&1; then
+    if [[ "$CROSS_RC" -eq 0 && "$CROSS_OUT" == *"Authenticated v2 vault restored successfully"* ]]; then
+        pass "Feature 14b: npm wrapper preserves MSYS/Windows HOME portability"
+    else
+        fail "Feature 14b" "cross-environment backup/restore failed (rc=$CROSS_RC): $CROSS_OUT"
+    fi
+fi
 
 # F15: remove --force
-OUT_REM=$(RUN_CMD remove personal --force 2>&1 || true)
+OUT_REM=$(RUN_CMD_BOUNDED remove personal --force 2>&1 || true)
 if [[ "$OUT_REM" == *"successfully removed"* ]]; then
     pass "Feature 15: remove profile with --force"
 else
@@ -264,7 +392,7 @@ else
 fi
 
 # F16: teardown --force
-OUT_TD=$(RUN_CMD teardown --force 2>&1 || true)
+OUT_TD=$(RUN_CMD_BOUNDED teardown --force 2>&1 || true)
 if [[ "$OUT_TD" == *"teardown complete"* ]] || [[ "$OUT_TD" == *"Teardown complete"* ]]; then
     pass "Feature 16: teardown cleans all managed state"
 else

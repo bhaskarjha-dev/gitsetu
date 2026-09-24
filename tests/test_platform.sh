@@ -69,6 +69,18 @@ test_normalize_path_root() {
     assert_equals "/" "$result" "root path unchanged"
 }
 
+test_normalize_path_utf8_under_c_locale() {
+    local unicode_dir="$HOME/gitsetu-utf8/é/日本語"
+    mkdir -p "$unicode_dir"
+    local result
+    result=$(LC_ALL=C normalize_path "$unicode_dir") || return 1
+    assert_contains "$result" "gitsetu-utf8/é/日本語" "UTF-8 path survives C-locale canonicalization" || return 1
+
+    local status=0
+    LC_ALL=C normalize_path "$unicode_dir"$'\n'"injected" >/dev/null 2>&1 || status=$?
+    assert_equals "1" "$status" "newline-bearing path remains rejected" || return 1
+}
+
 test_get_gitdir_keyword_not_empty() {
     detect_os
     local keyword
@@ -137,7 +149,7 @@ C:\ on /mnt/c type 9p (rw,noatime,dirsync,aname=drvfs;path=C:\;uid=1000;gid=1000
 D:\ on /mnt/d type drvfs (rw,noatime,uid=1000,gid=1000)
 EOF
     }
-    mount >/dev/null 2>&1 || true
+    mount >/dev/null
 
     assert_exit_code 0 is_shared_mount "/media/sf_shared/work"
     assert_exit_code 0 is_shared_mount "/mnt/hgfs/vmware_share/keys"
@@ -159,6 +171,7 @@ run_test "normalize_path removes trailing slash" test_normalize_path_trailing_sl
 run_test "normalize_path collapses double slashes" test_normalize_path_double_slash
 run_test "normalize_path converts backslashes" test_normalize_path_backslash
 run_test "normalize_path preserves root /" test_normalize_path_root
+run_test "normalize_path accepts UTF-8 under C locale" test_normalize_path_utf8_under_c_locale
 run_test "get_gitdir_keyword returns gitdir variant" test_get_gitdir_keyword_not_empty
 run_test "get_gitdir_keyword returns correct variant per OS" test_get_gitdir_keyword_platforms
 run_test "is_shared_mount detects multiple shared mounts" test_is_shared_mount_detection

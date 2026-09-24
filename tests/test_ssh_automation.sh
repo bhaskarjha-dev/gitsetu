@@ -306,7 +306,7 @@ test_verify_handshake_port22_success() {
     ) || rc=$?
 
     assert_equals "0" "$rc" "returns 0 when port 22 handshake succeeds" || return 1
-    assert_contains "$output" "SSH connection verified: github.com (port 22)" "prints port 22 verified" || return 1
+    assert_contains "$output" "SSH connection verified: github.com (port 22;" "prints port 22 verified" || return 1
 }
 
 # ------------------------------------------------------------------------------
@@ -336,11 +336,12 @@ test_verify_handshake_port443_fallback() {
             echo "ssh: connect to host github.com port 22: Connection timed out" >&2
             return 255
         }
-        GITSETU_TEST_SSH_VERIFY=1 verify_ssh_handshake "$dummy_key" "github.com" 2>&1
+        GITSETU_TEST_SSH_VERIFY=1 GITSETU_ALLOW_SSH_PORT443=1 \
+            verify_ssh_handshake "$dummy_key" "github.com" 2>&1
     ) || rc=$?
 
-    assert_equals "0" "$rc" "returns 0 when port 443 corporate fallback succeeds" || return 1
-    assert_contains "$output" "port 443 corporate fallback" "verifies port 443 fallback message" || return 1
+    assert_equals "0" "$rc" "returns 0 when explicitly opted-in port 443 succeeds" || return 1
+    assert_contains "$output" "explicit port 443 opt-in" "verifies explicit port 443 message" || return 1
 }
 
 # ------------------------------------------------------------------------------
@@ -448,6 +449,123 @@ test_try_gh_dry_run_skips_upload() {
 }
 
 # ------------------------------------------------------------------------------
+# Registry scope tests for automatic key discovery
+# ------------------------------------------------------------------------------
+test_auto_register_invalid_registry_never_scans_ssh_dir() {
+    unset SSH_AUTH_SOCK
+    mkdir -p "$(dirname "$GITSETU_PROFILES_CONF")"
+    printf '# unsupported registry\nwork::%s\n' "$HOME" > "$GITSETU_PROFILES_CONF"
+    local broad_key="$HOME/.ssh/id_ed25519_broad"
+    touch "$broad_key"
+    PROFILE_COUNT=0
+
+    local output rc=0 add_log="$TEST_HOME/unexpected-ssh-add"
+    : > "$add_log"
+    output=$(
+        ssh-add() {
+            if [[ "${1:-}" == "-l" ]]; then return 1; fi
+            printf 'add %s\n' "$*" >> "$add_log"
+            return 0
+        }
+        auto_register_ssh_keys 2>&1
+    ) || rc=$?
+    unset SSH_AUTH_SOCK
+
+    assert_equals "2" "$rc" "invalid v2 registry fails closed" || return 1
+    assert_contains "$output" "existing v2 profile registry is invalid" "error identifies invalid registry" || return 1
+    assert_not_contains "$output" "$broad_key" "malformed state does not widen to ~/.ssh" || return 1
+    assert_equals "0" "$(wc -c < "$add_log" | tr -d ' ')" "no broad key is registered" || return 1
+}
+
+test_auto_register_unconfigured_discovery_requires_no_registry() {
+    export SSH_AUTH_SOCK="$TEST_HOME/mock-agent-discover.sock"
+    rm -f "$GITSETU_PROFILES_CONF"
+    local discovered="$HOME/.ssh/id_ed25519_discovered"
+    ssh-keygen -t ed25519 -C discovered@example.com -f "$discovered" -N "" -q
+    PROFILE_COUNT=0
+
+    local output
+    output=$(
+        ssh-add() {
+            if [[ "${1:-}" == "-l" ]]; then return 1; fi
+            return 0
+        }
+        auto_register_ssh_keys 2>&1
+    )
+    unset SSH_AUTH_SOCK
+
+    assert_contains "$output" "Registered with SSH agent: $discovered" "no-registry discovery remains supported" || return 1
+}
+
+# ------------------------------------------------------------------------------
+# Tests 20-22: explicit port/trust policy and dry-run no-network behavior
+# ------------------------------------------------------------------------------
+test_verify_handshake_refuses_implicit_port443_and_host_trust() {
+    local dummy_key="$TEST_HOME/id_ed25519_policy"
+    local calls="$TEST_HOME/ssh-policy.calls"
+    : > "$calls"
+    touch "$dummy_key"
+    unset GITSETU_ALLOW_SSH_PORT443 GITSETU_ALLOW_SSH_HOST_KEY
+
+    local output rc=0
+    output=$(
+        ssh() {
+            printf '%s\n' "$*" >> "$calls"
+            return 255
+        }
+        GITSETU_TEST_SSH_VERIFY=1 verify_ssh_handshake "$dummy_key" "github.com" 2>&1
+    ) || rc=$?
+
+    assert_equals "1" "$rc" "default failed verification returns nonzero" || return 1
+    assert_equals "1" "$(wc -l < "$calls" | tr -d ' ')" "port 443 is not attempted without consent" || return 1
+    assert_contains "$(cat "$calls")" "StrictHostKeyChecking=yes" "unknown host keys are refused by default" || return 1
+    assert_contains "$(cat "$calls")" "UpdateHostkeys=no" "known_hosts updates are disabled" || return 1
+    assert_not_contains "$(cat "$calls")" "accept-new" "first-use trust is never implicit" || return 1
+    assert_contains "$output" "GITSETU_ALLOW_SSH_PORT443=1" "port consent is discoverable" || return 1
+}
+
+test_verify_handshake_explicit_host_key_consent() {
+    local dummy_key="$TEST_HOME/id_ed25519_trust"
+    local calls="$TEST_HOME/ssh-trust.calls"
+    : > "$calls"
+    touch "$dummy_key"
+
+    local output rc=0
+    output=$(
+        ssh() {
+            printf '%s\n' "$*" > "$calls"
+            echo "successfully authenticated"
+            return 1
+        }
+        GITSETU_TEST_SSH_VERIFY=1 GITSETU_ALLOW_SSH_HOST_KEY=1 \
+            verify_ssh_handshake "$dummy_key" "github.com" 2>&1
+    ) || rc=$?
+    unset GITSETU_ALLOW_SSH_HOST_KEY
+
+    assert_equals "0" "$rc" "explicit host trust opt-in succeeds" || return 1
+    assert_contains "$(cat "$calls")" "StrictHostKeyChecking=accept-new" "explicit consent enables first-use trust" || return 1
+    assert_contains "$(cat "$calls")" "UpdateHostkeys=no" "consent is limited to first-use acceptance" || return 1
+}
+
+test_verify_handshake_dry_run_never_calls_ssh() {
+    local dummy_key="$TEST_HOME/id_ed25519_dryverify"
+    local calls="$TEST_HOME/ssh-dry.calls"
+    : > "$calls"
+    touch "$dummy_key"
+
+    local rc=0
+    (
+        ssh() { printf 'called\n' >> "$calls"; return 99; }
+        GITSETU_DRY_RUN=1 GITSETU_TEST_SSH_VERIFY=1 \
+            verify_ssh_handshake "$dummy_key" "github.com"
+    ) || rc=$?
+    unset GITSETU_DRY_RUN
+
+    assert_equals "0" "$rc" "dry-run verification succeeds without network" || return 1
+    assert_equals "0" "$(wc -c < "$calls" | tr -d ' ')" "dry-run does not invoke ssh" || return 1
+}
+
+# ------------------------------------------------------------------------------
 # Run all tests
 # ------------------------------------------------------------------------------
 printf '\n%btest_ssh_automation.sh%b\n' "$T_BOLD" "$T_RESET"
@@ -458,6 +576,8 @@ run_test "auto_register_ssh_keys registers unloaded key successfully" test_auto_
 run_test "auto_register_ssh_keys handles failed registration non-fatally" test_auto_register_handles_add_failure
 run_test "auto_register_ssh_keys discovers keys from PROFILE_KEYS" test_auto_register_from_profile_keys
 run_test "auto_register_ssh_keys in dry run mode skips ssh-add" test_auto_register_dry_run_skips_ssh_add
+run_test "invalid v2 registry never broadens SSH key scope" test_auto_register_invalid_registry_never_scans_ssh_dir
+run_test "unconfigured no-registry SSH discovery remains supported" test_auto_register_unconfigured_discovery_requires_no_registry
 run_test "try_gh_key_upload returns 1 when gh binary is missing" test_try_gh_missing_binary
 run_test "try_gh_key_upload returns 1 when pubkey file is missing" test_try_gh_missing_pubkey
 run_test "try_gh_key_upload returns 1 when gh is unauthenticated" test_try_gh_unauthenticated
@@ -470,4 +590,7 @@ run_test "verify_ssh_handshake port 443 corporate fallback returns 0" test_verif
 run_test "build_ssh_host_block standard configuration" test_build_ssh_host_block_standard
 run_test "build_ssh_host_block corporate Port 443 for GitHub" test_build_ssh_host_block_port443_github
 run_test "build_ssh_host_block Port 443 ignored for non-GitHub" test_build_ssh_host_block_port443_ignored_gitlab
+run_test "handshake refuses implicit port 443 and host trust" test_verify_handshake_refuses_implicit_port443_and_host_trust
+run_test "handshake accepts explicit first-use host trust" test_verify_handshake_explicit_host_key_consent
+run_test "handshake dry-run performs no network" test_verify_handshake_dry_run_never_calls_ssh
 print_results "SSH Automation tests"

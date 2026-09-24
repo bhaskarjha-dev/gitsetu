@@ -1,90 +1,80 @@
-# tests/test_gh_extension_e2e.ps1 — GitHub CLI Extension E2E lifecycle test
-$ErrorActionPreference = "Continue"
+# Controlled GitHub CLI extension lifecycle test. No GitHub token is needed.
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version 2.0
 
-# Ensure PATH has GitHub CLI and current gitsetu
-$machinePath = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
-$userPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
-$repoRoot = (Resolve-Path "$PSScriptRoot\..").Path
-$env:Path = "$repoRoot;$machinePath;$userPath;$env:Path"
-
-if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
-    Write-Warning "gh CLI not found on PATH. Skipping gh extension E2E test."
-    exit 0
-}
-
-$env:GH_TOKEN = "ghp_dummytokenfortestinglocalextension123456"
-
-$passed = 0
-$failed = 0
-
-function Pass-Test($name) {
-    Write-Host "  [PASS] $name" -ForegroundColor Green
-    $script:passed++
-}
-
-function Fail-Test($name, $reason) {
-    Write-Host "  [FAIL] ${name}: $reason" -ForegroundColor Red
-    $script:failed++
-}
-
-Write-Host "=== Running tests/test_gh_extension_e2e.ps1 ==="
-
-$testBase = Join-Path $env:TEMP "gitsetu-gh-e2e-$([System.Guid]::NewGuid().ToString('N'))"
-$extDir = Join-Path $testBase "gh-gitsetu"
+$gh = Get-Command gh.exe -ErrorAction SilentlyContinue
+if (-not $gh) { throw "GitHub CLI is required for this E2E test" }
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$testRoot = Join-Path ([IO.Path]::GetTempPath()) ("gitsetu-gh-e2e-" + [Guid]::NewGuid().ToString("N"))
+$extensionNames = @("gh-gitsetu", "gh-setu")
+$oldConfig = $env:GH_CONFIG_DIR
+$oldAppData = $env:APPDATA
+$oldLocalAppData = $env:LOCALAPPDATA
+$oldToken = $env:GH_TOKEN
 
 try {
-    New-Item -ItemType Directory -Path $extDir -Force | Out-Null
-    Copy-Item "$repoRoot\packaging\gh-extension\gh-gitsetu" "$extDir\gh-gitsetu"
+    $env:GH_CONFIG_DIR = Join-Path $testRoot "gh-config"
+    $env:APPDATA = Join-Path $testRoot "appdata"
+    $env:LOCALAPPDATA = Join-Path $testRoot "localappdata"
+    [void][IO.Directory]::CreateDirectory($env:GH_CONFIG_DIR)
+    [void][IO.Directory]::CreateDirectory($env:APPDATA)
+    [void][IO.Directory]::CreateDirectory($env:LOCALAPPDATA)
+    Remove-Item Env:GH_TOKEN -ErrorAction SilentlyContinue
+    $installedExtensions = @()
+    foreach ($extensionName in $extensionNames) {
+        $extensionRepo = Join-Path $testRoot $extensionName
+        [void][IO.Directory]::CreateDirectory($extensionRepo)
+        Copy-Item (Join-Path $repoRoot "packaging\gh-extension\$extensionName") $extensionRepo
+        Copy-Item (Join-Path $repoRoot "gitsetu") $extensionRepo
+        Copy-Item (Join-Path $repoRoot "lib") (Join-Path $extensionRepo "lib") -Recurse
+        Copy-Item (Join-Path $repoRoot "packaging\release.env") (Join-Path $extensionRepo "release.env")
 
-    Push-Location $extDir
-    git init -q
-    git config user.name "GitSetu Test"
-    git config user.email "test@gitsetu.dev"
-    git add .
-    git commit -q -m "feat: initial gh-gitsetu"
+        Push-Location $extensionRepo
+        try {
+            & git init -q
+            if ($LASTEXITCODE -ne 0) { throw "git init failed" }
+            & git config user.name "GitSetu Test"
+            & git config user.email "test@gitsetu.invalid"
+            & git -c core.autocrlf=false add .
+            if ($LASTEXITCODE -ne 0) { throw "git add failed" }
+            & git commit -q -m "test: controlled gitsetu extension"
+            if ($LASTEXITCODE -ne 0) { throw "git commit failed" }
 
-    # 1. Install extension
-    gh extension install . 2>&1 | Out-Null
-    $extList = (gh extension list | Out-String)
-    if ($extList -match "gitsetu") {
-        Pass-Test "gh extension install ."
-    } else {
-        Fail-Test "gh extension install ." "gitsetu not found in gh extension list"
+            & gh extension install .
+            if ($LASTEXITCODE -ne 0) { throw "gh extension install failed for $extensionName" }
+        } finally {
+            Pop-Location
+        }
+
+        $installedExtension = Join-Path $env:LOCALAPPDATA "GitHub CLI\extensions\$extensionName"
+        if (-not (Test-Path -LiteralPath $installedExtension)) {
+            throw "Installed extension is absent from isolated GitHub CLI state: $extensionName"
+        }
+        $installedExtensions += $installedExtension
     }
 
-    # 2. Test --version
-    $ver = (gh gitsetu --version 2>&1 | Out-String)
-    if ($ver -match "gitsetu v1\.0\.0") {
-        Pass-Test "gh gitsetu --version"
-    } else {
-        Fail-Test "gh gitsetu --version" "Unexpected version output: $ver"
-    }
+    $previousAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $version = (& gh gitsetu --version 2>&1 | Out-String)
+        $versionExit = $LASTEXITCODE
+        $aliasVersion = (& gh setu --version 2>&1 | Out-String)
+        $aliasExit = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $previousAction }
+    if ($versionExit -ne 0 -or $version -notmatch "gitsetu v1\.1\.0") { throw "gh gitsetu failed: $version" }
+    if ($aliasExit -ne 0 -or $aliasVersion -notmatch "gitsetu v1\.1\.0") { throw "gh setu failed: $aliasVersion" }
 
-    # 3. Test status
-    $statusOut = (gh gitsetu status 2>&1 | Out-String)
-    if ($statusOut -match "Active Identity" -or $statusOut -match "gitsetu v1\.0\.0") {
-        Pass-Test "gh gitsetu status"
-    } else {
-        Fail-Test "gh gitsetu status" "Status command failed: $statusOut"
+    # Current gh releases may require authentication even for removal.
+    # Cleanup is therefore exact and confined to the isolated APPDATA tree.
+    foreach ($installedExtension in $installedExtensions) {
+        Remove-Item -LiteralPath $installedExtension -Recurse -Force
+        if (Test-Path -LiteralPath $installedExtension) { throw "Extension remained after isolated cleanup: $installedExtension" }
     }
-
-    # 4. Test remove
-    gh extension remove gitsetu 2>&1 | Out-Null
-    $extListAfter = (gh extension list | Out-String)
-    if ($extListAfter -notmatch "gitsetu") {
-        Pass-Test "gh extension remove gitsetu"
-    } else {
-        Fail-Test "gh extension remove gitsetu" "Extension still listed after removal: $extListAfter"
-    }
-
-    Pop-Location
+    Write-Host "GitHub extension E2E: PASS" -ForegroundColor Green
 } finally {
-    if (Test-Path $testBase) {
-        Remove-Item -Recurse -Force $testBase -ErrorAction SilentlyContinue
-    }
+    if ($null -eq $oldToken) { Remove-Item Env:GH_TOKEN -ErrorAction SilentlyContinue } else { $env:GH_TOKEN = $oldToken }
+    if ($null -eq $oldConfig) { Remove-Item Env:GH_CONFIG_DIR -ErrorAction SilentlyContinue } else { $env:GH_CONFIG_DIR = $oldConfig }
+    if ($null -eq $oldAppData) { Remove-Item Env:APPDATA -ErrorAction SilentlyContinue } else { $env:APPDATA = $oldAppData }
+    if ($null -eq $oldLocalAppData) { Remove-Item Env:LOCALAPPDATA -ErrorAction SilentlyContinue } else { $env:LOCALAPPDATA = $oldLocalAppData }
+    if (Test-Path -LiteralPath $testRoot) { Remove-Item -LiteralPath $testRoot -Recurse -Force }
 }
-
-Write-Host ""
-Write-Host "GitHub CLI E2E tests: $passed passed, $failed failed"
-if ($failed -gt 0) { exit 1 }
-exit 0

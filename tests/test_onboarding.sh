@@ -30,8 +30,9 @@ test_bare_gitsetu_nontty_usage() {
 # Test 2: show_brief_usage() output contains version string
 # ------------------------------------------------------------------------------
 test_brief_usage_contains_version() {
-    local output
-    output=$(bash "$GITSETU_EXE" 2>&1 || true)
+    local output status=0
+    output=$(bash "$GITSETU_EXE" 2>&1) || status=$?
+    assert_equals "0" "$status" "brief usage exits successfully" || return 1
     assert_contains "$output" "gitsetu v1.1.0" "brief usage contains version 1.1.0" || return 1
 }
 
@@ -61,8 +62,9 @@ else
     preset_guided_onboarding
 fi
 EOF
-    local output
-    output=$(bash "$mock_script" 2>&1 || true)
+    local output status=0
+    output=$(bash "$mock_script" 2>&1) || status=$?
+    assert_equals "0" "$status" "unconfigured bare entrypoint exits successfully" || return 1
     assert_contains "$output" "ON_RAMP_LAUNCHED" "unconfigured bare entrypoint launches on-ramp" || return 1
 }
 
@@ -70,8 +72,15 @@ EOF
 # Test 4: Bare gitsetu interactive TTY with profiles configured invokes cmd_status
 # ------------------------------------------------------------------------------
 test_bare_gitsetu_configured_launches_status() {
-    mkdir -p "$(dirname "$GITSETU_PROFILES_CONF")"
-    echo "work:work@corp.com:$HOME/work:github.com:0:$HOME/.ssh/id_ed25519_work:" > "$GITSETU_PROFILES_CONF"
+    test_v2_profile_config global "Global User" "global@example.com"
+    test_v2_profile_config work "Work User" "work@corp.com"
+    {
+        test_v2_registry_header
+        test_v2_registry_line global "" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_global" ""
+        test_v2_registry_line work "$HOME/work" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_work" ""
+    } > "$GITSETU_PROFILES_CONF"
 
     local mock_script="$TEST_HOME/mock_entry_conf.sh"
     cat << EOF > "$mock_script"
@@ -93,8 +102,9 @@ else
     preset_guided_onboarding
 fi
 EOF
-    local output
-    output=$(bash "$mock_script" 2>&1 || true)
+    local output status=0
+    output=$(bash "$mock_script" 2>&1) || status=$?
+    assert_equals "0" "$status" "configured bare entrypoint exits successfully" || return 1
     assert_contains "$output" "STATUS_LAUNCHED" "configured bare entrypoint invokes cmd_status" || return 1
 }
 
@@ -107,7 +117,9 @@ test_preset1_single_identity() {
 
     # Simulate Preset 1 input: choice=1, name="Solo Dev", email="solo@example.com"
     local input_data=$'1\nSolo Dev\nsolo@example.com\n'
-    printf '%s' "$input_data" | preset_guided_onboarding >/dev/null 2>&1 || true
+    local status=0
+    printf '%s' "$input_data" | preset_guided_onboarding >/dev/null 2>&1 || status=$?
+    assert_equals "0" "$status" "single preset exits successfully" || return 1
 
     assert_file_exists "$GITSETU_PROFILES_CONF" "profiles.conf created" || return 1
     local count
@@ -126,7 +138,9 @@ test_preset2_dual_identity() {
     # Preset 2 input: choice=2, name="Dual Dev", personal email="me@personal.dev",
     # work email="dev@company.com", work dir="$HOME/work", personal dir="$HOME/personal"
     local input_data=$'2\nDual Dev\nme@personal.dev\ndev@company.com\n\n\n'
-    printf '%s' "$input_data" | preset_guided_onboarding >/dev/null 2>&1 || true
+    local status=0
+    printf '%s' "$input_data" | preset_guided_onboarding >/dev/null 2>&1 || status=$?
+    assert_equals "0" "$status" "dual preset exits successfully" || return 1
 
     assert_file_exists "$GITSETU_PROFILES_CONF" "profiles.conf created" || return 1
     assert_file_contains "$GITSETU_PROFILES_DIR/global.gitconfig" "me@personal.dev" "global fallback uses personal email" || return 1
@@ -142,14 +156,15 @@ test_preset3_custom_falls_through() {
     mkdir -p "$GITSETU_CONFIG_DIR"
 
     # Run in subshell with mocked interactive_setup_wizard
-    local output
+    local output status=0
     output=$(
         interactive_setup_wizard() {
             echo "INTERACTIVE_DASHBOARD_INVOKED"
             return 0
         }
-        printf '3\n' | preset_guided_onboarding 2>&1 || true
-    )
+        printf '3\n' | preset_guided_onboarding 2>&1
+    ) || status=$?
+    assert_equals "0" "$status" "custom preset exits successfully" || return 1
     assert_contains "$output" "INTERACTIVE_DASHBOARD_INVOKED" "Option 3 falls through to dashboard wizard" || return 1
 }
 
@@ -162,7 +177,9 @@ test_preset_default_selection_is_single() {
 
     # Empty first line (ENTER) -> default option 1
     local input_data=$'\nDefault User\ndefault@example.com\n'
-    printf '%s' "$input_data" | preset_guided_onboarding >/dev/null 2>&1 || true
+    local status=0
+    printf '%s' "$input_data" | preset_guided_onboarding >/dev/null 2>&1 || status=$?
+    assert_equals "0" "$status" "default preset exits successfully" || return 1
 
     assert_file_exists "$GITSETU_PROFILES_CONF" "profiles.conf created" || return 1
     assert_file_contains "$GITSETU_PROFILES_DIR/global.gitconfig" "default@example.com" "default selection created single global profile" || return 1
@@ -177,7 +194,9 @@ test_single_preset_useconfigonly_commits() {
 
     # Set up single preset
     local input_data=$'1\nSingle Tester\nsingle.test@domain.com\n'
-    printf '%s' "$input_data" | preset_guided_onboarding >/dev/null 2>&1 || true
+    local status=0
+    printf '%s' "$input_data" | preset_guided_onboarding >/dev/null 2>&1 || status=$?
+    assert_equals "0" "$status" "single useConfigOnly preset exits successfully" || return 1
 
     # Arbitrary directory
     local test_repo="$HOME/random/nested/repo"
@@ -185,8 +204,8 @@ test_single_preset_useconfigonly_commits() {
     git -C "$test_repo" init -q
 
     local res_name res_email
-    res_name=$(git -C "$test_repo" config user.name || echo "")
-    res_email=$(git -C "$test_repo" config user.email || echo "")
+    res_name=$(git -C "$test_repo" config user.name) || return 1
+    res_email=$(git -C "$test_repo" config user.email) || return 1
 
     assert_equals "Single Tester" "$res_name" "global user.name resolves in arbitrary repo" || return 1
     assert_equals "single.test@domain.com" "$res_email" "global user.email resolves in arbitrary repo" || return 1
@@ -200,7 +219,7 @@ test_setup_unconfigured_triggers_onramp() {
     rm -f "$HOME/.gitconfig"
 
     # Mock preset_guided_onboarding
-    local output
+    local output status=0
     output=$(
         preset_guided_onboarding() {
             echo "TRIGGERED_ONRAMP"
@@ -210,8 +229,9 @@ test_setup_unconfigured_triggers_onramp() {
             echo "RAW_DASHBOARD"
             return 0
         }
-        printf 'Q\n' | interactive_setup_wizard 2>&1 || true
-    )
+        printf 'Q\n' | interactive_setup_wizard 2>&1
+    ) || status=$?
+    assert_equals "0" "$status" "unconfigured onboarding exits successfully" || return 1
     assert_contains "$output" "TRIGGERED_ONRAMP" "unconfigured machine triggers on-ramp before dashboard" || return 1
 }
 
@@ -219,11 +239,20 @@ test_setup_unconfigured_triggers_onramp() {
 # Test 11: gitsetu setup on configured machine shows normal dashboard
 # ------------------------------------------------------------------------------
 test_setup_configured_shows_dashboard() {
-    mkdir -p "$GITSETU_CONFIG_DIR"
-    echo "work:dev@corp.com:$HOME/work:github.com:0:$HOME/.ssh/id_ed25519_work:" > "$GITSETU_PROFILES_CONF"
-    echo "personal:me@home.dev:$HOME/personal:github.com:0:$HOME/.ssh/id_ed25519_personal:" >> "$GITSETU_PROFILES_CONF"
+    test_v2_profile_config global "Global User" "global@example.com"
+    test_v2_profile_config work "Work User" "dev@corp.com"
+    test_v2_profile_config personal "Personal User" "me@home.dev"
+    {
+        test_v2_registry_header
+        test_v2_registry_line global "" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_global" ""
+        test_v2_registry_line work "$HOME/work" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_work" ""
+        test_v2_registry_line personal "$HOME/personal" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_personal" ""
+    } > "$GITSETU_PROFILES_CONF"
 
-    local output
+    local output status=0
     output=$(
         preset_guided_onboarding() {
             echo "UNEXPECTED_ONRAMP"
@@ -233,8 +262,9 @@ test_setup_configured_shows_dashboard() {
             echo "RENDERED_NORMAL_DASHBOARD"
             return 0
         }
-        printf 'Q\n' | interactive_setup_wizard 2>&1 || true
-    )
+        printf 'Q\n' | interactive_setup_wizard 2>&1
+    ) || status=$?
+    assert_equals "0" "$status" "configured onboarding exits successfully" || return 1
     assert_contains "$output" "RENDERED_NORMAL_DASHBOARD" "configured machine shows normal dashboard" || return 1
     assert_not_contains "$output" "UNEXPECTED_ONRAMP" "on-ramp is skipped on configured machine" || return 1
 }
@@ -250,35 +280,44 @@ test_discovery_prepopulation() {
     assert_equals "Discovered Master" "$DISCOVERED_GLOBAL_NAME" "discovered name from global git config" || return 1
     assert_equals "discovered.master@example.com" "$DISCOVERED_GLOBAL_EMAIL" "discovered email from global git config" || return 1
 
-    git config --global --unset user.name || true
-    git config --global --unset user.email || true
+    if git config --global --get user.name >/dev/null 2>&1; then
+        git config --global --unset user.name || return 1
+    fi
+    if git config --global --get user.email >/dev/null 2>&1; then
+        git config --global --unset user.email || return 1
+    fi
 }
 
 # ------------------------------------------------------------------------------
-# Test 13: Dashboard ENTER with incomplete profile invokes prompt_edit_profile
+# Test 13: ENTER applies a complete reviewed blueprint; incomplete profiles
+#          require the explicit E edit flow covered below.
 # ------------------------------------------------------------------------------
-test_dashboard_enter_incomplete_invokes_edit() {
-    PROFILE_COUNT=1
-    PROFILE_LABELS[0]="global"
-    PROFILE_NAMES[0]="Incomplete User"
-    PROFILE_EMAILS[0]=""
-    PROFILE_DIRS[0]=""
-    PROFILE_KEYS[0]="$HOME/.ssh/id_ed25519_global"
+test_dashboard_enter_complete_applies() {
+    rm -rf "$GITSETU_CONFIG_DIR"
+    test_v2_profile_config global "Configured User" "configured@example.com"
+    {
+        test_v2_registry_header
+        test_v2_registry_line global "" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_global" ""
+    } > "$GITSETU_PROFILES_CONF"
+    load_profiles || return 1
 
-    local output
+    local output status=0
     output=$(
         prompt_edit_profile() {
-            echo "AUTO_PROMPTED_EDIT_PROFILE_$1"
+            echo "UNEXPECTED_AUTO_PROMPT_$1"
             return 0
         }
         execute_blueprint() {
             echo "EXECUTED"
             return 0
         }
-        # Simulate pressing ENTER on dashboard menu with incomplete profile
-        printf '\n' | GITSETU_SKIP_ON_RAMP=1 interactive_setup_wizard 2>&1 || true
-    )
-    assert_contains "$output" "AUTO_PROMPTED_EDIT_PROFILE_0" "ENTER on incomplete profile invokes prompt_edit_profile" || return 1
+        # ENTER is an explicit apply action; it must not silently edit.
+        printf '\n' | GITSETU_SKIP_ON_RAMP=1 interactive_setup_wizard 2>&1
+    ) || status=$?
+    assert_equals "0" "$status" "complete dashboard apply exits successfully" || return 1
+    assert_contains "$output" "EXECUTED" "ENTER applies the reviewed complete blueprint" || return 1
+    assert_not_contains "$output" "UNEXPECTED_AUTO_PROMPT_0" "ENTER does not implicitly edit a profile" || return 1
 }
 
 # ------------------------------------------------------------------------------
@@ -286,23 +325,23 @@ test_dashboard_enter_incomplete_invokes_edit() {
 # ------------------------------------------------------------------------------
 test_dashboard_single_profile_direct_edit() {
     rm -rf "$GITSETU_CONFIG_DIR"
-    mkdir -p "$GITSETU_PROFILES_DIR"
-    echo "global:::" > "$GITSETU_PROFILES_CONF"
-    cat << EOF > "$GITSETU_PROFILES_DIR/global.gitconfig"
-[user]
-    name = Single User
-    email = single@test.com
-EOF
+    test_v2_profile_config global "Single User" "single@test.com"
+    {
+        test_v2_registry_header
+        test_v2_registry_line global "" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_global" ""
+    } > "$GITSETU_PROFILES_CONF"
 
-    local output
+    local output status=0
     output=$(
         prompt_edit_profile() {
             echo "DIRECT_EDIT_PROFILE_$1"
             return 0
         }
         # Simulate pressing E on single-profile dashboard
-        printf 'E\nQ\n' | GITSETU_SKIP_ON_RAMP=1 interactive_setup_wizard 2>&1 || true
-    )
+        printf 'E\nQ\n' | GITSETU_SKIP_ON_RAMP=1 interactive_setup_wizard 2>&1
+    ) || status=$?
+    assert_equals "0" "$status" "single-profile dashboard exits successfully" || return 1
     assert_contains "$output" "DIRECT_EDIT_PROFILE_0" "E on single profile directly edits profile 0 without asking for index" || return 1
 }
 
@@ -323,8 +362,9 @@ test_incomplete_tag_rendering() {
     PROFILE_DIRS[1]="$HOME/work"
     PROFILE_KEYS[1]="$HOME/.ssh/id_ed25519_work"
 
-    local output
-    output=$(render_blueprint_dashboard 2>&1 || true)
+    local output status=0
+    output=$(render_blueprint_dashboard 2>&1) || status=$?
+    assert_equals "0" "$status" "dashboard rendering exits successfully" || return 1
     assert_contains "$output" "[⚠ Incomplete]" "renders incomplete tag for profile with missing details" || return 1
 }
 
@@ -344,7 +384,7 @@ run_test "useConfigOnly + single preset commits resolve everywhere" test_single_
 run_test "gitsetu setup unconfigured triggers on-ramp" test_setup_unconfigured_triggers_onramp
 run_test "gitsetu setup configured shows normal dashboard" test_setup_configured_shows_dashboard
 run_test "discovery pre-population from gitconfig" test_discovery_prepopulation
-run_test "dashboard ENTER on incomplete profile auto-prompts edit" test_dashboard_enter_incomplete_invokes_edit
+run_test "dashboard ENTER applies a complete reviewed blueprint" test_dashboard_enter_complete_applies
 run_test "dashboard E on single profile edits profile 0 directly" test_dashboard_single_profile_direct_edit
 run_test "dashboard renders [⚠ Incomplete] tag" test_incomplete_tag_rendering
 print_results "Onboarding tests"

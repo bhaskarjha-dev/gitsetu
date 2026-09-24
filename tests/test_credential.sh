@@ -8,6 +8,7 @@ set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 setup_test_home
+source_gitsetu_libs
 
 GITSETU_EXE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/gitsetu"
 GITSETU_EXE="${GITSETU_EXE%$'\r'}"
@@ -26,6 +27,36 @@ GITSETU_EXE="${GITSETU_EXE%$'\r'}"
 mkdir -p "$HOME/.config/gitsetu"
 printf 'test' > "$HOME/.config/gitsetu/.test_os"
 
+# The credential roundtrip deliberately selects the supported zero-dependency
+# plaintext backend. On NTFS, mock only mode reporting so the production
+# permission checks remain active and testable.
+export GITSETU_CREDENTIAL_BACKEND=file
+mkdir -p "$HOME/test-bin"
+cat > "$HOME/test-bin/stat" <<'EOF'
+#!/usr/bin/env sh
+format=""
+path=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -c|-f) format="$2"; shift 2 ;;
+        -*) shift ;;
+        *) path="$1"; shift ;;
+    esac
+done
+case "$format" in
+    %U|%Su) id -un ;;
+    %u) id -u ;;
+    *)
+        case "$path" in
+            */.tokens|*/.tokens.tmp.*) printf '600\n' ;;
+            *) printf '700\n' ;;
+        esac
+        ;;
+esac
+EOF
+chmod +x "$HOME/test-bin/stat"
+export PATH="$HOME/test-bin:$PATH"
+
 # ------------------------------------------------------------------------------
 # Helper: run gitsetu credential with a portable POSIX timeout watchdog.
 #
@@ -39,6 +70,8 @@ _run_credential() {
     shift 2
 
     local stdout_log="$HOME/.credential_stdout_$$.log"
+    local kill_status=0
+    local wait_status=0
 
     # Run in a background subshell (portable — no GNU timeout needed).
     # OS override is via marker file, not env var (bash 3.2 limitation).
@@ -54,9 +87,21 @@ _run_credential() {
     local rc=0
     wait "$cmd_pid" 2>/dev/null || rc=$?
 
-    # Kill the watchdog (command finished before timeout)
-    kill "$watchdog_pid" 2>/dev/null || true
-    wait "$watchdog_pid" 2>/dev/null || true
+    # Kill the watchdog (command finished before timeout).  A process which
+    # exited between the wait and kill is an expected race; all other failures
+    # remain visible.
+    if kill "$watchdog_pid" 2>/dev/null; then
+        :
+    else
+        kill_status=$?
+        [[ "$kill_status" -eq 1 ]] || return "$kill_status"
+    fi
+    if wait "$watchdog_pid" 2>/dev/null; then
+        :
+    else
+        wait_status=$?
+        [[ "$wait_status" -eq 143 || "$wait_status" -eq 137 ]] || return "$wait_status"
+    fi
 
     if [[ $rc -ne 0 ]]; then
         rm -f "$stdout_log"
@@ -72,11 +117,16 @@ _run_credential() {
 test_credential_broker() {
     mkdir -p "$HOME/.config/gitsetu"
 
-    # Create a dummy registry
-    cat > "$HOME/.config/gitsetu/profiles.conf" <<EOF
-global::/invalid:github.com:0:~/.ssh/id_ed25519_global:global_user
-work::$HOME/work:github.com:0:~/.ssh/id_ed25519_work:work_user
-EOF
+    # Create a strict v2 registry and profile identities.
+    test_v2_profile_config global "Global User" "global@example.com"
+    test_v2_profile_config work "Work User" "work@example.com"
+    {
+        test_v2_registry_header
+        test_v2_registry_line global "" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_global" "global_user"
+        test_v2_registry_line work "$HOME/work" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_work" "work_user"
+    } > "$GITSETU_PROFILES_CONF"
 
     mkdir -p "$HOME/work"
     cd "$HOME/work" || return 1
@@ -123,9 +173,15 @@ EOF
 
 test_credential_ignores_ssh() {
     mkdir -p "$HOME/.config/gitsetu"
-    cat > "$HOME/.config/gitsetu/profiles.conf" <<EOF
-work::$HOME/work:github.com:0:~/.ssh/id_ed25519_work:work_user
-EOF
+    test_v2_profile_config global "Global User" "global@example.com"
+    test_v2_profile_config work "Work User" "work@example.com"
+    {
+        test_v2_registry_header
+        test_v2_registry_line global "" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_global" "global_user"
+        test_v2_registry_line work "$HOME/work" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_work" "work_user"
+    } > "$GITSETU_PROFILES_CONF"
     mkdir -p "$HOME/work"
     cd "$HOME/work" || return 1
 
@@ -139,9 +195,15 @@ EOF
 
 test_credential_outside_profile() {
     mkdir -p "$HOME/.config/gitsetu"
-    cat > "$HOME/.config/gitsetu/profiles.conf" <<EOF
-work::$HOME/work:github.com:0:~/.ssh/id_ed25519_work:work_user
-EOF
+    test_v2_profile_config global "Global User" "global@example.com"
+    test_v2_profile_config work "Work User" "work@example.com"
+    {
+        test_v2_registry_header
+        test_v2_registry_line global "" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_global" "global_user"
+        test_v2_registry_line work "$HOME/work" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_work" "work_user"
+    } > "$GITSETU_PROFILES_CONF"
     mkdir -p "$HOME/personal"
     cd "$HOME/personal" || return 1
 

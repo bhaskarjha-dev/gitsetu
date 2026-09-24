@@ -1,66 +1,62 @@
-# tests/test_scoop_e2e.ps1 — Full Scoop Package Manager Live E2E Verification
+# Scoop behavior test using a workflow-pinned, hash-verified Scoop dependency.
 $ErrorActionPreference = "Stop"
+Set-StrictMode -Version 2.0
 
-$scriptDir = $PSScriptRoot
-$repoDir = (Resolve-Path (Join-Path $scriptDir "..")).Path
-$zipPath = Join-Path $repoDir "dist\gitsetu-windows-x64.zip"
-
-Write-Host "==================================================================" -ForegroundColor Cyan
-Write-Host "   GitSetu Scoop Package Manager Live E2E Verification Suite      " -ForegroundColor Cyan
-Write-Host "==================================================================" -ForegroundColor Cyan
-Write-Host ""
-
-if (-not (Test-Path $zipPath)) {
-    Write-Host "dist\gitsetu-windows-x64.zip not found. Building on the fly..." -ForegroundColor Yellow
-    $distDir = Join-Path $repoDir "dist"
-    if (-not (Test-Path $distDir)) { New-Item -ItemType Directory -Path $distDir -Force | Out-Null }
-    $buildScript = Join-Path $repoDir "packaging\windows\build_launcher.ps1"
-    & powershell.exe -ExecutionPolicy Bypass -File $buildScript -OutDir $distDir
-    
-    $staging = Join-Path ([System.IO.Path]::GetTempPath()) "gitsetu_scoop_zip_staging"
-    if (Test-Path $staging) { Remove-Item -Recurse -Force $staging }
-    New-Item -ItemType Directory -Path $staging | Out-Null
-    Copy-Item (Join-Path $distDir "gitsetu.exe") -Destination $staging
-    Copy-Item (Join-Path $repoDir "gitsetu") -Destination $staging
-    Copy-Item -Recurse (Join-Path $repoDir "lib") -Destination $staging
-    Compress-Archive -Path "$staging\*" -DestinationPath $zipPath -Force
-    Remove-Item -Recurse -Force $staging
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$oldUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if ($env:SCOOP) {
+    $scoop = Join-Path $env:SCOOP "bin\scoop.ps1"
+} else {
+    $command = Get-Command scoop -ErrorAction SilentlyContinue
+    if (-not $command) { throw "A preinstalled, hash-pinned Scoop test dependency is required" }
+    $scoop = $command.Source
 }
-
-# Ensure Scoop is installed and in PATH
-if (-not (Get-Command scoop -ErrorAction SilentlyContinue)) {
-    if (Test-Path "$HOME\scoop\shims\scoop.cmd") {
-        $env:PATH = "$HOME\scoop\shims;$HOME\scoop\current\bin;$env:PATH"
-    } else {
-        Write-Host "Scoop not detected in environment. Installing Scoop..." -ForegroundColor Yellow
-        try {
-            Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
-            $env:PATH = "$HOME\scoop\shims;$HOME\scoop\current\bin;$env:PATH"
-        } catch {
-            Write-Host "Failed to auto-install Scoop: $_" -ForegroundColor Red
-        }
+if (-not (Test-Path -LiteralPath $scoop -PathType Leaf)) { throw "Pinned Scoop executable is missing: $scoop" }
+$scoopRoot = if ($env:SCOOP) { $env:SCOOP } else { Split-Path (Split-Path $scoop -Parent) -Parent }
+if (-not $scoopRoot) { throw "Unable to determine the Scoop installation root" }
+if ($env:SCOOP) {
+    foreach ($directory in @("shims", "apps", "cache", "buckets")) {
+        $path = Join-Path $env:SCOOP $directory
+        if (-not (Test-Path -LiteralPath $path)) { [void][IO.Directory]::CreateDirectory($path) }
+    }
+    $scoopAppRoot = Join-Path $env:SCOOP "apps\scoop\current"
+    $scoopSupporting = Join-Path $scoopAppRoot "supporting"
+    if (-not (Test-Path -LiteralPath $scoopSupporting)) {
+        [void][IO.Directory]::CreateDirectory($scoopAppRoot)
+        Copy-Item (Join-Path $env:SCOOP "supporting") $scoopSupporting -Recurse
     }
 }
-$scoopShims = Join-Path $HOME "scoop\shims"
-if ($env:PATH -notlike "*$scoopShims*") {
-    $env:PATH = "$scoopShims;$env:PATH"
-}
 
-# 1. Compute hash of local archive
-$zipHash = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLower()
-$zipUri = "file:///" + (($zipPath -replace '\\', '/').TrimStart('/'))
+$testRoot = Join-Path ([IO.Path]::GetTempPath()) ("gitsetu-scoop-e2e-" + [Guid]::NewGuid().ToString("N"))
+$sourceRoot = Join-Path $testRoot "source"
+$buildRoot = Join-Path $testRoot "build"
+$zipPath = Join-Path $testRoot "gitsetu-windows-test.zip"
+$manifestPath = Join-Path $testRoot "gitsetu_distribution_test.json"
+$appName = "gitsetu_distribution_test"
 
-# 2. Generate local test manifest matching packaging/scoop/gitsetu.json
-$tempDir = [System.IO.Path]::GetTempPath()
-$testManifest = Join-Path $tempDir "gitsetu_scoop_test.json"
+try {
+    $scoopTemplate = Get-Content (Join-Path $repoRoot "packaging\templates\scoop\gitsetu.json.in") -Raw
+    if ($scoopTemplate -notmatch '"depends"\s*:\s*"git"' -or $scoopTemplate -notmatch '\{\{WINDOWS_ZIP_SHA256\}\}') {
+        throw "Scoop release template is missing its Git dependency or digest pin"
+    }
+    [void][IO.Directory]::CreateDirectory($sourceRoot)
+    [void][IO.Directory]::CreateDirectory($buildRoot)
+    Copy-Item (Join-Path $repoRoot "gitsetu") (Join-Path $sourceRoot "gitsetu")
+    Copy-Item (Join-Path $repoRoot "lib") (Join-Path $sourceRoot "lib") -Recurse
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot "packaging\windows\build_launcher.ps1") -OutDir $buildRoot
+    if ($LASTEXITCODE -ne 0) { throw "Native launcher build failed" }
+    Copy-Item (Join-Path $buildRoot "gitsetu.exe") (Join-Path $sourceRoot "gitsetu.exe")
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot "packaging\windows\build_release_zip.ps1") -SourceDir $sourceRoot -OutFile $zipPath
+    if ($LASTEXITCODE -ne 0) { throw "Windows ZIP build failed" }
 
-$manifestContent = @"
+    $zipHash = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $zipUri = ([Uri]$zipPath).AbsoluteUri
+    $manifest = @"
 {
   "version": "1.1.0",
-  "description": "Zero-trust multi-account Git identity orchestrator",
+  "description": "Controlled GitSetu distribution test",
   "homepage": "https://gitsetu.bhaskarjha.dev",
   "license": "MIT",
-  "depends": "git",
   "url": "$zipUri",
   "hash": "$zipHash",
   "bin": [
@@ -69,70 +65,30 @@ $manifestContent = @"
   ]
 }
 "@
-Set-Content -Path $testManifest -Value $manifestContent -Encoding UTF8
-Write-Host "Generated local Scoop test manifest at: $testManifest"
-Write-Host "  URI:  $zipUri"
-Write-Host "  Hash: $zipHash"
-Write-Host ""
+    [IO.File]::WriteAllText($manifestPath, $manifest, (New-Object Text.UTF8Encoding($false)))
 
-# 3. Scoop install
-Write-Host "Step 1: Installing GitSetu via Scoop..." -ForegroundColor Yellow
-$existingAppDir = Join-Path $HOME "scoop\apps\gitsetu_scoop_test"
-if (Test-Path $existingAppDir) {
-    Remove-Item -Recurse -Force $existingAppDir -ErrorAction SilentlyContinue
+    & $scoop uninstall $appName 2>$null
+    & $scoop install --no-update-scoop $manifestPath
+    if ($LASTEXITCODE -ne 0) { throw "Scoop install failed" }
+
+    $scoopShims = Join-Path $scoopRoot "shims"
+    $primaryShim = Join-Path $scoopShims "gitsetu.exe"
+    $aliasShim = Join-Path $scoopShims "git-setu.exe"
+    $previousAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $primary = (& $primaryShim --version 2>&1 | Out-String)
+        $primaryExit = $LASTEXITCODE
+        $alias = (& $aliasShim --version 2>&1 | Out-String)
+        $aliasExit = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $previousAction }
+    if ($primaryExit -ne 0 -or $primary -notmatch "gitsetu v1\.1\.0") { throw "Scoop gitsetu shim failed: $primary" }
+    if ($aliasExit -ne 0 -or $alias -notmatch "gitsetu v1\.1\.0") { throw "Scoop git-setu shim failed: $alias" }
+
+    & $scoop uninstall $appName
+    if ($LASTEXITCODE -ne 0) { throw "Scoop uninstall failed" }
+    Write-Host "Controlled Scoop E2E: PASS" -ForegroundColor Green
+} finally {
+    [Environment]::SetEnvironmentVariable("Path", $oldUserPath, "User")
+    if (Test-Path -LiteralPath $testRoot) { Remove-Item -LiteralPath $testRoot -Recurse -Force }
 }
-$installRes = & scoop install "$testManifest"
-Write-Host ($installRes -join "`n")
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "scoop install failed with exit code $LASTEXITCODE"
-    exit 1
-}
-
-# 4. Verify Scoop shims
-Write-Host "`nStep 2: Testing Scoop shims..." -ForegroundColor Yellow
-$vCmd = & cmd.exe /c "gitsetu --version"
-Write-Host "  gitsetu:  $vCmd"
-$vAlt = & cmd.exe /c "git-setu --version"
-Write-Host "  git-setu: $vAlt"
-
-if ($vCmd -notmatch "gitsetu v1.1.0" -or $vAlt -notmatch "gitsetu v1.1.0") {
-    Write-Error "Scoop shim execution failed"
-    exit 1
-}
-Write-Host "  [OK] Scoop shims executed successfully!" -ForegroundColor Green
-
-# 5. Run status
-Write-Host "`nStep 3: Running gitsetu status via Scoop shim..." -ForegroundColor Yellow
-$prevEAP = $ErrorActionPreference
-$ErrorActionPreference = "Continue"
-$statusOut = & cmd.exe /c "gitsetu status" 2>&1
-$ErrorActionPreference = $prevEAP
-Write-Host ($statusOut -join "`n")
-Write-Host "  [OK] Status executed successfully!" -ForegroundColor Green
-
-# 6. Scoop uninstall
-Write-Host "`nStep 4: Uninstalling GitSetu via Scoop..." -ForegroundColor Yellow
-$uninstallRes = & scoop uninstall gitsetu_scoop_test
-Write-Host ($uninstallRes -join "`n")
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "scoop uninstall failed with exit code $LASTEXITCODE"
-    exit 1
-}
-
-# 7. Verify clean uninstall
-Write-Host "`nStep 5: Verifying zero residue..." -ForegroundColor Yellow
-$gitsetuShim = Join-Path $scoopShims "gitsetu.exe"
-$gitsetuShimPs1 = Join-Path $scoopShims "gitsetu.ps1"
-if ((Test-Path $gitsetuShim) -or (Test-Path $gitsetuShimPs1)) {
-    Write-Error "Scoop shims were not removed: $gitsetuShim"
-    exit 1
-}
-Write-Host "  [OK] Scoop shims cleanly purged." -ForegroundColor Green
-
-# Cleanup test manifest
-Remove-Item -Force $testManifest
-
-Write-Host ""
-Write-Host "==================================================================" -ForegroundColor Green
-Write-Host "   All Scoop Live Verification Checks Passed (5/5)               " -ForegroundColor Green
-Write-Host "==================================================================" -ForegroundColor Green

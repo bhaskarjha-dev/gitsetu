@@ -1,88 +1,65 @@
-# tests/test_powershell_installer_e2e.ps1 — Full E2E test for PowerShell installer & uninstaller
+# Full PowerShell installer/uninstaller E2E using a controlled local ZIP.
 $ErrorActionPreference = "Stop"
+Set-StrictMode -Version 2.0
 
-$scriptDir = $PSScriptRoot
-$repoDir = (Resolve-Path (Join-Path $scriptDir "..")).Path
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$testRoot = Join-Path ([IO.Path]::GetTempPath()) ("gitsetu-ps-e2e-" + [Guid]::NewGuid().ToString("N"))
+$installRoot = Join-Path $testRoot "install"
+$sourceRoot = Join-Path $testRoot "source"
+$buildRoot = Join-Path $testRoot "build"
+$zipPath = Join-Path $testRoot "gitsetu-windows-test.zip"
+$oldTestMode = $env:GITSETU_TEST_MODE
+$oldInstallDir = $env:GITSETU_INSTALL_DIR
 
-Write-Host "==================================================================" -ForegroundColor Cyan
-Write-Host "   GitSetu PowerShell Installer & Uninstaller Verification Suite  " -ForegroundColor Cyan
-Write-Host "==================================================================" -ForegroundColor Cyan
-Write-Host ""
+try {
+    [void][IO.Directory]::CreateDirectory($sourceRoot)
+    [void][IO.Directory]::CreateDirectory($buildRoot)
+    Copy-Item (Join-Path $repoRoot "gitsetu") (Join-Path $sourceRoot "gitsetu")
+    Copy-Item (Join-Path $repoRoot "lib") (Join-Path $sourceRoot "lib") -Recurse
 
-$testDir = Join-Path $env:LOCALAPPDATA "GitSetu_Test"
-if (Test-Path $testDir) {
-    Remove-Item -Recurse -Force $testDir
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot "packaging\windows\build_launcher.ps1") -OutDir $buildRoot
+    if ($LASTEXITCODE -ne 0) { throw "Native launcher build failed" }
+    Copy-Item (Join-Path $buildRoot "gitsetu.exe") (Join-Path $sourceRoot "gitsetu.exe")
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot "packaging\windows\build_release_zip.ps1") -SourceDir $sourceRoot -OutFile $zipPath
+    if ($LASTEXITCODE -ne 0) { throw "Windows release ZIP build failed" }
+
+    $zipHash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $env:GITSETU_TEST_MODE = "1"
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot "install.ps1") `
+        -TestMode -TestArtifact $zipPath -TestArtifactSha256 $zipHash -TestInstallDir $installRoot
+    if ($LASTEXITCODE -ne 0) { throw "PowerShell installer failed" }
+
+    $cmdShim = Join-Path $installRoot "bin\gitsetu.cmd"
+    $psShim = Join-Path $installRoot "bin\gitsetu.ps1"
+    $altCmdShim = Join-Path $installRoot "bin\git-setu.cmd"
+    foreach ($required in @($cmdShim, $psShim, $altCmdShim, (Join-Path $installRoot "install.marker"), (Join-Path $installRoot "current.txt"))) {
+        if (-not (Test-Path -LiteralPath $required)) { throw "Installed file is missing: $required" }
+    }
+
+    $previousAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $cmdOutput = (& cmd.exe /d /c "`"$cmdShim`" --version" 2>&1 | Out-String)
+        $cmdExit = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $previousAction }
+    if ($cmdExit -ne 0 -or $cmdOutput -notmatch "gitsetu v1\.1\.0") { throw "CMD alias failed: $cmdOutput" }
+
+    $previousAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $psOutput = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $psShim --version 2>&1 | Out-String)
+        $psExit = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $previousAction }
+    if ($psExit -ne 0 -or $psOutput -notmatch "gitsetu v1\.1\.0") { throw "PowerShell alias failed: $psOutput" }
+
+    $env:GITSETU_INSTALL_DIR = $installRoot
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot "uninstall.ps1") -Force
+    if ($LASTEXITCODE -ne 0) { throw "PowerShell uninstaller failed" }
+    if (Test-Path -LiteralPath $installRoot) { throw "Uninstaller left installation residue" }
+
+    Write-Host "PowerShell installer E2E: PASS" -ForegroundColor Green
+} finally {
+    if ($null -eq $oldTestMode) { Remove-Item Env:GITSETU_TEST_MODE -ErrorAction SilentlyContinue } else { $env:GITSETU_TEST_MODE = $oldTestMode }
+    if ($null -eq $oldInstallDir) { Remove-Item Env:GITSETU_INSTALL_DIR -ErrorAction SilentlyContinue } else { $env:GITSETU_INSTALL_DIR = $oldInstallDir }
+    if (Test-Path -LiteralPath $testRoot) { Remove-Item -LiteralPath $testRoot -Recurse -Force }
 }
-
-$env:GITSETU_INSTALL_DIR = $testDir
-$env:GITSETU_REPO_URL = $repoDir
-$env:GITSETU_TEST = "true"
-
-$binDir = Join-Path $testDir "bin"
-$cmdShim = Join-Path $binDir "gitsetu.cmd"
-$psShim = Join-Path $binDir "gitsetu.ps1"
-
-# 1. Run install.ps1
-Write-Host "Step 1: Running install.ps1..." -ForegroundColor Yellow
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoDir "install.ps1")
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "install.ps1 failed with exit code $LASTEXITCODE"
-    exit 1
-}
-
-# 2. Check installed files
-Write-Host "Step 2: Verifying installed structure..." -ForegroundColor Yellow
-if (-not (Test-Path $cmdShim)) {
-    Write-Error "gitsetu.cmd shim missing at $cmdShim"
-    exit 1
-}
-if (-not (Test-Path $psShim)) {
-    Write-Error "gitsetu.ps1 shim missing at $psShim"
-    exit 1
-}
-if (-not (Test-Path (Join-Path $testDir "share\gitsetu"))) {
-    Write-Error "GitSetu source missing at $testDir\share\gitsetu"
-    exit 1
-}
-Write-Host "  [OK] Shims and repository structure successfully created." -ForegroundColor Green
-
-# 3. Test gitsetu.cmd
-Write-Host "Step 3: Testing gitsetu.cmd shim..." -ForegroundColor Yellow
-$cmdOut = & cmd.exe /c "`"$cmdShim`" --version"
-Write-Host "  CMD output: $cmdOut"
-if ($cmdOut -notmatch "gitsetu v1.1.0") {
-    Write-Error "gitsetu.cmd output did not match 'gitsetu v1.1.0'"
-    exit 1
-}
-Write-Host "  [OK] gitsetu.cmd executed successfully!" -ForegroundColor Green
-
-# 4. Test gitsetu.ps1
-Write-Host "Step 4: Testing gitsetu.ps1 shim..." -ForegroundColor Yellow
-$psOut = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$psShim" --version
-Write-Host "  PowerShell output: $psOut"
-if ($psOut -notmatch "gitsetu v1.1.0") {
-    Write-Error "gitsetu.ps1 output did not match 'gitsetu v1.1.0'"
-    exit 1
-}
-Write-Host "  [OK] gitsetu.ps1 executed successfully!" -ForegroundColor Green
-
-# 5. Run uninstall.ps1 -Force
-Write-Host "Step 5: Running uninstall.ps1 -Force..." -ForegroundColor Yellow
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoDir "uninstall.ps1") -Force
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "uninstall.ps1 failed with exit code $LASTEXITCODE"
-    exit 1
-}
-
-# 6. Verify zero residue
-Write-Host "Step 6: Verifying complete removal..." -ForegroundColor Yellow
-if (Test-Path $testDir) {
-    Write-Error "Installation directory was not completely purged: $testDir"
-    exit 1
-}
-Write-Host "  [OK] Zero directory residue." -ForegroundColor Green
-
-Write-Host ""
-Write-Host "==================================================================" -ForegroundColor Green
-Write-Host "   All PowerShell Installer & Uninstaller Checks Passed (6/6)     " -ForegroundColor Green
-Write-Host "==================================================================" -ForegroundColor Green

@@ -31,7 +31,7 @@ test_standard_port22_no_fallback() {
     ) || rc=$?
 
     assert_equals "0" "$rc" "handshake exits 0" || return 1
-    assert_contains "$output" "(port 22)" "verified on port 22" || return 1
+    assert_contains "$output" "(port 22;" "verified on port 22" || return 1
     assert_equals "0" "${GITSETU_PORT443_NEEDED:-0}" "port 443 flag remains 0" || return 1
 }
 
@@ -40,6 +40,7 @@ test_standard_port22_no_fallback() {
 # ------------------------------------------------------------------------------
 test_port443_fallback_triggered() {
     export GITSETU_PORT443_NEEDED=0
+    export GITSETU_ALLOW_SSH_PORT443=1
     local dummy_key="$TEST_HOME/.ssh/id_corp"
     mkdir -p "$TEST_HOME/.ssh"
     touch "$dummy_key"
@@ -58,6 +59,7 @@ test_port443_fallback_triggered() {
     }
     GITSETU_TEST_SSH_VERIFY=1 verify_ssh_handshake "$dummy_key" "github.com" >/dev/null 2>&1 || rc=$?
     unset -f ssh
+    unset GITSETU_ALLOW_SSH_PORT443
 
     assert_equals "0" "$rc" "handshake fallback exits 0" || return 1
     assert_equals "1" "${GITSETU_PORT443_NEEDED:-0}" "port 443 flag exported as 1" || return 1
