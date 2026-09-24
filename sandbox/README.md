@@ -31,3 +31,8 @@ The results directory contains `status.txt`:
 - `COMPLETED_SUCCESS`: all sandbox checks passed.
 - `COMPLETED_ENVIRONMENT_BLOCK`: all non-launcher checks passed, but Windows Application Control blocked execution of the generated unsigned native launcher; this is not a product pass.
 - `COMPLETED_FAILURE`: one or more checks failed.
+- No terminal status (for example, the host closes the VM during a run): treat
+  the result as **inconclusive**, never as a pass or product failure.
+
+Each launcher invocation creates a unique `.wsb` configuration, so repeated or
+parallel disposable runs cannot silently reuse an older Sandbox session.

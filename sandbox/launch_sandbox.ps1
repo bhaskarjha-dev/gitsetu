@@ -54,7 +54,9 @@ $gitHostDirXml = [System.Security.SecurityElement]::Escape($gitHostDir)
 $resultsDirXml = [System.Security.SecurityElement]::Escape($resultsDir)
 
 # 4. Generate WSB Configuration
-$wsbGenerated = Join-Path $env:TEMP "gitsetu_test_dynamic.wsb"
+# Use a unique configuration per launch so a stale Sandbox session cannot
+# silently reuse an older mapped source tree or results directory.
+$wsbGenerated = Join-Path $env:TEMP ("gitsetu_test_" + [Guid]::NewGuid().ToString("N") + ".wsb")
 
 $wsbContent = @"
 <Configuration>
