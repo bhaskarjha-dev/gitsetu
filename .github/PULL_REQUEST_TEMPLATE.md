@@ -7,7 +7,7 @@
 
 ## How Has This Been Tested?
 <!-- Please describe in detail how you tested your changes. -->
-<!-- Run `make test` or `bash tests/run_all.sh` to execute all 33 test suites. -->
+<!-- Run `make test` or `bash tests/run_all.sh`; report every PASS, FAIL, and explicit SKIP. -->
 
 ## Checklist:
 <!-- Go over all the following points, and put an `x` in all the boxes that apply. -->

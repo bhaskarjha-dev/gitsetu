@@ -34,7 +34,7 @@ Do not introduce integrations, analytics tracking, environment scanners, or cras
 
 1. Fork the target `bhaskarjha-dev/gitsetu` repository.
 2. Ensure your execution branch successfully passes local diagnostic boundaries (`gitsetu doctor` and verification testing paths).
-3. **Testing Standards:** Run all automated regression tests before submitting PRs (`make test` or `bash tests/run_all.sh`). All 44 test suites must pass 100% green without regressions.
+3. **Testing Standards:** Run all automated regression tests before submitting PRs (`make test` or `bash tests/run_all.sh`). Every required suite must pass; any skipped capability must be reported explicitly and justified rather than counted as green.
 4. **Windows Testing Guidance:** Any changes affecting Windows paths, credentials, or shells should be verified directly in Git Bash and in an isolated environment using the Windows Sandbox Test Harness (`sandbox/launch_sandbox.ps1` or `sandbox/launch_sandbox.bat`).
 5. **Code Style & Linting:** Run `make lint` to verify all shell scripts pass ShellCheck without warnings.
 6. If introducing logic updates impacting standard core modules, explicitly test compilation output against cross-platform environments (e.g., native macOS Terminal vs Git Bash vs WSL).
