@@ -34,7 +34,7 @@ Managing multiple directory-scoped Git identities securely across work, open-sou
 | Automated SSH key generation | ✓ (Ed25519) | ~ (Import) | **✓** (Ed25519/RSA) | ✗ | ✗ | ✓ | ✗ |
 | Automated `ssh-agent` loading | **✓** | ✗ | **✓** | ✗ | ✗ | ✗ | ✗ |
 | OpenSSH `Include` directive pivot | **✓** | ~ | ~ | ✗ | ~ | ✗ | ✓ |
-| Corporate firewall Port 443 fallback | **✓** | ✗ | ✗ | ✗ | ✗ | ✗ | ~ |
+| Corporate firewall Port 443 fallback | **✓** (explicit consent) | ✗ | ✗ | ✗ | ✗ | ✗ | ~ |
 | SSH commit signing (`gpgsign`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ~ |
 | Hardware key bootstrapping (FIDO2) | **✓** | ✗ | ✗ | ✗ | ✗ | ✗ | ~ |
 | Standard clone URLs (`git@github.com`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ |
@@ -45,7 +45,7 @@ Managing multiple directory-scoped Git identities securely across work, open-sou
 | Self-healing configuration repair | **✓** (`--repair`) | **✓** (`--repair`) | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Built-in diagnostic doctor | ✓ | ✓ | ✗ | ✓ | ✗ | ✗ | ✗ |
 | **Backup & Distribution** | | | | | | | |
-| Encrypted state export & restore | **✓** (AES-256) | ~ (Unencrypted) | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Encrypted state export & restore | **✓** (authenticated v2 vault) | ~ (Unencrypted) | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Zero runtime dependencies | **✓** (Bash 3.2+) | ✗ (Go) | ✗ (Go) | ✓ (Shell) | ✗ (Go) | ✗ (Node) | **✓** |
 | Distribution channels | 8 channels | 4 channels | Go install | Git clone | Go install | npm | N/A |
 
@@ -82,8 +82,8 @@ An objective look at features and capabilities where alternative tools offer dis
 ## Where GitSetu Excels
 
 1. **Zero Runtime Dependencies:** Built strictly on POSIX Bash 3.2+ with core utilities. Requires no Go compiler, no Node.js runtime, and no external package managers.
-2. **End-to-End SSH Automation:** Generates Ed25519 keys, automatically manages `ssh-agent` loading with socket liveness checks, provides corporate firewall Port 443 fallback for restricted networks, and handles one-click GitHub public key upload via `gh`.
+2. **End-to-End SSH Automation:** Generates Ed25519 keys, automatically manages `ssh-agent` loading with socket liveness checks, offers explicitly consented corporate firewall Port 443 fallback for restricted networks, and handles one-click GitHub public key upload via `gh`.
 3. **Fail-Closed Pre-Commit Guard with Hook Chaining:** Enforces email and identity correctness system-wide via a global `core.hooksPath` pre-commit guard, while transparently passing through execution to project hooks (Husky, Lefthook, pre-commit framework).
-4. **Encrypted State Vaults:** AES-256 encrypted backups allow developers to securely export and restore their complete identity configurations across workstations.
+4. **Authenticated State Vaults:** Versioned authenticated vaults allow developers to export and restore managed identity configuration across workstations, with tamper detection and transactional restore.
 5. **Robust Cross-Platform Engine:** Rigorously tested across macOS, Linux, WSL, and Git Bash on Windows with automated CRLF self-healing, Windows path normalization (`C:/`), and Windows Credential Manager integration.
 6. **Self-Healing Diagnostics (`gitsetu doctor --repair`):** Detects and automatically restores missing Git managed blocks, SSH Include directives, and agent keys with a single command.

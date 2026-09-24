@@ -1,115 +1,88 @@
 # CLI Command Reference
 
-**The complete GitSetu execution palette.**
+GitSetu is a Bash CLI for directory-scoped Git identities, SSH keys, and credential helpers. Commands that mutate state use explicit validation, private staging, and recoverable writes.
 
-GitSetu exposes a highly targeted, heavily validated command palette designed exclusively to interact with Git and SSH state structures. All commands are strictly idempotent.
-
----
-
-## Provisioning & Setup
+## Provisioning and setup
 
 ### `gitsetu setup [--auto] [--dry-run]`
+
 Alias: `gitsetu init [--auto] [--dry-run]`
-The primary interactive compilation wizard. Use this command to provision entirely new workspace profiles or seamlessly update existing configuration paths.
-- Natively prompts for distinct Profile Labels, Developer Names, Emails, and Target Directories.
-- Prompts for Zero-Trust SSH Key generation (ED25519 or FIDO2 hardware tokens).
-- Safely injects atomic managed blocks directly into `~/.gitconfig` and OpenSSH configuration files.
+
+Interactive profile setup and repair. `--auto` uses the documented onboarding flow; `--dry-run` validates and previews changes without persisting state or contacting remote services.
+
+The setup flow can create profiles, generate Ed25519 or FIDO2 keys, write scoped Git configuration, and offer guard installation. A FIDO2 downgrade is never silent: if hardware-key setup cannot proceed, the command reports the failure and requires an explicit choice before using a software-key alternative.
 
 ### `gitsetu add <label> <name> <email> <dir>`
-Add a new profile non-interactively via positional arguments.
-- Example: `gitsetu add work "Dev Name" dev@company.com ~/work`
-- Generates SSH keys, registers the profile in `profiles.conf`, and updates `~/.gitconfig` automatically.
-- Automatically creates the workspace directory (`mkdir -p`) if it does not already exist.
+
+Add a profile non-interactively. The label and directory are validated, generated files are written under GitSetu's managed roots, and the v2 profile registry is updated atomically.
 
 ### `gitsetu remove <label> [--force|-y]`
-Remove an existing profile non-interactively or interactively.
-- Safely unmounts the profile's conditional `includeIf` from `~/.gitconfig`.
-- Prunes the profile configuration file `~/.config/gitsetu/profiles/<label>.gitconfig` and any orphaned configs.
-- Removes profile SSH host blocks from `~/.config/gitsetu/profiles/ssh_config` and updates `profiles.conf`.
-- `--force`, `-y`: Bypasses the interactive confirmation prompt for scripting and headless automation.
+
+Remove a managed profile after confirmation. Only GitSetu-owned files, profile routing entries, and marked SSH/Git configuration blocks are changed. Private keys are preserved by default.
 
 ### `gitsetu profile <subcommand>`
+
 Manage profiles programmatically:
+
 - `gitsetu profile add <label> --email=<email> [--dir=<dir>] [--name=<name>] [--key=<key>] [--sign] [--provider=<provider>]`
-- `gitsetu profile remove <label> [--force|-y]`: Removes specified profile and updates all managed configurations.
+- `gitsetu profile remove <label> [--force|-y]`
 
-### `gitsetu credential <action>`
-Standard Git credential helper broker protocol implementation:
-- `gitsetu credential get`: Resolves credentials based on active directory profile context.
-- `gitsetu credential store`: Persists credentials securely into OS keychain or `~/.config/gitsetu/.tokens`.
-- `gitsetu credential erase`: Erases credentials for the current profile context.
+### `gitsetu credential <get|store|erase>`
 
----
+Git credential-helper protocol. GitSetu scopes records by active profile, host, and path and prefers the native OS store. On systems without a native store, the explicitly selected `GITSETU_CREDENTIAL_BACKEND=file` backend uses a warned-about plaintext `~/.config/gitsetu/.tokens` file with strict permissions.
 
-## Diagnostics & Verification
+## Diagnostics and verification
 
 ### `gitsetu status`
-Renders a structured, tabular layout of your entire GitSetu configuration state.
-- Lists all registered profiles, bounded paths, and linked OpenSSH aliases.
-- Dynamically highlights your **currently active profile** based on your active terminal directory context.
+
+Lists registered profiles, managed paths, providers, and SSH aliases, and identifies the active profile by canonical path. Unmanaged repositories are not treated as managed profiles.
 
 ### `gitsetu doctor [--repair] [--dry-run]`
-An advanced configuration health-scanner designed to identify silent environmental drift.
-- Validates global `~/.gitconfig` syntax integrity and verifies the presence of managed identity blocks.
-- Ensures the OpenSSH `Include` directive remains valid at the top of `~/.ssh/config`.
-- Scans deep local `.git/config` files within mapped directory trees to surface overlapping or conflicting `user.email` hardcodes.
-- `--repair`: Automatically restores missing managed blocks in `~/.gitconfig`, SSH Include directives, and registers unloaded SSH keys with the agent.
-- `--dry-run`: Previews what `--repair` would fix without making changes.
+
+Runs offline structural, configuration, permission, and identity checks. Network-dependent checks are reported separately from required local checks. `--dry-run` previews repairs; `--repair` changes only recognized GitSetu-managed state.
 
 ### `gitsetu verify`
-Executes aggressive permissions and structural validation testing.
-- Checks if generated private cryptographic keys (`~/.ssh/id_*`) possess strict POSIX `600` access boundaries (tolerates `644` under Windows NTFS emulation).
-- Verifies SSH Agent socket connection state and pre-loaded signatures.
+
+Verifies managed configuration, referenced key paths, permissions, and hook installation. It does not claim that a client-side check can detect every same-user process or server-side credential problem.
 
 ### `gitsetu prompt`
-A specialized, ultra-fast context extractor designed strictly for sub-millisecond shell `$PS1` or Starship rendering integrations.
-- Returns exactly one string (the active profile label) in `< 2ms` without spawning blocking subshells.
-- Resolves nested paths via longest-prefix matching (most specific directory wins).
-- Supports canonical Windows drive paths (`C:/...`) and case-insensitive directory matching on Windows and macOS.
 
----
+Prints the active managed profile label for shell integrations. It uses canonical path matching, including longest-prefix matching and platform-aware case handling. Performance depends on the host shell and filesystem; no fixed sub-millisecond guarantee is made.
 
-## Vault Operations
+## Vault operations
 
 ### `gitsetu backup [out_file]`
-The comprehensive export utility.
-- Aggregates configuration schemas and cryptographic keys into a single `.tar` block.
-- Enforces strict inline AES-256-CBC `-pbkdf2` encryption via native OpenSSL boundaries.
+
+Creates an authenticated v2 vault from managed state and referenced keys. The archive is prepared and encrypted in private temporary storage and installed atomically. The current format is v2 only; older CBC/unauthenticated vaults are rejected and there is no migration flag.
 
 ### `gitsetu restore <in_file>`
-The bare-metal state re-construction tool.
-- Decrypts target vaults and reconstructs structural mapping blocks transparently.
-- Creates an automated pre-flight backup of existing state before restoring.
 
----
+Verifies and authenticates a v2 vault before changing state, validates the complete payload in a staging area, and performs a transactional restore. Wrong passwords, tampering, unsafe archive members, and truncated payloads fail without partial installation.
 
-## System Operations
+## System operations
 
-### `gitsetu run <profile> -- <cmd>`
-Execute any command under a specific identity profile context without changing your current directory or altering configuration files.
-- Injects environment variables (`GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, `GIT_COMMITTER_EMAIL`, and `GIT_SSH_COMMAND`).
-- Enforces escaped double-quoting around SSH key paths containing spaces in `GIT_SSH_COMMAND` to prevent argument splitting.
-- Example: `gitsetu run work -- git commit -m "fix"`
+### `gitsetu run <profile> -- <command>`
+
+Runs a command with the selected profile's Git identity, SSH command, and credential context. Arguments are passed without shell-word splitting.
 
 ### `gitsetu update`
-Executes the native OTA (Over-The-Air) update sequence.
-- Pulls verified binary payloads exclusively via standard TLS/HTTPS domains.
-- Atomically hot-swaps the local `~/.local/share/gitsetu` executable binary.
+
+Updates only through the configured release/update path. A development checkout must not be treated as a published v1.1.0 release. Release artifacts and metadata must be pinned and integrity-checked; mutable aliases such as `main` are not release trust roots.
 
 ### `gitsetu guard --install` | `gitsetu guard --uninstall`
-Toggles the fail-closed Pre-Commit Identity interceptor bounds inside the global `core.hooksPath` configuration matrix:
-- `--install`: Installs and activates the global pre-commit hook in `~/.config/gitsetu/guard.sh` and configures `core.hooksPath`.
-- `--uninstall`: Deactivates the global pre-commit hook and unsets `core.hooksPath`.
+
+Installs the generated identity guard under the GitSetu hooks directory and configures the Git hooks path while preserving an existing project hook when possible.
+
+Managed repositories fail closed when their expected identity is missing or divergent. Repositories outside all managed profiles fail open for the identity check by policy; their ordinary project hooks still run.
 
 ### `gitsetu teardown [--force] [--deep]`
-**[Destructive Command]** The ultimate uninstall and nuclear escape hatch.
-- Safely uninstalls GitSetu by completely purging all managed layout boundaries, sub-files, and configuration blocks from the host system cleanly.
-- Restores the host Git environments to their pristine, pre-installation state without deleting your private SSH keys.
-- `--deep`: Recursively strips matched local repository identity overrides.
-- `--force`: Bypasses the confirmation prompt.
 
-### `gitsetu --help, -h`
-Displays the quick-reference help dialog in your terminal.
+Removes marked GitSetu configuration and managed state. Private SSH keys are preserved unless an explicit, separately authorized destructive action is added in the future. Deep cleanup is bounded to verified repositories and managed profile boundaries.
 
-### `gitsetu --version, -v`
-Prints the current version of the GitSetu CLI.
+### `gitsetu --help`, `gitsetu -h`
+
+Displays command help.
+
+### `gitsetu --version`, `gitsetu -v`
+
+Prints the development version and release channel.

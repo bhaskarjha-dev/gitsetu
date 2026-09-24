@@ -75,14 +75,14 @@ When registering a new profile (interactively in `gitsetu setup` or via `gitsetu
 When nested workspace directories exist (e.g., a general work directory `~/work/` and a nested client project `~/work/clients/acme/`), GitSetu's routing, prompt engine, and pre-commit guard employ a deterministic longest-prefix match algorithm. The most specific directory boundary wins: Git evaluates conditional rules sequentially, and GitSetu tools compute matching prefix lengths to ensure the deeper child profile takes absolute precedence over the parent. On Windows and macOS, path matching is case-insensitive, avoiding casing drift.
 
 ### Multi-Profile Persistence & Re-hydration
-Running `gitsetu setup` multiple times is safe and non-destructive. GitSetu automatically loads and re-hydrates existing profiles from `~/.config/gitsetu/profiles.conf`, preserving their names, emails, keys, and directory bindings in memory. Users can review, adjust, or append profiles without overwriting previously configured identities.
+Running `gitsetu setup` multiple times reloads the current v2 registry and managed profile configs. Existing unrelated SSH keys and configuration remain outside GitSetu's managed roots, but the old colon-delimited registry is rejected; there is no migration reader. Review changes before applying them.
 
 ### Co-existence with Pre-Existing Manual `includeIf` Setups
 For developers transitioning from hand-crafted `includeIf` directives and custom `.gitconfig` files:
 1. **Zero-Destruction Boundary:** GitSetu encapsulates all generated rules strictly within `# [gitsetu:managed:start]` and `# [gitsetu:managed:end]`. Any manual `includeIf` rules, aliases, and settings outside this block are never altered, deleted, or reordered.
-2. **Top-Down Sequential Precedence:** Git evaluates `~/.gitconfig` sequentially from top to bottom. Because GitSetu's managed block is appended at the end of `~/.gitconfig`, GitSetu profiles take precedence for directories they manage, ensuring correct SSH key and identity routing. All directories managed exclusively by your manual `includeIf` continue to operate normally.
-3. **Automated Discovery Migration:** Running `gitsetu setup --auto` uses GitSetu's built-in discovery engine (`lib/discovery.sh`) to scan existing manual `includeIf` directives in `~/.gitconfig` and existing SSH keys in `~/.ssh/`. It automatically imports existing directory mappings and identities into the profile registry, eliminating manual re-configuration.
-4. **Clean Reversibility:** If you ever decide to remove GitSetu, executing `gitsetu teardown` excises only the managed block, restoring your original manual configuration completely intact.
+2. **Deterministic precedence:** Git evaluates conditional includes in configuration order. GitSetu tests nested parent/child routing and emits rules in an order that gives the most-specific managed profile the intended result.
+3. **Explicit discovery:** `gitsetu setup --auto` can inspect existing identities and propose profiles; it does not silently import or migrate an old registry format.
+4. **Clean reversibility:** `gitsetu teardown` removes only recognized GitSetu-managed blocks and files. It is bounded cleanup, not a claim that every third-party mutation can be perfectly reconstructed.
 
 ### Profile Teardown, Unmounting & Orphan Pruning
 When a profile is removed via `gitsetu remove <label>`:

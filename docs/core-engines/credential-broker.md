@@ -1,74 +1,54 @@
 # Credential Broker Engine
 
-**Native OS keychain isolation preventing HTTPS Personal Access Token (PAT) cross-profile pollution.**
+GitSetu provides a per-profile credential helper for HTTPS Personal Access Tokens (PATs). It prevents a token stored for one profile from being selected merely because another profile uses the same host name.
 
-Corporate network firewalls frequently block outbound connections on SSH Port 22 entirely. This forces developers to clone, push, and pull repositories using HTTPS protocols backed by Personal Access Tokens (PATs).
+## Why native stores need namespacing
 
-However, operating system credential stores natively introduce a critical vulnerability when managing multiple tokens across overlapping environments. GitSetu includes a specialized **Credential Broker Engine** to resolve this challenge permanently.
+Git sends a credential request such as:
 
----
-
-## The Operational Vulnerability
-
-When authenticating over HTTPS, Git streams a credential request directly to your underlying operating system (macOS Keychain, Windows Credential Manager, or Linux Secret Service).
-
-```
-[ git push https://github.com/org/repo.git ]
-                     │
-                     ▼
-        [ Upstream Request: "github.com" ]
-                     │
-                     ▼
-[ OS Keychain blindly returns first cached token ]
-                     │
-                     ▼
-    [ Return payload: Personal Token ]
-                     │
-                     ▼
-       [ HTTP 403 Forbidden Error ]
+```text
+protocol=https
+host=github.com
 ```
 
-Because external keychains key authentication strictly off the base domain string (`github.com`), they blindly return the first matching token encountered. You end up attempting to authenticate against an enterprise repository using your personal access token, raising persistent, confusing access errors.
+A native keychain queried only by `github.com` may return a personal token when a company repository expects a different one. GitSetu therefore includes the active profile, host, and credential path in its own record key before querying the native store.
 
----
+## Managed Git configuration
 
-## The GitSetu Intercept Architecture
+A managed profile can contain a scoped helper entry equivalent to:
 
-GitSetu intercepts this systemic failure by registering itself as a proxy credential helper within your dynamically mapped configuration layers.
-
-Inside your target `.gitconfig` bounds, GitSetu statefully compiles:
 ```ini
 [credential]
-    helper = "gitsetu credential"
+    helper = gitsetu credential
 ```
 
-### The Isolated Resolution Flow
+The helper reads Git's credential protocol from standard input, resolves the active profile from the working directory, and returns a matching record. It never scans or prints unrelated native keychain entries.
 
-1. **Trigger Operation:** You execute `git push` over HTTPS inside a managed workspace folder.
-2. **Helper Interception:** Git streams an authentication verification payload directly to the configured credential helper.
-3. **Context Evaluation:** GitSetu leverages its optimized path-matching algorithm to identify the active profile context instantly.
-4. **Namespaced Query:** Instead of requesting credentials for `github.com` from the OS, GitSetu constructs an isolated, unique namespace query: `gitsetu:work:github.com`.
-5. **Target Delivery:** The OS keychain (macOS Keychain, Linux Secret Service, or Windows Git Credential Manager) returns the exact token explicitly mapped to your `work` profile context.
-6. **Execution Success:** GitSetu passes the isolated token payload back to Git. Upstream communication succeeds flawlessly.
+Native backends are preferred:
 
-> [!NOTE]
-> **Windows Credential Manager Integration:**
-> On Windows (Git Bash), GitSetu automatically configures `credential.helper = manager`, natively delegating to Microsoft's **Git Credential Manager (GCM)** backed by Windows DPAPI and Windows Credential Manager.
+- macOS Keychain (`security`);
+- Windows Git Credential Manager;
+- Linux Secret Service (`secret-tool`).
 
----
+## Token lifecycle
 
-## Token Lifecycle Management
+Interactive setup and the standard Git credential protocol can store a token:
 
-To securely seed or update a Personal Access Token within an isolated profile scope, you can:
-1. **Interactive Setup:** Enter your PAT when prompted during the interactive `gitsetu setup` wizard.
-2. **Headless Profile Registration:** Provide credentials when invoking profile commands:
-   ```bash
-   gitsetu profile add work --email=dev@company.com --dir=~/work
-   ```
-3. **Standard Git Credential Helper Interface:** Store or retrieve credentials directly via standard Git credential protocol inputs:
-   ```bash
-   printf "protocol=https\nhost=github.com\nusername=dev-corp\npassword=PAT_TOKEN\n" | gitsetu credential store
-   ```
+```bash
+printf 'protocol=https\nhost=github.com\nusername=dev\npassword=PAT_TOKEN\n\n' \
+  | gitsetu credential store
+```
 
-### Encrypted Fallback Storage
-In environments where native OS keychain facilities are absent (such as headless Linux or minimal WSL containers), GitSetu securely falls back to a restricted credential vault at `~/.config/gitsetu/.tokens`. This file is strictly enforced with `chmod 600` permissions (read/write only by the current user) immediately upon creation, preventing world-readable token exposure. Passwords and tokens are never stored in plain-text global configuration files.
+The `get` and `erase` actions use the same profile/host/path namespace. Records are versioned and fields are encoded so delimiters, whitespace, and Unicode values cannot be confused with record structure.
+
+## Explicit zero-dependency fallback
+
+Minimal Linux systems and containers may not provide a keychain daemon. GitSetu supports a deliberately selected plaintext backend for those environments:
+
+```bash
+GITSETU_CREDENTIAL_BACKEND=file gitsetu credential store
+```
+
+The file backend writes `~/.config/gitsetu/.tokens` with mode `0600` in a directory with mode `0700`, rejects symlinks and unsafe permissions, and warns on every use. It is **plaintext**, not encrypted storage, and is not enabled as a silent native-store fallback. Anyone who can read the file as the same operating-system user can recover the token.
+
+If no native backend is available and the explicit file backend was not selected, credential operations fail with instructions for choosing one. Do not describe the plaintext file as an encrypted vault or as protected by the OS keychain.

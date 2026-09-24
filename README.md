@@ -11,7 +11,7 @@
 [![CI](https://github.com/bhaskarjha-dev/gitsetu/actions/workflows/ci.yml/badge.svg)](https://github.com/bhaskarjha-dev/gitsetu/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/github/license/bhaskarjha-dev/gitsetu?color=blue)](LICENSE)
 [![Bash 3.2+](https://img.shields.io/badge/bash-3.2%2B-orange?logo=gnubash&logoColor=white)](https://www.gnu.org/software/bash/)
-[![Tests](https://img.shields.io/badge/tests-44%20suites%20passing-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/regression-tested-brightgreen)](#testing)
 [![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey)](#cross-platform)
 [![Website](https://img.shields.io/badge/docs-gitsetu.bhaskarjha.dev-00c4cc)](https://gitsetu.bhaskarjha.dev)
 
@@ -41,7 +41,7 @@ gitsetu setup --auto
 
 GitSetu scans your machine, discovers your existing Git identities, and **in one command** generates SSH keys, wires `includeIf` routing, configures credential helpers, and provisions workspace directories. Then it exits. No daemon. No background process. Git and OpenSSH handle everything natively from that point forward.
 
-**Zero dependencies. Pure Bash 3.2. Works everywhere Git does.**
+**Pure Bash 3.2 core. Native Git and OpenSSH integration. Optional platform stores and OpenSSL are detected explicitly.**
 
 ---
 
@@ -50,17 +50,16 @@ GitSetu scans your machine, discovers your existing Git identities, and **in one
 ### 30-Second Quick Start
 
 ```bash
-# Install
-curl -fsSL https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.sh | bash
+# Install a reviewed, pinned release using the platform package manager,
+# or build this checkout locally:
+bash install.sh
 
 # Setup (discovers identities automatically)
 gitsetu setup --auto
 
-# Verify everything works
+# Verify the managed configuration
 gitsetu status
 ```
-
-That's it. Every repo you clone under `~/work` now uses your work identity. Every repo under `~/personal` uses your personal identity. Automatically.
 
 ### What Just Happened?
 
@@ -69,13 +68,13 @@ GitSetu compiled native configuration into three places and exited:
 ```
 ~/.gitconfig          ← includeIf rules route identity by directory
 ~/.ssh/config         ← Include directive sandboxes SSH host aliases
-~/.config/gitsetu/    ← Profile configs, SSH keys, credential tokens
+~/.config/gitsetu/    ← Versioned profile registry and managed configs/keys
 ```
 
 There is no daemon. There is no runtime. Git and OpenSSH evaluate these rules natively on every operation.
 
 > [!NOTE]
-> **Non-Destructive & Safe:** GitSetu writes strictly between `# [gitsetu:managed:start]` and `# [gitsetu:managed:end]` markers. Existing manual `includeIf` rules, custom aliases, and `~/.ssh/config` host blocks are 100% preserved. `setup --auto` automatically discovers existing manual identities and workspace paths.
+> **Managed-file safety:** GitSetu writes only its own generated profile files and marked configuration blocks. Existing manual `includeIf` rules, aliases, and unrelated `~/.ssh/config` host blocks are left outside those blocks. `setup --auto` can discover existing identities; review the proposed changes before applying them.
 
 ---
 
@@ -96,7 +95,7 @@ There is no daemon. There is no runtime. Git and OpenSSH evaluate these rules na
 └─────────────────────────────────────────────────────────┘
 ```
 
-GitSetu is a **configuration compiler**, not a runtime tool. It generates the rules once, then Git's own `includeIf` engine handles directory-scoped identity switching on every `clone`, `commit`, `push`, and `fetch` — natively, at zero latency.
+GitSetu is a **configuration compiler**, not a daemon. It generates rules once; Git and OpenSSH evaluate them on each operation, subject to their own configuration semantics and performance.
 
 ---
 
@@ -109,16 +108,16 @@ GitSetu is a **configuration compiler**, not a runtime tool. It generates the ru
 | **Auto-Discovery** | `setup --auto` scans your machine for existing Git identities and SSH keys |
 | **Directory Routing** | `includeIf` rules auto-switch identity when you `cd` into a project |
 | **SSH Key Generation** | Ed25519 keypairs per profile, with FIDO2/YubiKey support |
-| **Credential Broker** | Per-profile HTTPS PAT routing via macOS Keychain, Linux secret-tool, or Windows Credential Manager |
-| **Pre-Commit Guard** | Blocks commits if `user.email` doesn't match the expected profile for the directory |
-| **Encrypted Backup** | `gitsetu backup` exports everything (keys, configs, tokens) as an AES-256 encrypted archive |
+| **Credential Broker** | Per-profile HTTPS PAT routing via native OS stores; an explicitly selected zero-dependency plaintext fallback is warned about |
+| **Pre-Commit Guard** | Blocks commits in managed repositories when the effective identity is unresolved or divergent; unmanaged repositories fail open |
+| **Authenticated Backup** | `gitsetu backup` exports managed keys and configuration in an authenticated v2 vault; old vault formats are rejected |
 
 ### Developer Experience
 
 | Feature | Description |
 |---------|-------------|
 | **Context Runner** | `gitsetu run work -- git push` executes commands under a specific identity |
-| **Shell Prompt** | `gitsetu prompt` returns the active profile name for `$PS1` / Starship integration (< 2ms) |
+| **Shell Prompt** | `gitsetu prompt` returns the active profile label for `$PS1` / Starship integration |
 | **Doctor** | `gitsetu doctor` runs diagnostic checks on your entire identity infrastructure |
 | **Verify** | `gitsetu verify` tests SSH connectivity and gitconfig integrity |
 | **Completions** | Tab completions for Bash and Zsh with dynamic profile suggestions |
@@ -131,7 +130,7 @@ GitSetu is a **configuration compiler**, not a runtime tool. It generates the ru
 | **SSH Keys** | ✓ | ✓ | ✓ (NTFS-aware permissions) |
 | **Credential Store** | secret-tool | Keychain | Credential Manager |
 | **CRLF Handling** | — | — | 4-tier self-healing cascade |
-| **Installer** | `install.sh` / Homebrew / AUR / Nix | `install.sh` / Homebrew | `install.ps1` / WinGet / Scoop |
+| **Installer** | `install.sh` (local release-candidate checkout) | `install.sh` (local release-candidate checkout) | `install.ps1` (local release-candidate checkout) |
 
 ---
 
@@ -139,57 +138,50 @@ GitSetu is a **configuration compiler**, not a runtime tool. It generates the ru
 
 ### npm (All Platforms)
 
+The npm package is a private release candidate; there is no public registry
+installation yet. Use the reviewed checkout installer instead:
+
 ```bash
-npm install -g gitsetu
+bash install.sh
 ```
 
 ### Linux & macOS
 
+For a local release-candidate checkout, run the reviewed installer from the checkout:
+
 ```bash
-# One-line installer
-curl -fsSL https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.sh | bash
+bash install.sh
 ```
+
+For a public release, use the release documentation and package manager for your platform. Do not pipe a mutable `main` URL into a shell; verify the release tag and checksum/signature first.
 
 **Package managers:**
 
-```bash
-# Homebrew
-brew tap bhaskarjha-dev/tap && brew install gitsetu
-
-# Arch Linux (AUR)
-yay -S gitsetu
-
-# Nix
-nix run github:bhaskarjha-dev/gitsetu
-```
+No public Homebrew, AUR, or Nix package is published for the release candidate.
+The repository contains withheld templates for a future intentional release;
+do not install them from this checkout.
 
 ### Windows
 
 > **Prerequisite:** [Git for Windows](https://git-scm.com/download/win) (`winget install Git.Git`).
 
-```powershell
-# PowerShell one-liner
-irm https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.ps1 | iex
-```
+Run `install.ps1` from a reviewed, pinned checkout. For a public release, prefer the published package-manager manifest and verify its hash/signature before installation.
 
 **Package managers:**
 
-```powershell
-# WinGet (Official Microsoft Package Identifier)
-winget install BhaskarJha.GitSetu
-# Or once indexed locally:
-winget install GitSetu
-
-# Scoop
-scoop bucket add gitsetu https://github.com/bhaskarjha-dev/scoop-gitsetu
-scoop install gitsetu
-```
+No public WinGet or Scoop package is published for the release candidate.
+The repository contains withheld templates for a future intentional release;
+use `install.ps1` from a reviewed checkout for now.
 
 ### GitHub CLI Extension
 
+The `gh-gitsetu` and `gh-setu` extension repositories are not published as
+public releases yet. From a reviewed checkout, the wrappers can be exercised
+directly:
+
 ```bash
-gh extension install bhaskarjha-dev/gh-gitsetu
-gh gitsetu setup --auto
+bash packaging/gh-extension/gh-gitsetu --version
+bash packaging/gh-extension/gh-setu --version
 ```
 
 > [!NOTE]
@@ -239,11 +231,11 @@ gitsetu run work -- git push origin main
 # Install pre-commit identity guard
 gitsetu guard --install
 
-# Backup everything (encrypted)
+# Create an authenticated v2 vault
 gitsetu backup
 
-# Restore on a new machine
-gitsetu restore backup.tar.gz.enc
+# Restore on a new machine (v2 vaults only)
+gitsetu restore /path/to/gitsetu_vault_YYYYMMDD_HHMMSS.tar.gz.enc
 
 # Clean removal of all GitSetu configs
 gitsetu teardown
@@ -263,7 +255,7 @@ gitsetu teardown
 | Encrypted backup | ✓ | | | | |
 | Windows native support | ✓ | ~ | | | ~ |
 | Built-in doctor/verify | ✓ | | | | |
-| Shell prompt (< 2ms) | ✓ | ✓ | ✓ | ✓ | |
+| Shell prompt | ✓ | ✓ | ✓ | ✓ | |
 
 See [full comparison →](docs/overview/comparisons.md)
 
@@ -295,7 +287,7 @@ See [full comparison →](docs/overview/comparisons.md)
 
 ## Testing
 
-GitSetu is tested with **44 automated test suites** (including clean-room npm E2E and adversarial stress suites) and a **31-phase empirical sandbox audit** (107 checks) that runs inside an isolated Windows Sandbox VM.
+GitSetu has automated unit, integration, tamper, concurrency, packaging, and platform tests. Run the complete local suite with `bash tests/run_all.sh`; the Windows Sandbox audit is an additional isolated environment and is not a substitute for the regression suite.
 
 ```bash
 # Run unit & E2E tests

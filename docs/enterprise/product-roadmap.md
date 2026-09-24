@@ -22,7 +22,7 @@ Our target is a flawless **100/100**. A developer using GitSetu should never hav
 
 ## Foundation: Completed in Baseline GA Release
 
-The following architectural hardening milestones established our enterprise baseline, backed by 36 automated regression and empirical test suites (250+ assertions) and a 31-phase live Windows Sandbox empirical audit (107/107 checks passed):
+The following architectural hardening milestones establish the current verified release-candidate baseline, backed by automated regression, adversarial, packaging, and platform checks plus an isolated Windows Sandbox audit:
 - **Zero-Trust Identity Guard**: Hard pre-commit intercepts preventing dual-state leaks with longest-prefix directory matching, Windows/macOS case-insensitivity, and dynamic email re-reading.
 - **Single Source of Truth (SSOT)**: Dynamic resolution via isolated `.gitconfig` files without registry polling.
 - **Native Windows PowerShell Distribution**: Shipped native `install.ps1` & `uninstall.ps1` installers, automated Command Prompt (`gitsetu.cmd`) and PowerShell (`gitsetu.ps1`) shims in `%LOCALAPPDATA%\gitsetu\bin`, and User `PATH` environment management.
@@ -37,12 +37,17 @@ The following architectural hardening milestones established our enterprise base
 - **POSIX Concurrency Hardening**: Atomic `mv` operations eliminating Time-of-Check to Time-of-Use race conditions.
 - **Bash 3.2 Array Panic Prevention**: Native C-style POSIX loop structures replacing fragile subshell bounds.
 - **Path Injection Prevention**: Strict newline sanitization preventing INI boundary corruption.
-- **Encrypted State Export**: AES-256 OpenSSL vault packaging (`gitsetu backup` / `gitsetu restore`).
-- **Empirical Sandbox Verification Matrix**: 44 automated regression test suites and isolated Windows Sandbox test harness (44/44 suites passing 100% green, 107/107 sandbox audit checks passed).
+- **Authenticated State Export**: Versioned authenticated v2 vault packaging (`gitsetu backup` / `gitsetu restore`) with staging, tamper checks, and rollback. Older vault formats are rejected.
+- **Empirical Sandbox Verification Matrix**: The Windows Sandbox audit supplements the local regression suite; results must be recorded from the tested revision rather than assumed from a historical count.
 
 ---
 
 ## Phase 1: Zero-Friction Onboarding & Universal Distribution
+
+> **Release-candidate preparation:** v1.1.0 has passed the local verification
+> gates, but it is not publicly released. None of the package-manager or
+> extension commands below are available until an intentional release
+> publishes pinned artifacts and manifests.
 
 **Goal:** Eliminate all adoption friction by ensuring GitSetu is instantly discoverable, installable, and trusted across all developer environments without requiring git clones or elevated permissions.
 
@@ -50,16 +55,16 @@ The following architectural hardening milestones established our enterprise base
   - Release an automated build step that inlines all `lib/*.sh` modules into a single, self-contained executable script.
   - Allows direct download without cloning the git repository:
     ```bash
-    curl -sL https://gitsetu.bhaskarjha.dev/bin/gitsetu -o ~/.local/bin/gitsetu && chmod +x ~/.local/bin/gitsetu
+    # Download a verified, immutable release artifact and verify its checksum/signature first.
     ```
-- **Homebrew Tap & Core Ingestion:** Launch the official `bhaskarjha-dev/homebrew-tap` repository and initiate submission to `homebrew/core` (`brew install gitsetu`).
+- **Homebrew Tap & Core Ingestion:** Launch the official `bhaskarjha-dev/homebrew-tap` repository and initiate submission to `homebrew/core` after an intentional release.
 - **Dedicated Community Package Managers:**
   - **Windows Scoop:** Publish `packaging/scoop/gitsetu.json` to official Scoop buckets (Main / Extras).
-  - **Microsoft Winget:** Submit the official `BhaskarJha.GitSetu` manifest to Microsoft's `winget-pkgs` repository (`winget install BhaskarJha.GitSetu`).
-  - **Arch Linux AUR:** Publish official `PKGBUILD` to `aur.archlinux.org/gitsetu.git` (`yay -S gitsetu`).
-  - **Nix / Nixpkgs Flake:** Introduce a standard `flake.nix` in the repository root for reproducible, zero-dependency NixOS execution (`nix run github:bhaskarjha-dev/gitsetu`).
+  - **Microsoft Winget:** Submit the official `BhaskarJha.GitSetu` manifest to Microsoft's `winget-pkgs` repository after the release metadata is pinned.
+  - **Arch Linux AUR:** Publish an official `PKGBUILD` only after the release source and digest are pinned.
+  - **Nix / Nixpkgs Flake:** Maintain a pinned `flake.nix` in the repository root for reproducible, zero-dependency NixOS execution from a reviewed checkout.
   - **npm / npx Wrapper:** Publish a thin npm binary wrapper (`npx gitsetu setup` / `npm i -g gitsetu`) for JavaScript and fullstack web developers.
-- **GitHub CLI Extension (`gh gitsetu`):** Publish `gh extension install bhaskarjha-dev/gh-gitsetu`, allowing developers working inside GitHub CLI workflows to run `gh setu` / `gh gitsetu setup` natively.
+- **GitHub CLI Extensions (`gh gitsetu` / `gh setu`):** Publish separate `gh-gitsetu` and `gh-setu` extension repositories, allowing developers working inside GitHub CLI workflows to run either command natively.
 - **Smart Zero-Prompt Auto-Discovery (`gitsetu init --auto`):** Expand the discovery engine in `lib/discovery.sh` into an instant, non-interactive one-shot setup command that auto-detects existing Git identities, SSH keys, and workspace folders (`~/work`, `~/personal`), applying a recommended zero-trust configuration in under 1 second.
 - **Sponsorship & Governance:** Establish a formal Technical Steering Committee and define open-source contribution guidelines to guarantee long-term operational sustainability.
 

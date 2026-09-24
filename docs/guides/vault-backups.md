@@ -1,52 +1,59 @@
 # Vault Backups & Restoration
 
-**Bare-metal state extraction via OpenSSL encrypted archival bounds.**
+GitSetu can export its managed configuration and private SSH keys as a private, authenticated vault for moving a setup between machines.
 
-Software developers cycle hardware instances regularly. Provisioning completely new cryptographic identity materials across entirely new OS bounds and subsequently registering those newly generated public keys across disparate upstream Git hosting providers can introduce hours of critical downtime.
+> [!IMPORTANT]
+> Vaults created by the current implementation use the v2 authenticated format. The old unauthenticated/CBC format is rejected. There is no migration or legacy mode; create a new v2 vault from the current state.
 
-GitSetu resolves this operational friction natively by providing high-speed encrypted vault extraction tools to migrate your complete structural state securely between machines.
+## What is included
 
----
+A vault contains only GitSetu-managed state:
 
-## Vault Compilation (Backup)
+- the versioned `profiles.conf` registry;
+- generated profile `*.gitconfig` files;
+- GitSetu's managed SSH configuration;
+- private/public key pairs referenced by the managed profiles.
 
-To generate an atomic, portable extraction payload of your current configuration baseline, trigger the explicit backup command:
+Files outside those managed roots are not collected. Keep the vault password separate from the vault and store the resulting file on protected offline or encrypted storage.
+
+## Create a vault
 
 ```bash
 gitsetu backup
 ```
 
-### Extracted Architecture Scope
-The internal snapshot utility perfectly bundles the following active path domains:
-- **Master Registry Maps:** Core configuration indexing (`~/.config/gitsetu/profiles.conf`).
-- **Profile Layout Directives:** All dynamically mapped individual configuration override bounds (`~/.config/gitsetu/profiles/*.gitconfig`).
-- **Zero-Trust Host Directives:** The active OpenSSH network translation paths (`~/.config/gitsetu/profiles/ssh_config`).
-- **Private Cryptographic Keys:** All actively generated native software key bounds linked exclusively to existing GitSetu profile environments (`~/.ssh/id_*`).
+GitSetu creates the archive in a private temporary directory, authenticates and encrypts it, and installs the final file atomically. The command asks for a new password twice. Passwords are not written to a sidecar file or passed to OpenSSL in command-line arguments.
 
-### OpenSSL AES-256 Cryptography
-Because the generated compressed target payload natively includes highly sensitive cryptographic private key components, GitSetu mandates strict encryption protocols. 
+The output name is similar to:
 
-The backup routine natively leverages standard `openssl` binaries accessible on your runtime OS, encrypting the compiled target `tar` payload synchronously utilizing robust **AES-256-CBC** cryptographic blocks keyed heavily via standard `-pbkdf2` derivation loops.
+```text
+gitsetu_vault_YYYYMMDD_HHMMSS.tar.gz.enc
+```
 
 > [!CAUTION]
-> **Data Loss Warning:** During the initial execution phase, GitSetu securely prompts you to declare a master encryption password string. If you forget or lose this precise passphrase, your encrypted target vault file remains mathematically irretrievable. The structural data inside the vault cannot be extracted.
+> There is no recovery path for a lost or incorrect vault password. Verify that the password manager entry is correct before deleting the source machine.
 
-Upon successful completion, execution terminates cleanly yielding a highly portable encoded archive block named structurally as `gitsetu_vault_YYYYMMDD_HHMMSS.tar.gz.enc`. Store this block heavily isolated inside protected password managers, heavily constrained cloud bounds, or offline cold storage keys.
+## Restore a vault
 
----
-
-## Architecture Reconstruction (Restore)
-
-After migrating your terminal execution environments to new bare-metal targets or initializing fresh OS bounds, simply initialize GitSetu strictly via the baseline [Installation](../getting-started/installation.md) pathway first.
-
-Instead of calling the standard interactive setup wizard, explicitly execute the targeted payload reconstruction subcommand passing your target encrypted vault file payload:
+Initialize GitSetu on the target machine, then run:
 
 ```bash
 gitsetu restore /path/to/gitsetu_vault_YYYYMMDD_HHMMSS.tar.gz.enc
 ```
 
-### The Reconstruction Process
-Execution requires providing your pre-declared encryption passphrase string inline. 
-Upon successful decryption validation, GitSetu dynamically decomposes the `tar` payload structure into memory, accurately translating key path attributes directly into the local target `~/.ssh/` filesystem structure using aggressively constrained file permissions. The internal compiler reconstructs your global `~/.gitconfig` conditional routing mappings and injects the baseline OpenSSH `Include` directive flawlessly.
+Restore follows a fail-closed sequence:
 
-The entire environment reconstruction operation completes seamlessly in single-digit seconds, fully re-establishing your multi-profile capability pipeline instantaneously.
+1. Verify the v2 envelope and authentication tag before decrypting state.
+2. Reject wrong passwords, tampering, truncated archives, unsafe archive members, and unexpected file types.
+3. Extract and validate the complete payload in a private staging directory.
+4. Acquire the mutation lock, install the validated state transactionally, and roll back if a required step fails.
+
+No partial restore is treated as a successful restore. A failed operation leaves the previous state recoverable from the pre-restore safety backup and the transaction's cleanup records.
+
+## Format and compatibility
+
+The v2 envelope contains a version marker, KDF parameters, random salts/IV material, ciphertext, and an authentication tag over the complete envelope and ciphertext. The implementation uses the OpenSSL primitives available on supported systems and separates encryption and authentication keys. Unsupported or older vault formats are rejected rather than silently accepted.
+
+The profile registry is also versioned and strictly escaped. Old colon-delimited registries are rejected; there is no compatibility reader or transitional flag.
+
+On Git for Windows, the npm launcher canonicalizes equivalent MSYS (`/c/...`) and Windows (`C:/...`) representations of `HOME`, `XDG_CONFIG_HOME`, and managed state paths before creating or restoring a vault. The manifest still records a single canonical source home, and paths outside the managed home boundary are rejected rather than silently remapped.

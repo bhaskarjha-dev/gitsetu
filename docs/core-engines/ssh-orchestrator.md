@@ -1,10 +1,10 @@
 # SSH Orchestrator Engine
 
-**Automated multi-key generation, native agent pre-loading, and zero-trust configuration isolation.**
+**Automated multi-key generation, bounded agent registration, and isolated managed SSH configuration.**
 
 Managing multiple SSH keys manually is highly error-prone. Standard workflows require generating distinct keys using specific CLI arguments, tracking permissions, and manually modifying host blocks in your global `~/.ssh/config` file.
 
-GitSetu completely automates this lifecycle, bridging robust cryptographic security with absolute layout isolation.
+GitSetu automates the managed portions of this lifecycle while leaving unrelated user configuration and explicit hardware/network choices to the operator.
 
 ---
 
@@ -51,7 +51,7 @@ Host github.com-work
     IdentitiesOnly yes
 ```
 
-This ensures your primary SSH configuration remains completely untouched, allowing clean profile teardowns and safe multi-environment usage.
+The generated file is managed separately; unrelated host blocks remain outside GitSetu's include. Review OpenSSH's effective configuration because first-use host-key trust and Port 443 routing require explicit consent.
 
 ### Safe SSH Key Path Quoting
 When SSH key paths contain spaces (e.g. `C:/Users/First Last/.ssh/...` or `~/My Keys/id_ed25519`), OpenSSH CLI commands can suffer from argument splitting. GitSetu automatically wraps key paths in escaped double-quotes within `core.sshCommand = ssh -i "..."` and when exporting `GIT_SSH_COMMAND="ssh -i \"...\""` in `gitsetu run`, preventing command parsing errors across all platforms.

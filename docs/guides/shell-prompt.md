@@ -1,6 +1,6 @@
 # Shell Prompt Integration
 
-**Sub-millisecond runtime execution surfacing your active Git identity directly inside your terminal shell.**
+**Low-overhead shell integration surfacing your active Git identity inside your terminal prompt.**
 
 Committing code using the wrong author context often occurs because developers lack instant visual feedback regarding which identity profile owns their current terminal workspace directory.
 
@@ -12,12 +12,11 @@ GitSetu includes a specialized, high-speed **Prompt Engine** designed specifical
 
 Rendering logic inside terminal prompt structures executes every single time you hit `Enter`. If a prompt integration spawns external binary runtimes, executes multi-stage subprocesses, or queries network layers, shell interactivity grinds to a halt.
 
-GitSetu's `prompt` subcommand is engineered with absolute performance constraints:
-- **Pure Native Bash Parsing:** Scans pre-compiled configuration routing links natively using direct memory offsets.
-- **Zero Subshell Spawning:** Bypasses costly `fork()` syscalls entirely during state reads.
-- **Sub-2ms Execution:** Total context identification completes consistently in **`< 2 milliseconds`**, keeping your command-line workflow blisteringly responsive.
-- **Longest-Prefix Match Routing:** Seamlessly handles nested folders (e.g. `~/work/clients/acme/` vs `~/work/`) by prioritizing the most specific directory match.
-- **Cross-Platform Case-Insensitivity:** Automatically normalizes path casing on Windows (NTFS) and macOS to prevent prompt desync between uppercase and lowercase path representations.
+GitSetu's `prompt` subcommand avoids loading the full command modules and uses strict v2 registry parsing, but actual latency depends on the shell, filesystem, and path length. Measure it in the target environment rather than relying on a fixed latency claim.
+- **Strict v2 parsing:** Rejects malformed registries instead of guessing.
+- **Longest-prefix matching:** Resolves nested profile roots deterministically.
+- **Cross-platform paths:** Handles platform-aware drive-letter and case semantics.
+- **No network access:** Prompt evaluation is local and does not contact a provider.
 
 ---
 

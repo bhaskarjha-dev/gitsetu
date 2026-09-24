@@ -1,10 +1,8 @@
 # Introduction to GitSetu
 
-**The enterprise Zero-Dependency orchestration engine for dynamic Git identity and credential isolation.**
+**The Bash-based orchestration engine for directory-scoped Git identity and credential isolation.**
 
-GitSetu completely reimagines developer identity security. Operating purely as a localized configuration compiler, it completely eliminates the human error associated with managing multiple identities across isolated workspaces, enterprise repositories, and open-source contributions. 
-
-By unifying automated multi-key generation, native credential helper integration, and hardware signature validation into a single workflow, GitSetu establishes an impenetrable Zero-Trust boundary around your local source code environments.
+GitSetu reduces the operational risk of managing multiple identities across workspaces, repositories, and organizations. It compiles Git/OpenSSH configuration and provides bounded diagnostics; it is not a security boundary against a compromised same-user process.
 
 ---
 
@@ -27,15 +25,13 @@ Modern developer environments are highly fragmented. Context-switching between d
 ### Indistinguishable from Magic: The Native Clone
 Competitor tools require developers to memorize custom SSH host aliases (e.g., `git clone git@github-work:org/repo.git`). GitSetu rejects this sub-optimal design pattern. 
 
-By injecting customized `core.sshCommand` configurations conditionally during path evaluation, GitSetu natively intercepts connections *before* outbound sockets initialize. Developers clone, pull, and push normally (`git clone git@github.com:org/repo.git`), while GitSetu silently attaches the exact keypair required by the target directory.
+By generating conditional `core.sshCommand` and OpenSSH include rules, GitSetu lets Git and OpenSSH select the profile key for a managed directory. The operating systems and credential stores still enforce their own security controls.
 
-### Absolute Zero Dependencies
-Enterprise compliance frameworks frequently prohibit downloading untrusted runtime dependencies onto production machines or secure CI/CD runners. 
+### Minimal Core Dependencies
+GitSetu's primary implementation is plain Bash 3.2-compatible source and relies on standard Git/OpenSSH tools. Optional native credential stores and OpenSSL are detected explicitly; unavailable optional features fail clearly rather than silently downgrading.
 
-GitSetu is written purely in hardened, POSIX-compliant **Bash 3.2**. It requires no Go binaries, no Node runtime engines, no Python virtual environments, and no Rust toolchains. It relies strictly on `bash`, `git`, and `ssh-keygen`—core standard binaries guaranteed to exist natively on every developer workstation and CI environment.
-
-### Fail-Closed Zero-Trust Guard Rails
-GitSetu operates on the principle of maximum defensiveness. With options like `useConfigOnly = true` baked into its managed layout protocols, Git natively raises fatal execution errors inside unmapped folders, ensuring code cannot leave your machine unless an authenticated identity profile has explicitly claimed authority over that directory path.
+### Guard Rails
+Managed repositories fail closed when their expected identity is unresolved or divergent. Unmanaged repositories fail open for the GitSetu identity check by policy; Git's own `useConfigOnly` and repository configuration still determine whether a commit has an identity.
 
 ---
 

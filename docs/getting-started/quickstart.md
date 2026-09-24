@@ -45,7 +45,7 @@ If you rely on Personal Access Tokens (PATs) instead of SSH keys, you must secur
    ```bash
    printf "protocol=https\nhost=github.com\nusername=YOUR_USERNAME\npassword=YOUR_PAT\n" | gitsetu credential store
    ```
-2. On Windows, GitSetu integrates directly with Windows Credential Manager (`credential.helper = manager` via DPAPI/GCM). On macOS and Linux, it securely delegates to the OS keychain or isolated fallback storage (`~/.config/gitsetu/.tokens` with `chmod 600`).
+2. On Windows, GitSetu integrates directly with Windows Credential Manager (`credential.helper = manager` via DPAPI/GCM). On macOS and Linux, native keychains are preferred; a user may explicitly select the zero-dependency file backend, which stores a warned-about plaintext `~/.config/gitsetu/.tokens` file with `chmod 600` and does not provide encryption.
 
 ---
 
@@ -64,7 +64,7 @@ $ gitsetu status
 
 ## 4. The Magic: Just `cd` and work
 
-GitSetu does the rest. It natively intercepts directory changes and switches your Git email, SSH key, and Credentials completely transparently. **You do not need to run any commands when switching projects.**
+GitSetu generates Git's conditional configuration, so Git evaluates the active identity when you run commands in a managed directory. There is no background daemon; review `gitsetu status` when you need to inspect the selected profile.
 
 ```text
 $ cd ~/work/my-api && git commit -m "fix: auth bug"
@@ -72,4 +72,4 @@ Author: Aditya Kumar <dev@company.com> ← correct, automatically
 ```
 
 > [!TIP]
-> **Global Fallback:** By default, GitSetu enforces `useConfigOnly = true` — commits outside a mapped directory are blocked to prevent identity leakage. If you register a profile with an unmapped directory (`""`), GitSetu provisions it as your `[Global Fallback]` identity before conditional `[includeIf]` rules, ensuring standard commits succeed across unmapped paths while preserving strict directory isolation.
+> **Global fallback:** A configured global profile can provide an identity for otherwise unmapped paths. The pre-commit guard itself treats repositories outside all managed profiles as unmanaged and fails open for its identity check, while malformed managed state fails closed. Keep Git's own `useConfigOnly` behavior in mind when diagnosing a blocked commit.

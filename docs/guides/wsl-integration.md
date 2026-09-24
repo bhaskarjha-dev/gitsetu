@@ -8,10 +8,10 @@ Because GitSetu is compiled strictly utilizing pure, POSIX-compliant Bash 3.2, i
 
 ## Installation Pathways
 
-Inside your WSL terminal execution layer, initialize the standard Linux bootstrapping script exactly as you would on bare-metal hardware:
+Inside WSL, use a reviewed checkout or a verified release artifact. Do not pipe a mutable remote URL into the shell:
 
 ```bash
-curl -sL https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.sh | bash
+bash install.sh
 ```
 
 ---
@@ -31,13 +31,17 @@ Because GitSetu compiles paths directly into Git's native `includeIf` conditiona
 
 The primary operational complexity introduced by headless WSL containers centers around mapping HTTPS Personal Access Tokens (PATs) securely, as standard Linux secret layers (e.g., `secret-tool`) typically remain unavailable in CLI-only runtimes.
 
-### Native Vault Fallbacks
-When you store an active profile token inside a headless WSL instance lacking D-Bus secret integrations (via `gitsetu credential store` or `gitsetu setup`), GitSetu dynamically switches execution modes.
+### Explicit plaintext fallback
+When a headless WSL instance has no D-Bus Secret Service, native credential operations fail by default. A user can explicitly select the zero-dependency file backend:
 
-It automatically provisions an isolated, restricted permissions payload vault file located directly at `~/.config/gitsetu/.tokens`. The directory and file enforce strict POSIX permissions (`700` directory, `600` file) to guarantee containment.
+```bash
+GITSETU_CREDENTIAL_BACKEND=file gitsetu credential store
+```
+
+The resulting `~/.config/gitsetu/.tokens` file is plaintext, with a `0700` directory and `0600` file. It is permission-restricted but not encrypted and cannot protect a token from malware or another process running as the same user.
 
 ### Microsoft Git Credential Manager (GCM) Interoperability
 If your local environment utilizes Microsoft's cross-platform [Git Credential Manager](https://github.com/git-ecosystem/git-credential-manager) to securely proxy WSL Git operations back into your native Windows Credential Store, GitSetu respects the configuration gracefully.
 
 > [!WARNING]
-> **GCM Identity Collisions:** Standard GCM pipelines struggle fundamentally to partition tokens bound to identical overlapping base hostnames (e.g., mapping distinct personal and corporate tokens concurrently to `github.com`). If you absolutely require Port 443 HTTPS multi-tenant cloning capabilities, we explicitly recommend utilizing GitSetu's native built-in fallback vault architecture.
+> **GCM Identity Collisions:** Standard GCM pipelines may not partition tokens bound to identical overlapping hostnames. GitSetu's namespaced helper is the supported way to keep profile records separate; do not assume a generic GCM query can provide that isolation.

@@ -13,6 +13,8 @@ A step-by-step integration test checklist for verifying that every GitSetu featu
 - [ ] Confirm git version: `git --version`
 - [ ] Confirm ssh-keygen exists: `which ssh-keygen`
 
+> **Format note:** The current profile registry and vault format are v2-only. Do not use old colon-delimited registries or unauthenticated/CBC vaults as test fixtures; they must be rejected.
+
 ---
 
 ## 1. Installation
@@ -20,8 +22,9 @@ A step-by-step integration test checklist for verifying that every GitSetu featu
 > Verifies: README "Install" section
 
 ### macOS & Linux (POSIX Bash)
+From a reviewed checkout or verified release artifact:
 ```bash
-curl -sL https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.sh | bash
+bash install.sh
 ```
 
 - [ ] Installer completes without errors
@@ -30,14 +33,15 @@ curl -sL https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.s
 - [ ] `git setu` alias works: `git setu --help`
 
 ### Windows (PowerShell)
+From a reviewed checkout or verified release artifact:
 ```powershell
-irm https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.ps1 | iex
+powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
 - [ ] Installer completes without errors
 - [ ] `%LOCALAPPDATA%\gitsetu\share` directory exists
 - [ ] `gitsetu.cmd` and `gitsetu.ps1` exist in `%LOCALAPPDATA%\gitsetu\bin`
-- [ ] `gitsetu --version` outputs `gitsetu v1.1.0` in PowerShell, CMD, and Windows Terminal
+- [ ] `gitsetu --version` reports the reviewed development/release channel in PowerShell, CMD, and Windows Terminal
 - [ ] `git setu --version` alias works identically
 
 ---
@@ -61,7 +65,7 @@ gitsetu setup
 - [ ] Profile gitconfig exists: `cat ~/.config/gitsetu/profiles/personal.gitconfig`
 - [ ] SSH config has Include directive: `grep 'Include' ~/.ssh/config`
 - [ ] Isolated SSH config has host alias: `grep -A3 'Host github-personal' ~/.config/gitsetu/profiles/ssh_config`
-- [ ] Registry file exists: `cat ~/.config/gitsetu/profiles.conf`
+- [ ] Registry file exists and starts with the v2 header: `head -n 1 ~/.config/gitsetu/profiles.conf`
 
 ---
 
@@ -324,7 +328,7 @@ gitsetu teardown --deep
 - [ ] Local repo identity overrides also cleaned
 
 ```bash
-curl -sL https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/uninstall.sh | bash
+bash uninstall.sh
 ```
 
 - [ ] `~/.local/share/gitsetu/` removed
@@ -362,8 +366,8 @@ curl -sL https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/uninstall
 
 After all manual tests pass:
 
-- [ ] `make test` (or `bash tests/run_all.sh`) — all 44 regression test suites pass 100% green
-- [ ] Windows Sandbox verification — `.\sandbox\launch_sandbox.ps1` (or `launch_sandbox.bat`) boots disposable VM, runs all 44 test suites, live multi-profile scenarios, and 31-phase empirical audit (107 checks)
+- [ ] `make test` (or `bash tests/run_all.sh`) — the complete available regression suite passes
+- [ ] Windows Sandbox verification — `.\sandbox\launch_sandbox.ps1` (or `launch_sandbox.bat`) boots a disposable VM and runs the current multi-profile and audit checks
 - [ ] `make lint` — ShellCheck clean
 - [ ] CHANGELOG.md updated
 - [ ] Version bumped in `gitsetu` (if applicable)

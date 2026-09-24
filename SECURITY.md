@@ -2,25 +2,30 @@
 
 ## Supported Versions
 
-Currently, only the latest `main` branch and the latest official release are receiving security updates.
+The v1.1.0 line is a **verified release candidate and is not yet a public release**. Local candidate artifacts have been built and checked, but the canonical release metadata remains non-public until an intentional release process creates a clean tag, signed artifacts, and published provenance. The latest official release remains the release documented by its published tag.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| >= 1.1.0| :white_check_mark: |
-| < 1.1.0 | :x:                |
+“Release candidate” describes the verified local channel, not a public production claim: the current tree has passed the local regression, adversarial, packaging, and platform gates, but it is not a public production artifact until an intentional release process publishes and signs it.
+
+| Version/channel | Security handling |
+| --------------- | ----------------- |
+| v1.1.x development branch | Tracked and tested on the development branch; not a published release |
+| Latest official release | Supported according to the maintainers' release policy |
+| Older development snapshots | Not supported |
+
+Do not treat a local development version, mutable branch URL, or unreleased manifest as a release trust root.
 
 ## Reporting a Vulnerability
 
-Security is the absolute highest priority for GitSetu. As an identity-bootstrapping and credential-management tool, we treat all security flaws as critical emergencies.
+Security issues involving identity routing, private keys, credential helpers, vaults, installers, or update provenance should be reported privately. Do not open a public issue containing exploit details or secrets.
 
-**DO NOT** report security vulnerabilities through public GitHub issues. 
+Use GitHub Security Advisories for the repository, or contact `security@bhaskarjha.dev`.
 
-Please report all security vulnerabilities privately to **security@bhaskarjha.dev** or through [GitHub Security Advisories](https://github.com/bhaskarjha-dev/gitsetu/security/advisories/new).
+Please include:
 
-### What to include in your report:
-- A description of the vulnerability.
-- Steps to reproduce the issue (including OS, Bash version, and environment details).
-- Any potential impact on users (e.g., token leakage, SSH key exposure, privilege escalation).
+- affected version/channel and commit;
+- operating system, Bash version, Git version, and relevant package manager;
+- minimal reproduction steps;
+- expected and observed authorization, identity, or confidentiality impact;
+- whether a real token or private key was exposed (redact it; never send the secret itself).
 
-### Response SLA
-Maintainers will actively acknowledge your report within **48 hours**, and you will receive regular updates on our progress towards a fix. We will work with you to responsibly disclose the vulnerability once a patch has been shipped.
+Maintainers will acknowledge reports within 48 hours when possible and coordinate disclosure after a verified fix is available.

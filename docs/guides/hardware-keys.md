@@ -1,8 +1,8 @@
 # Hardware Keys (FIDO2 / YubiKey)
 
-**Bootstrapping highly secure, tamper-resistant SSH authentication keys backed directly by hardware tokens.**
+**Provisioning FIDO2-backed SSH keys with explicit hardware-presence requirements.**
 
-GitSetu natively supports provisioning FIDO2-backed resident SSH keys (`ed25519-sk`). This operational paradigm ensures that private cryptographic signatures are generated and held strictly inside external physical security keys (e.g., YubiKey 5 Series), completely protecting key material from extraction even if your local host filesystem is compromised.
+GitSetu supports resident `ed25519-sk` keys. The hardware token performs the private-key operation and OpenSSH requests user presence, but users must still protect the host, token, and recovery paths; no client-side tool can guarantee protection from a compromised system.
 
 ---
 
@@ -46,7 +46,7 @@ $ git push origin main
 Confirm user presence for key ED25519-SK...
 ```
 
-Your terminal session pauses automatically. You must **physically touch the hardware key** to complete the handshake negotiation. If an adversarial actor steals your laptop or intercepts remote terminal environments, they remain structurally incapable of pushing commits because the cryptographic operation requires explicit physical proximity verification.
+Your terminal session pauses while OpenSSH waits for the hardware token. A stolen laptop alone is not sufficient to use the resident key, but an attacker with the token, user presence, or a compromised host may still succeed. If hardware enrollment fails, GitSetu never silently substitutes a software key; any fallback requires an explicit user choice.
 
 ---
 

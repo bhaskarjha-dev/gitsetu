@@ -1,57 +1,54 @@
 # Enterprise Security & Privacy
 
-**Uncompromising Zero-Trust safeguards built to pass rigorous organizational and CISO audits seamlessly.**
+GitSetu manages private SSH keys, Git identity configuration, and HTTPS credential routing. It does not include telemetry, analytics, or crash-reporting services. Its source is plain Bash and can be audited before deployment.
 
-GitSetu manages highly sensitive cryptographic boundaries, orchestrating private SSH keys, executing HTTPS credential injections, and modifying global environment states. Operating within these domains requires a structurally paranoid architectural posture. 
+## Network boundary
 
-GitSetu is deliberately engineered to be transparent, offline, and functionally immutable.
+GitSetu does not "phone home." Network access is limited to operations that explicitly perform remote work, including first-use discovery/SSH verification and an optional authenticated GitHub CLI upload requested by the user. The development updater refuses remote branch fetches and hard resets. Dry-run and purely local validation do not perform network requests. Operators who require an offline workflow should disable or avoid explicit network commands and should not install the optional `gh` integration unless it is needed.
 
----
+## SSH configuration and quoting
 
-## 1. Absolute Zero Telemetry
+Managed OpenSSH rules are written to GitSetu's included configuration file rather than by rewriting unrelated user host blocks. Paths and tokens are quoted for the OpenSSH config parser and for the runtime `ssh` command. Existing user settings remain outside the managed block.
 
-GitSetu does not "phone home."
-- **Zero Analytics:** The codebase contains no telemetry payloads, usage trackers, or crash reporting pipelines.
-- **Zero External Runtimes:** Execution requires no cloud infrastructure or backend synchronization servers.
-- **Strict Network Boundary:** The *only* network outbound call GitSetu natively invokes is explicitly user-triggered via the `gitsetu update` command, which fetches raw verified source code dynamically over standard TLS/HTTPS bounds natively from the verified GitHub repository.
+## Atomic writes and locks
 
-## 2. Zero-Trust SSH Isolation & Safe Command Quoting
+State files are prepared in private temporary files and installed with atomic replacement where the platform permits it. A directory lock with an owner token, process liveness checks, and a bounded wait protects normal concurrent GitSetu operations.
 
-Standard configuration utilities often manipulate global `~/.ssh/config` structures via aggressive regex replacements, risking catastrophic corruption of enterprise host routing blocks.
+The lock is an integrity aid, not a kernel security boundary. A malicious process running as the same user can still modify files or bypass client-side checks; use filesystem permissions, operating-system isolation, and repository review controls where stronger guarantees are required.
 
-GitSetu strictly isolates operations using an **OpenSSH Include Pivot**. It injects a single `Include ~/.config/gitsetu/profiles/ssh_config` directive into your global configuration. All dynamically generated key aliases, Host targets, and isolation flags (`IdentitiesOnly yes`) are tightly sandboxed within localized files. If GitSetu is purged, your global SSH config remains mathematically uncorrupted.
+## Credential storage
 
-Furthermore, GitSetu prevents CLI argument splitting by strictly wrapping SSH key paths containing whitespace characters in escaped double-quotes within `core.sshCommand` and runtime `GIT_SSH_COMMAND` exports.
+Native credential stores are preferred:
 
-## 3. Atomic Concurrency Integrity
+- macOS Keychain (`security`);
+- Windows Git Credential Manager / Windows Credential Manager;
+- Linux Secret Service (`secret-tool`).
 
-To support highly concurrent headless CI/CD runners or rapid execution within multiplexed terminal sessions (`tmux`/`zellij`), GitSetu protects all filesystem state changes utilizing atomic POSIX primitives.
+The credential broker namespaces records by profile, host, and path so one profile cannot retrieve another profile's token by accident.
 
-- **Write Isolation:** Mutating global blocks writes heavily to `$TMPDIR` isolation bounds before triggering single-cycle `mv` atomic swaps.
-- **State Locks:** Cross-process conflicts are entirely mitigated using localized `mkdir` execution locks (`profiles.lock`) with PID inspection and automatic stale-lock eviction, strictly guaranteeing that simultaneous commands across parallel processes never corrupt state pipelines.
+Some minimal or headless Linux installations have no native Secret Service daemon. For those systems, GitSetu supports an **explicit zero-dependency plaintext fallback** at `~/.config/gitsetu/.tokens`. It is not encrypted, is not a compatibility mode, and must be treated as sensitive as the token itself:
 
-## 4. Protected Credential Storage
+- the file is created with mode `0600` and its directory with mode `0700`;
+- malformed, symlinked, or incorrectly permissioned files are rejected;
+- every operation using the fallback emits a clear warning;
+- native/GCM storage remains the default and preferred path.
 
-GitSetu enforces a strict policy against storing authentication payloads in plain text.
-The native **Credential Broker Engine** routes Personal Access Tokens (PATs) securely directly into your operating system's native encrypted security enclaves:
-- **macOS:** Apple Keychain Access (`security add-generic-password`).
-- **Windows:** Microsoft Git Credential Manager (GCM) backed by Windows DPAPI / Windows Credential Manager (`credential.helper = manager`).
-- **Linux:** Native Secret Service DBus API (`secret-tool`).
-- **Fallback Storage:** When native keychains are unavailable, tokens are written to an isolated vault file at `~/.config/gitsetu/.tokens` enforced with strict `chmod 600` permissions (readable only by the file owner).
+A plaintext fallback cannot protect a token from malware or another process already running as the same operating-system user. Use a native keychain whenever possible.
 
-## 5. Fail-Closed Identity Guard & Orphaned Config Pruning
+## Identity guard policy
 
-- **Pre-Commit Enforcement:** The global pre-commit hook acts as a fail-closed interceptor, halting commits with an instant fatal abort if the staged commit author email diverges from the directory-scoped profile email. It dynamically resolves nested directory trees via longest-prefix matching and re-reads live profile email definitions to prevent configuration desync.
-- **Orphan Pruning:** Removing a profile (`gitsetu remove <label>`) cleanly unmounts conditional `includeIf` directives from `~/.gitconfig`, prunes corresponding `.gitconfig` files from `~/.config/gitsetu/profiles/`, and purges orphaned configuration remnants.
+The pre-commit guard is installed in the generated hooks directory and preserves an existing project hook when the identity check succeeds.
 
-## 6. End-to-End Cryptographic Vaults
+- A repository outside every managed profile is **unmanaged**: the identity check fails open and the repository's ordinary hooks continue.
+- A repository selected by a managed profile is **managed**: an unresolved or divergent identity fails closed.
+- If managed state is malformed or cannot be resolved, the guard fails closed rather than guessing.
 
-When operators export GitSetu state architecture via the `gitsetu backup` command, all compiled targets—and more critically, the private software SSH keys—are aggressively bundled into a compressed target payload.
+This is a client-side identity guard, not a replacement for server-side controls, signed commits, or review policy.
 
-GitSetu mandates that this payload is encrypted instantaneously using the host system's native `openssl` binaries. It utilizes **AES-256-CBC** cryptography scaled via heavy `-pbkdf2` derivation loops, rendering the offline vault mathematically secure against brute-force extraction attempts.
+## Authenticated vaults
 
-## 7. Transparent Auditable Execution
+`gitsetu backup` creates a versioned authenticated v2 vault containing managed configuration and referenced keys. The v2 format provides confidentiality and integrity/authentication, uses private staging, validates the complete payload before mutation, and rolls back failed restores. Older unauthenticated/CBC vaults and the old profile-registry format are rejected; no migration or legacy flag is provided.
 
-Pre-compiled binary toolchains obscure their execution paths, forcing security analysts to rely on trust or reverse-engineering toolkits.
+## Transparent execution
 
-Because GitSetu is compiled entirely in pure, un-obfuscated POSIX **Bash 3.2**, organizational security engineers can transparently audit the entire operational chain simply by reading the plain-text shell source payload prior to deployment.
+GitSetu is plain Bash 3.2-compatible source rather than an opaque binary. Review the shell modules, generated bundle, package provenance, and deployment permissions before using it in a high-trust environment.
