@@ -1,5 +1,6 @@
 # sandbox/launch_sandbox.ps1 — Windows Sandbox Launcher for GitSetu Test Harness
 param(
+    [string]$ResultsDir = "",
     [switch]$NoPause
 )
 
@@ -39,10 +40,18 @@ if (-not (Test-Path "$gitHostDir\bin\bash.exe")) {
 }
 
 # 3. Destination results directory
-$resultsDir = [System.IO.Path]::GetFullPath((Join-Path $rootDir "..\sandbox_results"))
+if (-not $ResultsDir) {
+    $ResultsDir = Join-Path $rootDir "..\sandbox_results"
+}
+$resultsDir = [System.IO.Path]::GetFullPath($ResultsDir)
 if (-not (Test-Path $resultsDir)) {
     New-Item -ItemType Directory -Path $resultsDir -Force | Out-Null
 }
+
+# XML-escape all host paths before embedding them in the generated .wsb file.
+$rootDirXml = [System.Security.SecurityElement]::Escape($rootDir)
+$gitHostDirXml = [System.Security.SecurityElement]::Escape($gitHostDir)
+$resultsDirXml = [System.Security.SecurityElement]::Escape($resultsDir)
 
 # 4. Generate WSB Configuration
 $wsbGenerated = Join-Path $env:TEMP "gitsetu_test_dynamic.wsb"
@@ -53,17 +62,17 @@ $wsbContent = @"
   <Networking>Default</Networking>
   <MappedFolders>
     <MappedFolder>
-      <HostFolder>$rootDir</HostFolder>
+      <HostFolder>$rootDirXml</HostFolder>
       <SandboxFolder>C:\gitsetu_source</SandboxFolder>
       <ReadOnly>true</ReadOnly>
     </MappedFolder>
     <MappedFolder>
-      <HostFolder>$gitHostDir</HostFolder>
+      <HostFolder>$gitHostDirXml</HostFolder>
       <SandboxFolder>C:\Git_Host</SandboxFolder>
       <ReadOnly>true</ReadOnly>
     </MappedFolder>
     <MappedFolder>
-      <HostFolder>$resultsDir</HostFolder>
+      <HostFolder>$resultsDirXml</HostFolder>
       <SandboxFolder>C:\results</SandboxFolder>
       <ReadOnly>false</ReadOnly>
     </MappedFolder>

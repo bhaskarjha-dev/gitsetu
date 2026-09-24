@@ -77,15 +77,14 @@ Copy-Item -Path "$sourceHost" -Destination $targetDir -Recurse -Force
 Set-Location $targetDir
 
 # 4. Run Automated Regression Test Suite
-# 4. Run Automated Regression Test Suite
-Write-Host "`n[4/8] Running full automated regression test suite (33 test suites)..." -ForegroundColor Yellow
+Write-Host "`n[4/8] Running full automated regression test suite..." -ForegroundColor Yellow
 & "$gitHost\bin\bash.exe" tests/run_all.sh
 $testResult = $LASTEXITCODE
 
 if ($testResult -ne 0) {
     Write-Host "`n[WARNING] Some regression tests reported failures (exit code: $testResult)." -ForegroundColor Red
 } else {
-    Write-Host "`n[SUCCESS] All 33 regression test suites passed!" -ForegroundColor Green
+    Write-Host "`n[SUCCESS] All required regression suites passed (see the runner summary for explicit skips)!" -ForegroundColor Green
 }
 
 # 5. Run Live End-to-End Simulation
@@ -135,17 +134,32 @@ Write-Host "`n[8/8] Testing Native Windows Launcher & Monolith Distribution..." 
 $launcherTest = 1
 $monolithTest = 1
 $autoTest = 1
+$environmentBlocked = $false
+$launcherError = ""
 
 # 8.1 Compile native launcher
 $launcherOut = Join-Path $targetDir "dist"
 & powershell.exe -ExecutionPolicy Bypass -File "$targetDir\packaging\windows\build_launcher.ps1" -OutDir "$launcherOut"
 if (Test-Path "$launcherOut\gitsetu.exe") {
-    $vExe = & "$launcherOut\gitsetu.exe" --version
-    if ($vExe -match "gitsetu v1.1.0") {
-        Write-Host "  [OK] Native C# launcher (gitsetu.exe) compiled and verified!" -ForegroundColor Green
-        $launcherTest = 0
-    } else {
-        Write-Host "  [FAIL] gitsetu.exe output mismatch: $vExe" -ForegroundColor Red
+    try {
+        $vExe = & "$launcherOut\gitsetu.exe" --version 2>&1
+        $launcherExit = $LASTEXITCODE
+    } catch {
+        $launcherExit = 1
+        $vExe = $_.Exception.Message
+        if ($vExe -match "Application Control|blocked this file") {
+            $environmentBlocked = $true
+            $launcherError = $vExe
+            Write-Host "  [SKIP] Native launcher execution was blocked by the Windows Sandbox Application Control policy." -ForegroundColor Yellow
+        }
+    }
+    if (-not $environmentBlocked) {
+        if ($launcherExit -eq 0 -and $vExe -match "gitsetu v1.1.0") {
+            Write-Host "  [OK] Native C# launcher (gitsetu.exe) compiled and verified!" -ForegroundColor Green
+            $launcherTest = 0
+        } else {
+            Write-Host "  [FAIL] gitsetu.exe output mismatch: $vExe" -ForegroundColor Red
+        }
     }
 }
 
@@ -176,10 +190,11 @@ if ($autoOut -match "Setup complete") {
 & "$gitHost\bin\bash.exe" -c "cd /c/Users/WDAGUtilityAccount/gitsetu && ./gitsetu teardown --force >/dev/null 2>&1 || true"
 
 # Generate Ultimate Scorecard Report
+$coreSandboxSuccess = ($testResult -eq 0 -and $liveResult -eq 0 -and $auditResult -eq 0 -and $psShimTest -eq 0 -and $monolithTest -eq 0 -and $autoTest -eq 0)
+$overallSuccess = ($coreSandboxSuccess -and $launcherTest -eq 0)
 if ($resultsHost) {
     $reportFile = "$resultsHost\ULTIMATE_SANDBOX_AUDIT_REPORT.md"
-    $overallSuccess = ($testResult -eq 0 -and $liveResult -eq 0 -and $auditResult -eq 0 -and $psShimTest -eq 0 -and $launcherTest -eq 0 -and $monolithTest -eq 0 -and $autoTest -eq 0)
-    $verdict = if ($overallSuccess) { "[PASS] **PRODUCTION-READY DAY 1 GA (100% PASS)**" } else { "[FAIL] **FAILURES DETECTED**" }
+    $verdict = if ($overallSuccess) { "[PASS] **ALL SANDBOX CHECKS PASSED**" } elseif ($environmentBlocked -and $coreSandboxSuccess) { "[ENVIRONMENT BLOCKED] **Core checks passed; native launcher execution was blocked by Windows Application Control**" } else { "[FAIL] **FAILURES DETECTED**" }
     
     $reportContent = @"
 # GitSetu Ultimate Windows Sandbox Verification Report
@@ -193,29 +208,33 @@ if ($resultsHost) {
 
 | Dimension | Scope / Component | Expected Behavior | Status |
 | :--- | :--- | :--- | :---: |
-| **1. Regression Test Suite** | 33 Test Suites (`tests/run_all.sh`) | All 33 suites pass with exit code 0 | $(if ($testResult -eq 0) { "**PASS (33/33)**" } else { "**FAIL**" }) |
+| **1. Regression Test Suite** | `tests/run_all.sh` | Required suites pass; skips are reported explicitly | $(if ($testResult -eq 0) { "**PASS (required suites)**" } else { "**FAIL**" }) |
 | **2. Live End-to-End Simulation** | Multi-Profile Workflow (`sandbox/live_test.sh`) | Real commits, identity switching, prompt resolution | $(if ($liveResult -eq 0) { "**PASS**" } else { "**FAIL**" }) |
 | **3. Deep Empirical Audit** | 31 Phases, ~110 Checks (`sandbox/comprehensive_audit.sh`) | Every CLI flag, security, concurrency, CRLF, and distribution check | $(if ($auditResult -eq 0) { "**PASS**" } else { "**FAIL**" }) |
 | **4. PowerShell Installer Pipeline** | Windows Native (`install.ps1`) | Provisions shims, configures PATH, zero error | $(if ($psInstallResult -eq 0) { "**PASS**" } else { "**FAIL**" }) |
 | **5. Windows Shims Execution** | `gitsetu.cmd` & `gitsetu.ps1` | Both CMD and PowerShell shims route to engine | $(if ($psShimTest -eq 0) { "**PASS**" } else { "**FAIL**" }) |
 | **6. PowerShell Uninstaller** | Clean De-installation (`uninstall.ps1`) | Removes shims, cleans PATH, leaves zero residue | $(if ($psUninstallResult -eq 0) { "**PASS**" } else { "**FAIL**" }) |
-| **7. Native Windows Launcher** | C# Launcher (`packaging/windows/gitsetu.cs`) | Compiles via csc.exe, delegates transparently | $(if ($launcherTest -eq 0) { "**PASS**" } else { "**FAIL**" }) |
+| **7. Native Windows Launcher** | C# Launcher (`packaging/windows/gitsetu.cs`) | Compiles via csc.exe, delegates transparently | $(if ($environmentBlocked) { "**SKIP (Application Control policy)**" } elseif ($launcherTest -eq 0) { "**PASS**" } else { "**FAIL**" }) |
 | **8. Standalone Monolith Bundle** | Zero-Dependency Script (`dist/gitsetu`) | Executes in sterile directory without lib/ | $(if ($monolithTest -eq 0) { "**PASS**" } else { "**FAIL**" }) |
 | **9. Zero-Prompt Auto-Discovery** | Non-interactive Onboarding (`setup --auto`) | Maps keys & workspaces from /dev/null stdin | $(if ($autoTest -eq 0) { "**PASS**" } else { "**FAIL**" }) |
 
 ## Summary of Empirical Evidence
-- **Total Test Suites Executed**: 33 Suites (100% Passed)
-- **Total Empirical Audit Checks**: ~110 Checks (100% Passed)
-- **Windows Integration Shims**: Verified functional in Command Prompt and PowerShell
-- **Host System Integrity**: 100% Isolated; zero host mutations
+- **Regression runner**: $(if ($testResult -eq 0) { "PASS; any skips remain explicitly non-passing in the runner summary." } else { "FAIL (exit code $testResult)." })
+- **Empirical audit**: $(if ($auditResult -eq 0) { "PASS (~110 checks)." } else { "FAIL (exit code $auditResult)." })
+- **Windows integration shims**: $(if ($psShimTest -eq 0) { "PASS in Command Prompt and PowerShell." } else { "NOT VERIFIED." })
+- **Host system integrity**: 100% isolated; zero host mutations
+- **Environment policy**: $(if ($environmentBlocked) { "Windows Application Control blocked the generated unsigned native launcher; this is an explicit environment skip, not a product pass." } else { "No Application Control execution block observed." })
 "@
     Set-Content -Path $reportFile -Value $reportContent
 }
 
 Write-Host "`n================================================================" -ForegroundColor Cyan
-if ($testResult -eq 0 -and $liveResult -eq 0 -and $auditResult -eq 0 -and $psShimTest -eq 0 -and $launcherTest -eq 0 -and $monolithTest -eq 0 -and $autoTest -eq 0) {
-    Write-Host "  ALL TESTS PASSED! GitSetu is 100% verified on Windows.         " -ForegroundColor Green
+if ($overallSuccess) {
+    Write-Host "  ALL SANDBOX CHECKS PASSED.                                      " -ForegroundColor Green
     if ($resultsHost) { Set-Content -Path "$resultsHost\status.txt" -Value "COMPLETED_SUCCESS" }
+} elseif ($environmentBlocked -and $coreSandboxSuccess) {
+    Write-Host "  Core checks passed; native launcher execution was blocked by the Windows Application Control policy." -ForegroundColor Yellow
+    if ($resultsHost) { Set-Content -Path "$resultsHost\status.txt" -Value "COMPLETED_ENVIRONMENT_BLOCK" }
 } else {
     Write-Host "  Verification completed with warnings. Check logs above.       " -ForegroundColor Yellow
     if ($resultsHost) { Set-Content -Path "$resultsHost\status.txt" -Value "COMPLETED_FAILURE" }
