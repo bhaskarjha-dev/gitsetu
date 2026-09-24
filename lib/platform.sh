@@ -72,88 +72,291 @@ detect_os() {
 }
 
 # ------------------------------------------------------------------------------
-# normalize_path — Normalize a filesystem path
-#
-# Handles:
-#   - Tilde expansion (~/ → $HOME/)
-#   - Backslash → forward slash (Windows)
-#   - Removes trailing slash (we add it explicitly where needed)
-#   - Resolves to absolute path if relative
-#
-# Usage: normalized=$(normalize_path "/some//path/")
+# ASCII control-byte validation
 # ------------------------------------------------------------------------------
-normalize_path() {
-    local path="$1"
+# Bash 3.2 has no portable Unicode-aware [[:cntrl:]] implementation: in the C
+# locale valid UTF-8 continuation bytes can be classified as controls. Inspect
+# bytes under C and reject only ASCII C0 (0x00..0x1F) and DEL (0x7F). CR, LF,
+# and tab are therefore still rejected, while UTF-8 path bytes remain valid.
+_gitsetu_contains_ascii_control() {
+    [[ $# -eq 1 ]] || return 1
+    local value="$1" char ordinal
+    local LC_ALL=C
 
-    # Expand tilde (SC2088: intentional literal comparison, not expansion)
+    while [[ -n "$value" ]]; do
+        char="${value:0:1}"
+        value="${value:1}"
+        printf -v ordinal '%d' "'$char" || return 1
+        [[ "$ordinal" =~ ^[0-9]+$ ]] || return 1
+        if [[ "$ordinal" -le 31 || "$ordinal" -eq 127 ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Validate a field without changing the caller's locale. Return zero only
+# when the value contains no ASCII C0/DEL byte.
+_gitsetu_reject_ascii_controls() {
+    [[ $# -eq 2 ]] || return 1
+    ! _gitsetu_contains_ascii_control "$2"
+}
+
+# ------------------------------------------------------------------------------
+# _gitsetu_lexical_path — Collapse separators and resolve . / .. without I/O
+# ------------------------------------------------------------------------------
+_gitsetu_lexical_path() {
+    local path="$1"
+    local prefix=""
+    local body
+    local components=()
+    local stack=()
+    local component relative=""
+    local i
+
+    # Preserve a leading // as a UNC root. Three or more leading slashes are
+    # ordinary duplicate separators and collapse to a POSIX root.
+    if { [[ "$path" == "//" || "$path" == //?* ]]; } &&
+       [[ "$path" != ///* ]]; then
+        prefix="//"
+        body="${path:2}"
+    elif [[ "$path" =~ ^[a-zA-Z]:(/|$) ]]; then
+        prefix="${path:0:1}:/"
+        body="${path:3}"
+    else
+        prefix="/"
+        body="${path#/}"
+    fi
+
+    IFS='/' read -r -a components <<< "$body"
+    for (( i=0; i<${#components[@]}; i++ )); do
+        component="${components[$i]}"
+        case "$component" in
+            ""|".") continue ;;
+            "..")
+                if [[ ${#stack[@]} -gt 0 ]]; then
+                    unset 'stack[${#stack[@]}-1]'
+                fi
+                ;;
+            *) stack+=("$component") ;;
+        esac
+    done
+
+    for (( i=0; i<${#stack[@]}; i++ )); do
+        relative="${relative}/${stack[$i]}"
+    done
+    path="${prefix}${relative#/}"
+    printf '%s' "$path"
+}
+
+# ------------------------------------------------------------------------------
+# _gitsetu_current_absolute — Return the canonical current directory
+# ------------------------------------------------------------------------------
+_gitsetu_current_absolute() {
+    local current
+
+    if [[ "${GITSETU_OS:-}" == "gitbash" ]]; then
+        current=$(pwd -W 2>/dev/null || pwd -P 2>/dev/null) || return 1
+        current=${current%$'\r'}
+        if [[ "$current" =~ ^/([a-zA-Z])(/.*)?$ ]]; then
+            local drive
+            drive=$(printf '%s' "${BASH_REMATCH[1]-}" | tr '[:lower:]' '[:upper:]')
+            current="${drive}:${BASH_REMATCH[2]-}"
+        fi
+    else
+        current=$(pwd -P 2>/dev/null) || return 1
+    fi
+    current=${current%$'\r'}
+    _gitsetu_lexical_path "$current"
+}
+
+# ------------------------------------------------------------------------------
+# canonicalize_path — Resolve a path to an absolute canonical representation
+#
+# Expands only ~ and ~/ (never ~user), translates Windows/MSYS drive paths,
+# makes relative paths absolute, resolves existing symlink prefixes physically,
+# and lexically resolves . and .. for paths that do not exist yet.
+#
+# Usage: canonical=$(canonicalize_path "../work")
+# ------------------------------------------------------------------------------
+canonicalize_path() {
+    if [[ $# -ne 1 ]]; then
+        return 1
+    fi
+
+    local path="$1"
+    if [[ -z "$path" ]] || ! _gitsetu_reject_ascii_controls "canonical path" "$path"; then
+        return 1
+    fi
+
+    # Expand tilde (SC2088: intentional literal comparison, not expansion).
     # shellcheck disable=SC2088
     if [[ "$path" == "~/"* ]]; then
+        if [[ -z "${HOME:-}" ]]; then
+            return 1
+        fi
         path="$HOME/${path:2}"
     elif [[ "$path" == "~" ]]; then
+        if [[ -z "${HOME:-}" ]]; then
+            return 1
+        fi
         path="$HOME"
+    elif [[ "$path" == "~"* ]]; then
+        return 1
     fi
 
-    # Backslash → forward slash (Git Bash on Windows)
     path="${path//\\//}"
+    if [[ "$path" =~ ^[a-zA-Z]:[^/] ]]; then
+        # Drive-relative paths (C:foo) are process-dependent and non-canonical.
+        return 1
+    fi
 
-    # On Windows / Git Bash, convert /c/path to C:/path for Git/OpenSSH compatibility
     [[ -z "${GITSETU_OS:-}" ]] && detect_os
-    if [[ "$GITSETU_OS" == "gitbash" ]]; then
-        if [[ "$path" =~ ^/([a-zA-Z])/(.*) ]]; then
-            local drive="${BASH_REMATCH[1]}"
-            local rest="${BASH_REMATCH[2]}"
-            drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
-            path="${drive}:/${rest}"
-        elif [[ "$path" =~ ^/([a-zA-Z])$ ]]; then
-            local drive="${BASH_REMATCH[1]}"
-            drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
-            path="${drive}:/"
-        elif [[ "$path" =~ ^([a-zA-Z]):$ ]]; then
-            local drive="${BASH_REMATCH[1]}"
-            drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
-            path="${drive}:/"
-        elif [[ "$path" =~ ^([a-zA-Z]):/(.*) ]]; then
-            local drive="${BASH_REMATCH[1]}"
-            local rest="${BASH_REMATCH[2]}"
-            drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
-            path="${drive}:/${rest}"
+
+    if [[ "${GITSETU_OS:-}" == "gitbash" ]]; then
+        if [[ "$path" =~ ^/([a-zA-Z])(/.*)?$ ]]; then
+            local drive rest
+            drive=$(printf '%s' "${BASH_REMATCH[1]-}" | tr '[:lower:]' '[:upper:]')
+            rest="${BASH_REMATCH[2]-}"
+            [[ -n "$rest" ]] || rest="/"
+            path="${drive}:${rest}"
+        elif [[ "$path" =~ ^([a-zA-Z]):(/.*)?$ ]]; then
+            local drive rest
+            drive=$(printf '%s' "${BASH_REMATCH[1]-}" | tr '[:lower:]' '[:upper:]')
+            rest="${BASH_REMATCH[2]-}"
+            [[ -n "$rest" ]] || rest="/"
+            path="${drive}:${rest}"
         fi
-    elif [[ "$GITSETU_OS" == "wsl" ]]; then
-        # On WSL, convert Windows drive paths to /mnt/<drive>
-        if command -v wslpath >/dev/null 2>&1 && [[ "$path" =~ ^([a-zA-Z]:|/[a-zA-Z]/) ]]; then
-            path=$(wslpath -u "$path" 2>/dev/null || echo "$path")
-        elif [[ "$path" =~ ^/([a-zA-Z])/(.*) ]]; then
-            local drive="${BASH_REMATCH[1]}"
-            local rest="${BASH_REMATCH[2]}"
-            drive=$(printf '%s' "$drive" | tr '[:upper:]' '[:lower:]')
-            path="/mnt/${drive}/${rest}"
-        elif [[ "$path" =~ ^/([a-zA-Z])$ ]]; then
-            local drive="${BASH_REMATCH[1]}"
-            drive=$(printf '%s' "$drive" | tr '[:upper:]' '[:lower:]')
-            path="/mnt/${drive}"
-        elif [[ "$path" =~ ^([a-zA-Z]):$ ]]; then
-            local drive="${BASH_REMATCH[1]}"
-            drive=$(printf '%s' "$drive" | tr '[:upper:]' '[:lower:]')
-            path="/mnt/${drive}"
-        elif [[ "$path" =~ ^([a-zA-Z]):/(.*) ]]; then
-            local drive="${BASH_REMATCH[1]}"
-            local rest="${BASH_REMATCH[2]}"
-            drive=$(printf '%s' "$drive" | tr '[:upper:]' '[:lower:]')
-            path="/mnt/${drive}/${rest}"
+    elif [[ "${GITSETU_OS:-}" == "wsl" ]]; then
+        local wsl_path=""
+        if command -v wslpath >/dev/null 2>&1 &&
+           [[ "$path" =~ ^([a-zA-Z]:|/([a-zA-Z])(/.*)?$) ]]; then
+            wsl_path=$(wslpath -u "$path" 2>/dev/null || true)
+            wsl_path=${wsl_path%$'\r'}
+        fi
+        if [[ -n "$wsl_path" && "$wsl_path" == /* ]]; then
+            path="$wsl_path"
+        elif [[ "$path" =~ ^/([a-zA-Z])(/.*)?$ ]]; then
+            local drive rest
+            drive=$(printf '%s' "${BASH_REMATCH[1]-}" | tr '[:upper:]' '[:lower:]')
+            rest="${BASH_REMATCH[2]-}"
+            path="/mnt/${drive}${rest}"
+        elif [[ "$path" =~ ^([a-zA-Z]):(/.*)?$ ]]; then
+            local drive rest
+            drive=$(printf '%s' "${BASH_REMATCH[1]-}" | tr '[:upper:]' '[:lower:]')
+            rest="${BASH_REMATCH[2]-}"
+            if [[ -n "$rest" ]]; then
+                path="/mnt/${drive}${rest}"
+            else
+                path="/mnt/${drive}"
+            fi
         fi
     fi
 
-    # Collapse double slashes (tr -s avoids bash escaping ambiguity on Git Bash)
-    path=$(printf '%s' "$path" | tr -s '/')
+    if [[ "$path" != /* && ! "$path" =~ ^[a-zA-Z]:/ ]]; then
+        local base
+        base=$(_gitsetu_current_absolute) || return 1
+        path="${base%/}/${path}"
+    fi
 
-    # Remove trailing slash (unless it's just "/" or "C:/")
-    if [[ "${#path}" -gt 1 ]]; then
-        if [[ ! "$path" =~ ^[a-zA-Z]:/$ ]]; then
-            path="${path%/}"
+    # A forced Git Bash drive path may not exist on the host running tests. In
+    # that case lexical canonicalization is the only safe result.
+    local can_resolve=1
+    if [[ "${GITSETU_OS:-}" == "gitbash" ]] && [[ "$path" == /* ]]; then
+        # POSIX-style MSYS roots are already absolute. Keep them stable when a
+        # forced test platform differs from this host.
+        can_resolve=0
+    elif [[ "${GITSETU_OS:-}" == "gitbash" ]] && [[ "$path" =~ ^[a-zA-Z]:/ ]]; then
+        local drive_root="${path:0:2}/"
+        # Real Git Bash can physically resolve explicit drive paths. A forced
+        # cross-platform test on Linux/WSL cannot, so retain lexical output.
+        [[ -d "$drive_root" ]] || can_resolve=0
+    fi
+
+    if [[ "$can_resolve" -eq 1 ]]; then
+        local resolved=""
+        if [[ -d "$path" ]]; then
+            if [[ "${GITSETU_OS:-}" == "gitbash" ]]; then
+                resolved=$(cd -P "$path" 2>/dev/null && pwd -W 2>/dev/null) || resolved=""
+            else
+                resolved=$(cd -P "$path" 2>/dev/null && pwd -P 2>/dev/null) || resolved=""
+            fi
+            resolved=${resolved%$'\r'}
+        elif [[ -e "$path" ]]; then
+            local parent base
+            parent=$(dirname "$path") || return 1
+            base="${path##*/}"
+            if [[ "${GITSETU_OS:-}" == "gitbash" ]]; then
+                resolved=$(cd -P "$parent" 2>/dev/null && pwd -W 2>/dev/null) || resolved=""
+            else
+                resolved=$(cd -P "$parent" 2>/dev/null && pwd -P 2>/dev/null) || resolved=""
+            fi
+            resolved=${resolved%$'\r'}
+            if [[ -n "$resolved" ]]; then
+                resolved="${resolved%/}/${base}"
+            fi
         fi
+
+        if [[ -n "$resolved" ]]; then
+            path=$(_gitsetu_lexical_path "$resolved") || return 1
+        else
+            local ancestor="$path"
+            local suffix=""
+            while [[ ! -d "$ancestor" ]]; do
+                local up
+                up=$(dirname "$ancestor") || return 1
+                if [[ "$up" == "$ancestor" ]]; then
+                    break
+                fi
+                local ancestor_component="${ancestor%/}"
+                if [[ -n "$suffix" ]]; then
+                    suffix="${ancestor_component##*/}/${suffix}"
+                else
+                    suffix="${ancestor_component##*/}"
+                fi
+                ancestor="$up"
+            done
+
+            if [[ -d "$ancestor" ]]; then
+                if [[ "${GITSETU_OS:-}" == "gitbash" ]]; then
+                    resolved=$(cd -P "$ancestor" 2>/dev/null && pwd -W 2>/dev/null) || resolved=""
+                else
+                    resolved=$(cd -P "$ancestor" 2>/dev/null && pwd -P 2>/dev/null) || resolved=""
+                fi
+                resolved=${resolved%$'\r'}
+                if [[ -n "$resolved" ]]; then
+                    if [[ -n "$suffix" ]]; then
+                        path="${resolved%/}/${suffix}"
+                    else
+                        path="$resolved"
+                    fi
+                    path=$(_gitsetu_lexical_path "$path") || return 1
+                else
+                    path=$(_gitsetu_lexical_path "$path") || return 1
+                fi
+            else
+                path=$(_gitsetu_lexical_path "$path") || return 1
+            fi
+        fi
+    else
+        path=$(_gitsetu_lexical_path "$path") || return 1
     fi
 
     printf '%s' "$path"
+}
+
+# normalize_path is retained as the public compatibility entry point. It now
+# has the stronger canonical-path semantics rather than textual rewriting only.
+normalize_path() {
+    canonicalize_path "$@"
+}
+
+# Common semantic aliases for new callers.
+resolve_path() {
+    canonicalize_path "$@"
+}
+absolute_path() {
+    canonicalize_path "$@"
 }
 
 # ------------------------------------------------------------------------------
@@ -186,15 +389,20 @@ is_shared_mount() {
         local mount_output
         mount_output=$(mount 2>/dev/null) || true
 
-        # Check if any shared mount contains this path
-        if printf '%s\n' "$mount_output" | grep -E "vboxsf|vmhgfs-fuse|drvfs|9p" | grep -q "${path%/}"; then
-            return 0
+        # Compare exact mount-point prefixes; never treat the untrusted path as
+        # a grep regular expression or match /mnt/foo against /mnt/foobar.
+        local mp path_prefix mount_prefix
+        path_prefix="${path%/}/"
+        if [[ "${GITSETU_OS:-}" == "gitbash" || "${GITSETU_OS:-}" == "macos" ]]; then
+            path_prefix=$(printf '%s' "$path_prefix" | tr '[:upper:]' '[:lower:]')
         fi
-
-        # Broader check: check all shared mount points (not just head -n1)
-        local mp
         while read -r mp; do
-            if [[ -n "$mp" && "$path" == "$mp"* ]]; then
+            [[ -n "$mp" ]] || continue
+            mount_prefix="${mp%/}/"
+            if [[ "${GITSETU_OS:-}" == "gitbash" || "${GITSETU_OS:-}" == "macos" ]]; then
+                mount_prefix=$(printf '%s' "$mount_prefix" | tr '[:upper:]' '[:lower:]')
+            fi
+            if [[ "$path_prefix" == "$mount_prefix"* ]]; then
                 return 0
             fi
         done < <(printf '%s\n' "$mount_output" | grep -E "vboxsf|vmhgfs-fuse|drvfs|9p" | awk '{print $3}')

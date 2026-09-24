@@ -14,188 +14,481 @@
 # MIT License — Bhaskar Jha
 
 # --- CRLF self-healing for VirtualBox shared folders & Windows clones ---
-# Uses simple statements only to prevent Linux Bash parser errors on then\r / do\r.
+# Every executable line in this trampoline ends in a comment so a literal CR
+# remains harmless while Bash parses the un-normalized file.
+_crlf_source="${BASH_SOURCE[0]:-$0}" #
+_crlf_source="${_crlf_source//$'\r'/}" #
+if [[ "$_crlf_source" != /* && ! "$_crlf_source" =~ ^[a-zA-Z]:/ ]]; then _crlf_source="$(pwd -W 2>/dev/null || pwd -P 2>/dev/null || pwd)/$_crlf_source"; fi  #
+_crlf_hops=0 #
+while [[ -L "$_crlf_source" && "$_crlf_hops" -lt 40 ]]; do  #
+    _crlf_link_dir=$(cd -P -- "$(dirname "$_crlf_source")" 2>/dev/null && (pwd -W 2>/dev/null || pwd -P)) || exit 1  #
+    _crlf_source=$(readlink "$_crlf_source") || exit 1  #
+    if [[ "$_crlf_source" != /* && ! "$_crlf_source" =~ ^[a-zA-Z]:/ ]]; then _crlf_source="${_crlf_link_dir}/$_crlf_source"; fi  #
+    _crlf_hops=$((_crlf_hops + 1))  #
+done  #
+[[ "$_crlf_hops" -lt 40 && -f "$_crlf_source" && ! -L "$_crlf_source" ]] || { printf '%s\n' "Error: unable to resolve the GitSetu entrypoint." >&2; exit 1; }  #
+_crlf_orig_dir=$(cd -P -- "$(dirname "$_crlf_source")" 2>/dev/null && (pwd -W 2>/dev/null || pwd -P)) || exit 1  #
+_crlf_temp_dir="$_crlf_orig_dir" #
+_crlf_handoff_active=0 #
+if [[ "${GITSETU_CRLF_DEPTH:-0}" != "1" ]]; then unset _GITSETU_CRLF_RUNTIME_DIR _GITSETU_CRLF_ORIGIN_DIR 2>/dev/null || true; fi #
+if [[ "${GITSETU_CRLF_DEPTH:-0}" == "1" && -n "${_GITSETU_CRLF_RUNTIME_DIR:-}" && -n "${_GITSETU_CRLF_ORIGIN_DIR:-}" ]]; then #
+    _crlf_handoff_runtime="${_GITSETU_CRLF_RUNTIME_DIR}" #
+    _crlf_handoff_origin="${_GITSETU_CRLF_ORIGIN_DIR}" #
+    [[ "$_crlf_handoff_runtime" != *$'\r'* && "$_crlf_handoff_runtime" != *$'\n'* && "$_crlf_handoff_runtime" != *$'\t'* ]] || { printf '%s\n' "Error: CRLF runtime handoff path is unsafe." >&2; exit 1; } #
+    [[ "$_crlf_handoff_origin" != *$'\r'* && "$_crlf_handoff_origin" != *$'\n'* && "$_crlf_handoff_origin" != *$'\t'* ]] || { printf '%s\n' "Error: CRLF source handoff path is unsafe." >&2; exit 1; } #
+    case "$_crlf_handoff_runtime" in /tmp/.gitsetu-runtime.*|/var/tmp/.gitsetu-runtime.*) ;; *) printf '%s\n' "Error: CRLF runtime handoff is not a trusted private path." >&2; exit 1 ;; esac #
+    [[ -d "$_crlf_handoff_runtime" && ! -L "$_crlf_handoff_runtime" && -O "$_crlf_handoff_runtime" ]] || { printf '%s\n' "Error: CRLF runtime handoff directory is unsafe." >&2; exit 1; } #
+    [[ -d "$_crlf_handoff_origin" && ! -L "$_crlf_handoff_origin" ]] || { printf '%s\n' "Error: CRLF source handoff directory is unsafe." >&2; exit 1; } #
+    if [[ "$_crlf_handoff_origin" =~ ^[A-Za-z]:/ ]]; then _crlf_handoff_origin_canonical=$(cd -P -- "$_crlf_handoff_origin" 2>/dev/null && (pwd -W 2>/dev/null || pwd -P)) || exit 1; else _crlf_handoff_origin_canonical=$(cd -P -- "$_crlf_handoff_origin" 2>/dev/null && pwd -P) || exit 1; fi #
+    [[ "$_crlf_handoff_origin" == "$_crlf_handoff_origin_canonical" ]] || { printf '%s\n' "Error: CRLF source handoff is not canonical." >&2; exit 1; } #
+    case "$_crlf_source" in "$_crlf_handoff_runtime"/*) ;; *) printf '%s\n' "Error: CRLF child is outside the trusted runtime handoff." >&2; exit 1 ;; esac #
+    _crlf_orig_dir="$_crlf_handoff_origin" #
+    _crlf_temp_dir="$_crlf_handoff_runtime" #
+    _crlf_handoff_active=1 #
+fi #
+
+# C-05: validate inherited numeric values before any arithmetic context. Values
+# must already be canonical decimal strings; user-controlled text is never
+# evaluated as an arithmetic expression.
+_gitsetu_crlf_depth="${GITSETU_CRLF_DEPTH:-0}" #
+if [[ -n "${GITSETU_CRLF_DEPTH:-}" ]]; then  #
+    if [[ ! "$_gitsetu_crlf_depth" =~ ^(0|[1-9][0-9]*)$ ]]; then printf '%s\n' "Error: GITSETU_CRLF_DEPTH must be a canonical non-negative decimal integer." >&2; exit 1; fi  #
+    if [[ "$_gitsetu_crlf_depth" != "0" && "$_gitsetu_crlf_depth" != "1" ]]; then printf '%s\n' "Error: CRLF self-healing recursion limit reached (depth=$_gitsetu_crlf_depth)." >&2; exit 1; fi  #
+fi #
+
+_gitsetu_lock_timeout="${GITSETU_LOCK_TIMEOUT:-}" #
+if [[ -n "$_gitsetu_lock_timeout" ]]; then  #
+    if [[ ! "$_gitsetu_lock_timeout" =~ ^[1-9][0-9]*$ ]]; then printf '%s\n' "Error: GITSETU_LOCK_TIMEOUT must be a canonical positive decimal integer." >&2; exit 1; fi  #
+    if [[ "$_gitsetu_lock_timeout" == "0" || "${#_gitsetu_lock_timeout}" -gt 4 || ( "${#_gitsetu_lock_timeout}" -eq 4 && "$_gitsetu_lock_timeout" -gt 3600 ) ]]; then printf '%s\n' "Error: GITSETU_LOCK_TIMEOUT is outside the supported range (1-3600 seconds)." >&2; exit 1; fi  #
+fi #
+
+for _gitsetu_flag_name in GITSETU_PORT443_NEEDED GITSETU_TEST GITSETU_VERIFY_NETWORK GITSETU_ALLOW_SSH_HOST_KEY GITSETU_SSH_ACCEPT_NEW_HOST GITSETU_ALLOW_SSH_PORT443 GITSETU_DEFAULT_SIGN; do  #
+    _gitsetu_flag_value="${!_gitsetu_flag_name:-0}"  #
+    if [[ "$_gitsetu_flag_value" != "0" && "$_gitsetu_flag_value" != "1" ]]; then printf '%s\n' "Error: $_gitsetu_flag_name must be 0 or 1." >&2; exit 1; fi  #
+done #
+
+# Routing mutations are process state, never caller configuration. A consent
+# flow may set the fallback later in-process; inherited values are discarded.
+GITSETU_PORT443_NEEDED=0  #
+GITSETU_PORT443_CONSENT=0  #
+[[ "${GITSETU_ALLOW_SSH_PORT443:-0}" == "1" ]] && GITSETU_PORT443_CONSENT=1  #
+export GITSETU_PORT443_NEEDED GITSETU_PORT443_CONSENT  #
+
+# Inherited cleanup variables are never authoritative. The trampoline creates
+# and removes one exclusive file in the trusted entrypoint directory itself.
+unset GITSETU_CRLF_TMP GITSETU_CRLF_CLEAN GITSETU_ORIG_SCRIPT 2>/dev/null || true #
+
 _crlf_probe="" #
-read -r _crlf_probe < "${BASH_SOURCE[0]:-$0}" 2>/dev/null || true #
-[[ -z "${GITSETU_CRLF_CLEAN:-}" && "${1:-}" != "credential" && "${1:-}" != "prompt" && "$_crlf_probe" == *$'\r'* ]] && { #
-    _crlf_depth="${GITSETU_CRLF_DEPTH:-0}" #
-    [[ "$_crlf_depth" -ge 2 ]] && { echo "Error: CRLF self-healing recursion limit reached (depth=$_crlf_depth)." >&2; exit 1; } #
-    [[ "$_crlf_depth" -ge 1 ]] && { echo "Error: CRLF normalization loop detected." >&2; exit 1; } #
-    _crlf_tmp=$(mktemp "${TMPDIR:-/tmp}/gitsetu_crlf.XXXXXX" 2>/dev/null || mktemp 2>/dev/null || echo "/tmp/gitsetu_crlf.$$") #
-    (command -v tr >/dev/null 2>&1 && tr -d '\r' < "${BASH_SOURCE[0]:-$0}" > "$_crlf_tmp") || \
-    (command -v sed >/dev/null 2>&1 && sed -e 's/\r$//' < "${BASH_SOURCE[0]:-$0}" > "$_crlf_tmp") || \
-    (command -v awk >/dev/null 2>&1 && awk '{ sub(/\r$/, ""); print }' "${BASH_SOURCE[0]:-$0}" > "$_crlf_tmp") #
-    chmod 700 "$_crlf_tmp" 2>/dev/null || chmod 600 "$_crlf_tmp" 2>/dev/null || true #
-    export GITSETU_CRLF_CLEAN=1 #
-    export GITSETU_CRLF_DEPTH=$(( _crlf_depth + 1 )) #
-    export GITSETU_CRLF_TMP="$_crlf_tmp" #
-    _orig_src="${BASH_SOURCE[0]:-$0}" #
-    [[ "$_orig_src" != /* && "$_orig_src" != [a-zA-Z]:/* && "$_orig_src" != [a-zA-Z]:\\* ]] && _orig_src="$(pwd)/$_orig_src" #
-    export GITSETU_ORIG_SCRIPT="$_orig_src" #
-    trap 'rm -f "$_crlf_tmp" 2>/dev/null || true' EXIT INT TERM #
-    # shellcheck disable=SC2093
-    exec "${BASH:-bash}" "$_crlf_tmp" "$@" #
-    rm -f "$_crlf_tmp" 2>/dev/null || true #
-    exit 1 #
-} #
+read -r _crlf_probe < "$_crlf_source" 2>/dev/null || true #
+if [[ "$_crlf_probe" == *$'\r'* ]]; then  #
+    if [[ "$_gitsetu_crlf_depth" == "1" ]]; then printf '%s\n' "Error: CRLF normalization loop detected." >&2; exit 1; fi  #
+    if ! command -v mktemp >/dev/null 2>&1; then printf '%s\n' "Error: secure mktemp is required for CRLF recovery." >&2; exit 1; fi  #
+    _crlf_runtime_dir="" #
+    _crlf_tmp=$(umask 077; mktemp "${_crlf_orig_dir}/.gitsetu_crlf.XXXXXX" 2>/dev/null || true) #
+    if [[ -z "$_crlf_tmp" ]]; then #
+        for _crlf_runtime_base in /tmp /var/tmp; do #
+            [[ -d "$_crlf_runtime_base" && -w "$_crlf_runtime_base" && ! -L "$_crlf_runtime_base" ]] || continue #
+            _crlf_runtime_candidate=$(umask 077; mktemp -d "${_crlf_runtime_base}/.gitsetu-runtime.XXXXXX" 2>/dev/null || true) #
+            case "$_crlf_runtime_candidate" in "${_crlf_runtime_base}/.gitsetu-runtime."*) ;; *) _crlf_runtime_candidate=""; continue ;; esac #
+            if [[ "$_crlf_runtime_candidate" == *$'\r'* || "$_crlf_runtime_candidate" == *$'\n'* || "$_crlf_runtime_candidate" == *$'\t'* ]]; then #
+                rmdir "$_crlf_runtime_candidate" 2>/dev/null || true  #
+                continue  #
+            fi  #
+            if [[ -d "$_crlf_runtime_candidate" && ! -L "$_crlf_runtime_candidate" && -O "$_crlf_runtime_candidate" ]]; then #
+                if chmod 700 "$_crlf_runtime_candidate" 2>/dev/null; then _crlf_runtime_dir="$_crlf_runtime_candidate"; break; fi #
+            fi #
+            [[ ! -d "$_crlf_runtime_candidate" || ! -L "$_crlf_runtime_candidate" ]] && rmdir "$_crlf_runtime_candidate" 2>/dev/null || true #
+        done #
+        [[ -n "$_crlf_runtime_dir" ]] || { printf '%s\n' "Error: the GitSetu install directory is not writable and no trusted private runtime directory is available." >&2; exit 1; } #
+        _crlf_temp_dir="$_crlf_runtime_dir" #
+        _crlf_tmp=$(umask 077; mktemp "${_crlf_temp_dir}/.gitsetu_crlf.XXXXXX" 2>/dev/null || true) #
+    fi #
+    [[ -n "$_crlf_tmp" ]] || { printf '%s\n' "Error: failed to create a private CRLF recovery file." >&2; exit 1; } #
+    case "$_crlf_tmp" in  #
+        "$_crlf_temp_dir"/.gitsetu_crlf.*) ;;  #
+        *) printf '%s\n' "Error: CRLF recovery did not receive a trusted temporary path." >&2; exit 1 ;;  #
+    esac  #
+    [[ "$_crlf_tmp" != *$'\r'* && "$_crlf_tmp" != *$'\n'* && "$_crlf_tmp" != *$'\t'* ]] || { printf '%s\n' "Error: CRLF recovery temporary path is unsafe." >&2; exit 1; }  #
+    [[ -f "$_crlf_tmp" && ! -L "$_crlf_tmp" && -O "$_crlf_tmp" ]] || { printf '%s\n' "Error: CRLF recovery temporary file is unsafe." >&2; exit 1; }  #
+    if [[ -n "$_crlf_runtime_dir" ]]; then  #
+        export _GITSETU_CRLF_RUNTIME_DIR="$_crlf_runtime_dir" _GITSETU_CRLF_ORIGIN_DIR="$_crlf_orig_dir"  #
+    else  #
+        unset _GITSETU_CRLF_RUNTIME_DIR _GITSETU_CRLF_ORIGIN_DIR 2>/dev/null || true  #
+    fi  #
+    _crlf_parent_cleanup() { case "$_crlf_tmp" in "$_crlf_temp_dir"/.gitsetu_crlf.*) [[ -f "$_crlf_tmp" && ! -L "$_crlf_tmp" && -O "$_crlf_tmp" ]] && rm -f "$_crlf_tmp" 2>/dev/null || true ;; esac; [[ -n "${_crlf_runtime_dir:-}" ]] && { case "$_crlf_runtime_dir" in /tmp/.gitsetu-runtime.*|/var/tmp/.gitsetu-runtime.*) [[ -d "$_crlf_runtime_dir" && ! -L "$_crlf_runtime_dir" && -O "$_crlf_runtime_dir" ]] && rmdir "$_crlf_runtime_dir" 2>/dev/null || true ;; esac; }; }  #
+    trap '_crlf_parent_cleanup' EXIT  #
+
+    _crlf_normalized=0  #
+    if command -v tr >/dev/null 2>&1 && tr -d '\r' < "$_crlf_source" > "$_crlf_tmp"; then _crlf_normalized=1; fi  #
+    if [[ "$_crlf_normalized" -eq 0 ]] && command -v sed >/dev/null 2>&1 && sed -e 's/\r$//' < "$_crlf_source" > "$_crlf_tmp"; then _crlf_normalized=1; fi  #
+    if [[ "$_crlf_normalized" -eq 0 ]] && command -v awk >/dev/null 2>&1 && awk '{ sub(/\r$/, ""); print }' "$_crlf_source" > "$_crlf_tmp"; then _crlf_normalized=1; fi  #
+    if [[ "$_crlf_normalized" -eq 0 ]]; then while IFS= read -r _crlf_line || [[ -n "$_crlf_line" ]]; do printf '%s\n' "${_crlf_line%$'\r'}"; done < "$_crlf_source" > "$_crlf_tmp" && _crlf_normalized=1; fi  #
+    if [[ "$_crlf_normalized" -ne 1 ]]; then _crlf_parent_cleanup; printf '%s\n' "Error: failed to normalize the CRLF-contaminated script." >&2; exit 1; fi  #
+    chmod 700 "$_crlf_tmp" 2>/dev/null || true  #
+
+    if [[ -n "${BASH:-}" ]]; then _crlf_bash="$BASH"; else _crlf_bash="bash"; fi  #
+    GITSETU_CRLF_DEPTH=1 "$_crlf_bash" "$_crlf_tmp" "$@" &  #
+    _crlf_child_pid=$!  #
+    trap 'kill -TERM "$_crlf_child_pid" 2>/dev/null || true; wait "$_crlf_child_pid" 2>/dev/null || true; _crlf_parent_cleanup; exit 130' INT  #
+    trap 'kill -TERM "$_crlf_child_pid" 2>/dev/null || true; wait "$_crlf_child_pid" 2>/dev/null || true; _crlf_parent_cleanup; exit 143' TERM  #
+    _crlf_status=0  #
+    wait "$_crlf_child_pid" || _crlf_status=$?  #
+    _crlf_parent_cleanup  #
+    trap - EXIT INT TERM  #
+    exit "$_crlf_status"  #
+fi #
 
 set -euo pipefail
 
-# Register early cleanup trap for CRLF temporary file in child process
-if [[ -n "${GITSETU_CRLF_TMP:-}" ]]; then
-    trap 'rm -f "$GITSETU_CRLF_TMP" 2>/dev/null || true' EXIT INT TERM
+if [[ -z "${HOME:-}" ]]; then
+    printf '%s\n' "Error: HOME must be set to a non-empty path." >&2
+    exit 1
 fi
 
-# Global cleanup tracking arrays
+# Only process-created temporary objects are registered for cleanup.
 GITSETU_CLEANUP_FILES=()
 GITSETU_CLEANUP_DIRS=()
+
+gitsetu_early_cleanup() {
+    local f d
+    for f in ${GITSETU_CLEANUP_FILES[@]+"${GITSETU_CLEANUP_FILES[@]}"}; do
+        [[ -n "$f" && "$f" != "/" && "$f" != "$HOME" ]] || continue
+        rm -f "$f" 2>/dev/null || true
+    done
+    for d in ${GITSETU_CLEANUP_DIRS[@]+"${GITSETU_CLEANUP_DIRS[@]}"}; do
+        [[ -n "$d" && "$d" != "/" && "$d" != "$HOME" && "$d" != "." ]] || continue
+        rm -rf "$d" 2>/dev/null || true
+    done
+}
+trap gitsetu_early_cleanup EXIT
 
 # ------------------------------------------------------------------------------
 # Resolve script directory (handles symlinks, $0 fallback, vboxsf CRLF re-exec)
 # ------------------------------------------------------------------------------
 resolve_script_dir() {
-    # When re-executed for CRLF cleaning, BASH_SOURCE is /dev/fd/N.
-    # Use GITSETU_ORIG_SCRIPT (set before re-exec) to find the real script.
-    # Strip \r because the env var was set from a CRLF-contaminated line.
-    local source="${GITSETU_ORIG_SCRIPT:-${BASH_SOURCE[0]:-$0}}"
+    local source="${BASH_SOURCE[0]:-$0}"
     source="${source//$'\r'/}"
     source="${source//\\//}"
+    [[ -n "$source" ]] || return 1
 
-    # If source is empty or just a basename, try $0
-    if [[ -z "$source" ]] || [[ "$source" == "bash" ]]; then
-        source="$0"
+    if [[ "$source" != /* ]] && [[ ! "$source" =~ ^[a-zA-Z]:/ ]]; then
+        local base
+        base=$(pwd -W 2>/dev/null || pwd -P 2>/dev/null || pwd) || return 1
+        source="${base%/}/${source}"
     fi
 
-    # If still relative, make it absolute (handles Unix / and Windows C:/ or C:\)
-    if [[ "$source" != /* ]] && [[ "$source" != [a-zA-Z]:/* ]] && [[ "$source" != [a-zA-Z]:\\* ]]; then
-        source="$(pwd)/$source"
-    fi
-
-    # Resolve symlinks
-    while [[ -L "$source" ]]; do
+    local hops=0
+    while [[ -L "$source" && "$hops" -lt 40 ]]; do
         local link_dir
-        link_dir=$(cd -P "$(dirname "$source")" 2>/dev/null && pwd)
-        source=$(readlink "$source")
-        if [[ "$source" != /* ]]; then
-            source="$link_dir/$source"
+        link_dir=$(cd -P "$(dirname "$source")" 2>/dev/null && (pwd -W 2>/dev/null || pwd -P)) || return 1
+        source=$(readlink "$source") || return 1
+        if [[ "$source" != /* ]] && [[ ! "$source" =~ ^[a-zA-Z]:/ ]]; then
+            source="${link_dir}/${source}"
         fi
+        hops=$((hops + 1))
     done
+    [[ "$hops" -lt 40 ]] || return 1
 
     local dir
-    dir=$(cd -P "$(dirname "$source")" 2>/dev/null && pwd)
-    if [[ ! -f "$dir/lib/core.sh" ]]; then
-        if [[ -n "${GITSETU_DIR:-}" && -f "${GITSETU_DIR}/lib/core.sh" ]]; then
-            dir="$GITSETU_DIR"
-        elif [[ -f "$(pwd)/lib/core.sh" ]]; then
-            dir="$(pwd)"
-        elif [[ -f "$HOME/.local/share/gitsetu/lib/core.sh" ]]; then
-            dir="$HOME/.local/share/gitsetu"
-        fi
-    fi
+    dir=$(cd -P "$(dirname "$source")" 2>/dev/null && (pwd -W 2>/dev/null || pwd -P)) || return 1
     printf '%s' "$dir"
 }
 
-GITSETU_SCRIPT_DIR="$(resolve_script_dir)"
+if [[ "$_crlf_handoff_active" -eq 1 ]]; then
+    GITSETU_SCRIPT_DIR="$_crlf_orig_dir"
+else
+    GITSETU_SCRIPT_DIR="$(resolve_script_dir || true)"
+fi
 GITSETU_SCRIPT_DIR="${GITSETU_SCRIPT_DIR//$'\r'/}"
+# Never inherit an environment-selected module root or updater root.
+GITSETU_DIR="$GITSETU_SCRIPT_DIR"
 
 # ------------------------------------------------------------------------------
-# cmd_prompt — Zero-latency profile detection for PS1 integration
+# Low-overhead prompt profile detection (no sourced modules required)
 # ------------------------------------------------------------------------------
-cmd_prompt() {
-    if [[ ! -f "$GITSETU_PROFILES_CONF" ]]; then
-        return 0
-    fi
+_gitsetu_lower() {
+    local value="${1:-}"
+    local output="" char i
+    for (( i=0; i<${#value}; i++ )); do
+        char="${value:i:1}"
+        case "$char" in
+            A) output="${output}a" ;; B) output="${output}b" ;; C) output="${output}c" ;; D) output="${output}d" ;;
+            E) output="${output}e" ;; F) output="${output}f" ;; G) output="${output}g" ;; H) output="${output}h" ;;
+            I) output="${output}i" ;; J) output="${output}j" ;; K) output="${output}k" ;; L) output="${output}l" ;;
+            M) output="${output}m" ;; N) output="${output}n" ;; O) output="${output}o" ;; P) output="${output}p" ;;
+            Q) output="${output}q" ;; R) output="${output}r" ;; S) output="${output}s" ;; T) output="${output}t" ;;
+            U) output="${output}u" ;; V) output="${output}v" ;; W) output="${output}w" ;; X) output="${output}x" ;;
+            Y) output="${output}y" ;; Z) output="${output}z" ;;
+            *) output="${output}${char}" ;;
+        esac
+    done
+    printf '%s' "$output"
+}
 
-    # Normalize PWD like we do for dirs
-    local current_pwd="${PWD%/}"
-    if [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "mingw"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]]; then
-        current_pwd=$(pwd -W 2>/dev/null || echo "$current_pwd")
+_gitsetu_valid_encoded_field() {
+    local field="${1:-}"
+    [[ -z "$field" || "$field" =~ ^%[0-9A-F]{2}(%[0-9A-F]{2})*$ ]]
+}
+
+# Decode one canonical v2 field into _GITSETU_DECODED_FIELD without evaluating
+# the encoded bytes as shell source.
+_gitsetu_decode_registry_field() {
+    local encoded="${1:-}"
+    _GITSETU_DECODED_FIELD=""
+    _gitsetu_valid_encoded_field "$encoded" || return 1
+    [[ "$encoded" != *%00* ]] || return 1
+
+    local decoded="" hex high low octal char i
+    local high_value low_value
+    for (( i=1; i<${#encoded}; i+=3 )); do
+        hex="${encoded:i:2}"
+        high="${hex:0:1}"
+        low="${hex:1:1}"
+        case "$high" in
+            0) high_value=0 ;; 1) high_value=1 ;; 2) high_value=2 ;; 3) high_value=3 ;; 4) high_value=4 ;;
+            5) high_value=5 ;; 6) high_value=6 ;; 7) high_value=7 ;; 8) high_value=8 ;; 9) high_value=9 ;;
+            A) high_value=10 ;; B) high_value=11 ;; C) high_value=12 ;; D) high_value=13 ;; E) high_value=14 ;; F) high_value=15 ;;
+            *) return 1 ;;
+        esac
+        case "$low" in
+            0) low_value=0 ;; 1) low_value=1 ;; 2) low_value=2 ;; 3) low_value=3 ;; 4) low_value=4 ;;
+            5) low_value=5 ;; 6) low_value=6 ;; 7) low_value=7 ;; 8) low_value=8 ;; 9) low_value=9 ;;
+            A) low_value=10 ;; B) low_value=11 ;; C) low_value=12 ;; D) low_value=13 ;; E) low_value=14 ;; F) low_value=15 ;;
+            *) return 1 ;;
+        esac
+        octal=$(( (high_value * 16) + low_value ))
+        printf -v octal '%03o' "$octal"
+        printf -v char '\\%s' "$octal"
+        decoded="${decoded}${char}"
+    done
+    printf -v _GITSETU_DECODED_FIELD '%b' "$decoded"
+}
+
+_gitsetu_context_path() {
+    local path="${1:-}"
+    [[ -n "$path" ]] || return 1
+    if [[ "$path" == "~" ]]; then
+        path="$HOME"
+    elif [[ "$path" == "~/"* ]]; then
+        path="${HOME}/${path:2}"
     fi
-    current_pwd="${current_pwd//\\//}"
-    if [[ "$current_pwd" =~ ^/([a-zA-Z])/(.*) ]]; then
-        local drive="${BASH_REMATCH[1]}"
-        local rest="${BASH_REMATCH[2]}"
+    path="${path//\\//}"
+    local drive rest
+    if [[ "$path" =~ ^/([a-zA-Z])/(.*)$ ]]; then
+        drive="${BASH_REMATCH[1]}"
+        rest="${BASH_REMATCH[2]}"
         drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
-        current_pwd="${drive}:/${rest}"
-    elif [[ "$current_pwd" =~ ^([a-zA-Z]):/(.*) ]]; then
-        local drive="${BASH_REMATCH[1]}"
-        local rest="${BASH_REMATCH[2]}"
+        path="${drive}:/${rest}"
+    elif [[ "$path" =~ ^([a-zA-Z]):/(.*)$ ]]; then
+        drive="${BASH_REMATCH[1]}"
+        rest="${BASH_REMATCH[2]}"
         drive=$(printf '%s' "$drive" | tr '[:lower:]' '[:upper:]')
-        current_pwd="${drive}:/${rest}"
+        path="${drive}:/${rest}"
     fi
-    
-    local is_ci=0
+    while [[ "${#path}" -gt 1 && "$path" == */ ]]; do path="${path%/}"; done
+    printf '%s' "$path"
+}
+
+_gitsetu_case_insensitive_context() {
     case "${GITSETU_OS:-${OSTYPE:-}}" in
-        gitbash|macos|msys*|mingw*|cygwin*|darwin*) is_ci=1 ;;
-        *)
-            local u
-            u=$(uname -s 2>/dev/null || true)
-            case "$u" in
-                MSYS*|MINGW*|CYGWIN*|Darwin*) is_ci=1 ;;
-            esac
-            ;;
+        gitbash|macos|msys*|mingw*|cygwin*|darwin*) return 0 ;;
     esac
+    local u
+    u=$(uname -s 2>/dev/null || true)
+    case "$u" in MSYS*|MINGW*|CYGWIN*|Darwin*) return 0 ;; esac
+    return 1
+}
 
-    local matched_profile=""
-    local max_len=0
+_gitsetu_prompt_valid_path() {
+    local path="${1:-}"
+    [[ -n "$path" ]] || return 1
+    [[ "$path" == /* || "$path" =~ ^[A-Za-z]:/ ]] || return 1
+    case "$path" in *\\*) return 1 ;; esac
+    [[ "$path" != *$'\r'* && "$path" != *$'\n'* && "$path" != *$'\t'* ]] || return 1
+    [[ "$path" != *'//'* && "$path" != '/../'* && "$path" != '../'* && "$path" != *'/./'* ]] || return 1
+    [[ "$path" != *'/..' && "$path" != '/.' ]] || return 1
+    return 0
+}
 
-    # Prefix match without subshells
-    local f1 _f2 f3 f4 _f5 _f6 _f7 _f8 _f9
-    while IFS=: read -r f1 _f2 f3 f4 _f5 _f6 _f7 _f8 _f9 || [[ -n "$f1" ]]; do
-        [[ "$f1" == "#"* ]] && continue
-        [[ -z "$f1" ]] && continue
-
-        local label="$f1"
-        local dir="$f3"
-        if [[ "${#f3}" -eq 1 ]] && [[ "$f4" == /* ]]; then
-            dir="${f3}:${f4}"
+_gitsetu_prompt_valid_provider() {
+    local provider="${1:-}"
+    local rest part
+    [[ "$provider" == *.* && "$provider" != *..* && "$provider" != *[[:space:]]* ]] || return 1
+    case "$provider" in *\\*) return 1 ;; esac
+    [[ "$provider" != *:* && "$provider" != */* ]] || return 1
+    rest="$provider"
+    while :; do
+        if [[ "$rest" == *.* ]]; then
+            part="${rest%%.*}"
+            rest="${rest#*.}"
+        else
+            part="$rest"
+            rest=""
         fi
+        [[ "$part" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || return 1
+        [[ -n "$rest" ]] || break
+    done
+}
 
-        [[ -z "$dir" ]] && continue
+_gitsetu_prompt_valid_user() {
+    local user="${1:-}"
+    [[ -z "$user" ]] && return 0
+    [[ "$user" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ && "$user" != *. && "$user" != *- && "$user" != *..* ]]
+}
 
-        dir="${dir//\\//}"
-        if [[ "$dir" =~ ^/([a-zA-Z])/(.*) ]]; then
-            local d_drive="${BASH_REMATCH[1]}"
-            local d_rest="${BASH_REMATCH[2]}"
-            d_drive=$(printf '%s' "$d_drive" | tr '[:lower:]' '[:upper:]')
-            dir="${d_drive}:/${d_rest}"
-        elif [[ "$dir" =~ ^([a-zA-Z]):/(.*) ]]; then
-            local d_drive="${BASH_REMATCH[1]}"
-            local d_rest="${BASH_REMATCH[2]}"
-            d_drive=$(printf '%s' "$d_drive" | tr '[:lower:]' '[:upper:]')
-            dir="${d_drive}:/${d_rest}"
+_gitsetu_prompt_valid_email() {
+    local email="${1:-}"
+    local local_part domain
+    [[ -n "$email" && "$email" != *[[:cntrl:]]* && "$email" != *[[:space:]]* ]] || return 1
+    [[ "$email" == *@* && "$email" != *@*@* ]] || return 1
+    local_part="${email%%@*}"
+    domain="${email#*@}"
+    [[ -n "$local_part" && "$domain" == *.* && "$domain" != .* && "$domain" != *. && "$domain" != *..* ]] || return 1
+    [[ "${domain##*.}" =~ ^[A-Za-z][A-Za-z0-9-]*$ ]]
+}
+
+_gitsetu_prompt_profile_identity_valid_impl() {
+    local xdg_config="${1:-}"
+    local label="${2:-}"
+    local config_file="$xdg_config/gitsetu/profiles/${label}.gitconfig"
+    local name email
+    [[ -f "$config_file" && ! -L "$config_file" ]] || return 1
+    [[ "$(stat -c '%s' "$config_file" 2>/dev/null || stat -f '%z' "$config_file" 2>/dev/null || printf '0')" != "0" ]] || return 1
+    command -v git >/dev/null 2>&1 || return 1
+    name=$(git config -f "$config_file" --get user.name 2>/dev/null) || return 1
+    email=$(git config -f "$config_file" --get user.email 2>/dev/null) || return 1
+    [[ -n "$name" && "$name" != *[[:cntrl:]]* && "$name" != " "* && "$name" != *" " && "$name" != *$'\t'* ]] || return 1
+    _gitsetu_prompt_valid_email "$email"
+}
+
+_gitsetu_prompt_profile_identity_valid() {
+    _gitsetu_prompt_profile_identity_valid_impl "$@" || {
+        GITSETU_PROMPT_STATE="invalid"
+        return 1
+    }
+}
+
+cmd_prompt() {
+    GITSETU_PROMPT_STATE="unmanaged"
+    GITSETU_PROMPT_PROFILE=""
+    local home="${HOME:-}"
+    local xdg_config="${XDG_CONFIG_HOME:-$home/.config}"
+    [[ -n "$home" ]] || return 0
+    local conf_file="$xdg_config/gitsetu/profiles.conf"
+    local current_pwd profile_dir check_pwd check_dir
+    local raw_line encoded_label encoded_dir encoded_provider encoded_sign encoded_key encoded_user extra
+    local label directory provider sign_commits key_path provider_user
+    local matched_profile="" max_len=0 dir_len line_number=0 header_seen=0
+    local case_insensitive=0 seen_labels=""
+
+    case "$xdg_config" in
+        /*|[a-zA-Z]:/*) ;;
+        *) return 0 ;;
+    esac
+    [[ -f "$conf_file" && ! -L "$conf_file" ]] || return 0
+
+    local windows_context=0
+    case "${GITSETU_OS:-}:${OSTYPE:-}" in
+        gitbash:*|msys:*|mingw:*|cygwin:*|*:cygwin*|*:msys*|*:mingw:*|*:CYGWIN*|*:MSYS*|*:MINGW*) windows_context=1 ;;
+    esac
+    if [[ "$windows_context" -eq 1 ]] && command -v pwd >/dev/null 2>&1; then
+        current_pwd=$(pwd -W 2>/dev/null || pwd -P 2>/dev/null || printf '%s' "$PWD")
+    elif [[ "$HOME" =~ ^[a-zA-Z]:/ ]] && command -v pwd >/dev/null 2>&1; then
+        current_pwd=$(pwd -W 2>/dev/null || pwd -P 2>/dev/null || printf '%s' "$PWD")
+    else
+        current_pwd=$(pwd -P 2>/dev/null || printf '%s' "$PWD")
+    fi
+    current_pwd=$(_gitsetu_context_path "$current_pwd") || return 0
+    if _gitsetu_case_insensitive_context; then
+        case_insensitive=1
+        check_pwd=$(_gitsetu_lower "$current_pwd")
+    else
+        check_pwd="$current_pwd"
+    fi
+
+    while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+        line_number=$((line_number + 1))
+        if [[ "$line_number" -eq 1 ]]; then
+            [[ "$raw_line" == "# gitsetu-registry-v2" ]] || return 0
+            header_seen=1
+            continue
         fi
+        [[ "$header_seen" -eq 1 && -n "$raw_line" ]] || return 0
+        [[ "${#raw_line}" -le 131072 ]] || return 0
 
-        local check_pwd="$current_pwd"
-        local check_dir="$dir"
-        if [[ "$is_ci" -eq 1 ]]; then
-            check_pwd=$(printf '%s' "$check_pwd" | tr '[:upper:]' '[:lower:]')
-            check_dir=$(printf '%s' "$check_dir" | tr '[:upper:]' '[:lower:]')
+        IFS=: read -r encoded_label encoded_dir encoded_provider encoded_sign encoded_key encoded_user extra <<< "$raw_line"
+        [[ -z "$extra" ]] || return 0
+        _gitsetu_valid_encoded_field "$encoded_label" || return 0
+        _gitsetu_valid_encoded_field "$encoded_dir" || return 0
+        _gitsetu_valid_encoded_field "$encoded_provider" || return 0
+        _gitsetu_valid_encoded_field "$encoded_sign" || return 0
+        _gitsetu_valid_encoded_field "$encoded_key" || return 0
+        _gitsetu_valid_encoded_field "$encoded_user" || return 0
+
+        _gitsetu_decode_registry_field "$encoded_label" || return 0
+        label="$_GITSETU_DECODED_FIELD"
+        _gitsetu_decode_registry_field "$encoded_dir" || return 0
+        directory="$_GITSETU_DECODED_FIELD"
+        _gitsetu_decode_registry_field "$encoded_provider" || return 0
+        provider="$_GITSETU_DECODED_FIELD"
+        _gitsetu_decode_registry_field "$encoded_sign" || return 0
+        sign_commits="$_GITSETU_DECODED_FIELD"
+        _gitsetu_decode_registry_field "$encoded_key" || return 0
+        key_path="$_GITSETU_DECODED_FIELD"
+        _gitsetu_decode_registry_field "$encoded_user" || return 0
+        provider_user="$_GITSETU_DECODED_FIELD"
+
+        [[ "$label" =~ ^[a-z][a-z0-9-]{0,19}$ && "$label" != *- ]] || return 0
+        [[ "$sign_commits" == "0" || "$sign_commits" == "1" ]] || return 0
+        _gitsetu_prompt_valid_provider "$provider" || return 0
+        _gitsetu_prompt_valid_user "$provider_user" || return 0
+        [[ -n "$key_path" ]] || return 0
+        _gitsetu_prompt_valid_path "$key_path" || return 0
+        if [[ "$label" == "global" ]]; then
+            [[ -z "$directory" ]] || return 0
+        else
+            _gitsetu_prompt_valid_path "$directory" || return 0
+            [[ "$directory" != "/" && ! "$directory" =~ ^[A-Za-z]:/$ ]] || return 0
         fi
-        
-        # Check if PWD starts with the profile dir
-        if [[ "$check_pwd/" == "$check_dir/"* ]] || [[ "$check_pwd" == "$check_dir" ]]; then
-            # Longest match wins
-            local dir_len=${#dir}
+        _gitsetu_prompt_profile_identity_valid "$xdg_config" "$label" || return 0
+        if [[ -z "$seen_labels" && "$label" != "global" ]]; then
+            return 0
+        fi
+        case $'\n'"$seen_labels"$'\n' in
+            *$'\n'"$label"$'\n'*) return 0 ;;
+        esac
+        seen_labels="${seen_labels}${label}"$'\n'
+
+        [[ -n "$directory" ]] || continue
+        profile_dir=$(_gitsetu_context_path "$directory") || return 0
+        check_dir="$profile_dir"
+        [[ "$case_insensitive" -eq 0 ]] || check_dir=$(_gitsetu_lower "$check_dir")
+        if [[ "$check_pwd/" == "$check_dir/"* || "$check_pwd" == "$check_dir" ]]; then
+            dir_len=${#profile_dir}
             if [[ "$dir_len" -gt "$max_len" ]]; then
                 max_len=$dir_len
                 matched_profile="$label"
+                GITSETU_PROMPT_PROFILE="$label"
             fi
         fi
-    done < "$GITSETU_PROFILES_CONF"
+    done < "$conf_file"
 
+    [[ "$header_seen" -eq 1 ]] || return 0
     if [[ -n "$matched_profile" ]]; then
-        echo "$matched_profile"
+        GITSETU_PROMPT_STATE="matched"
+        printf '%s\n' "$matched_profile"
     fi
+    return 0
 }
 
-# Fast-path for prompt to avoid 14 subshell forks (95ms latency penalty)
+# Prompt is intentionally a source-free fast path for PS1 use.
 if [[ "${1:-}" == "prompt" ]]; then
-    if [[ -z "${GITSETU_PROFILES_CONF:-}" ]]; then
-        GITSETU_PROFILES_CONF="${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu/profiles.conf"
-    fi
     shift
-    cmd_prompt "$@"
+    if [[ $# -ne 0 ]]; then
+        printf '%s\n' "Error: prompt does not accept arguments." >&2
+        exit 1
+    fi
+    cmd_prompt
     exit $?
 fi
 
@@ -206,126 +499,242 @@ fi
 # (macOS default), command substitution subshells inherit and can consume
 # stdin from pipes, breaking commands like "credential" that read stdin.
 # ------------------------------------------------------------------------------
+gitsetu_private_staging_dir() {
+    local root candidate owner uid
+    [[ -x /tmp || -x /var/tmp ]] || return 1
+    command -v mktemp >/dev/null 2>&1 || return 1
+
+    for root in /tmp /var/tmp; do
+        [[ -d "$root" && -w "$root" && ! -L "$root" ]] || continue
+        candidate=$(umask 077; mktemp -d "${root%/}/.gitsetu-src.XXXXXX" 2>/dev/null) || continue
+        [[ -d "$candidate" && ! -L "$candidate" && -O "$candidate" ]] || continue
+        case "$candidate" in
+            "$root"/.gitsetu-src.*) ;;
+            *) continue ;;
+        esac
+        [[ "$candidate" != *$'\r'* && "$candidate" != *$'\n'* && "$candidate" != *$'\t'* ]] || {
+            rmdir "$candidate" 2>/dev/null || true
+            continue
+        }
+        chmod 700 "$candidate" 2>/dev/null || {
+            rmdir "$candidate" 2>/dev/null || true
+            continue
+        }
+        if command -v stat >/dev/null 2>&1 && command -v id >/dev/null 2>&1; then
+            owner=$(stat -c '%u' "$candidate" 2>/dev/null || stat -f '%u' "$candidate" 2>/dev/null || true)
+            uid=$(id -u 2>/dev/null || true)
+            if [[ -n "$owner" && -n "$uid" && "$owner" != "$uid" ]]; then
+                rmdir "$candidate" 2>/dev/null || true
+                continue
+            fi
+        fi
+        printf '%s' "$candidate"
+        return 0
+    done
+    return 1
+}
+
+_gitsetu_remove_staged_file() {
+    local path="${1:-}"
+    local dir="${2:-}"
+    [[ -n "$path" && -n "$dir" ]] || return 0
+    case "$path" in
+        "$dir"/module.*) ;;
+        *) return 0 ;;
+    esac
+    [[ -f "$path" && ! -L "$path" && -O "$path" ]] || return 0
+    rm -f "$path" 2>/dev/null || true
+}
+
 gitsetu_source() {
-    local target="$1"
-    if [[ ! -f "$target" ]]; then
-        echo "Error: Required library module not found: $target" >&2
+    local target="${1:-}"
+    if [[ -z "$target" || ! -f "$target" || -L "$target" || ! -r "$target" ]]; then
+        echo "Error: Required library module missing, unsafe, or unreadable: ${target:-<empty>}" >&2
         return 1
     fi
+    if [[ "$target" != "$GITSETU_SCRIPT_DIR/lib/"* ]]; then
+        echo "Error: Refusing to source a module outside the trusted checkout: $target" >&2
+        return 1
+    fi
+    case "$target" in
+        *\\*|*//*|*/../*|*/./*)
+            echo "Error: Refusing a non-canonical module path: $target" >&2
+            return 1
+            ;;
+    esac
+    [[ ! -L "$(dirname "$target")" ]] || {
+        echo "Error: Refusing a redirected module directory: $target" >&2
+        return 1
+    }
 
-    # Fast path: Pure Bash header inspection (zero subprocess forks)
     local _chk_line=""
     read -r _chk_line < "$target" 2>/dev/null || true
     if [[ "$_chk_line" != *$'\r'* ]]; then
+        local _source_status=0
         # shellcheck disable=SC1090
-        source "$target"
-        return $?
-    fi
-
-    # Slow path: CRLF-contaminated mount (vboxsf). Create mode 0600 temp file with directory fallback
-    local _src_tmp="" _scand
-    for _scand in "${TMPDIR:-}" "${TEMP:-}" "${TMP:-}" "/tmp" "/var/tmp" "${XDG_RUNTIME_DIR:-}" "${HOME:-}/.cache" "${HOME:-}" "."; do
-        [[ -n "$_scand" && -d "$_scand" && -w "$_scand" ]] || continue
-        _src_tmp=$(umask 077; mktemp "${_scand%/}/.gitsetu_src.XXXXXX" 2>/dev/null || true)
-        if [[ -n "$_src_tmp" && -f "$_src_tmp" && -w "$_src_tmp" ]]; then
-            break
+        source "$target" || _source_status=$?
+        if [[ "$_source_status" -ne 0 ]]; then
+            echo "Error: Failed to source library module: $target (status $_source_status)" >&2
         fi
-        _src_tmp=""
-    done
-
-    if [[ -z "$_src_tmp" || ! -f "$_src_tmp" ]]; then
-        echo "Error: Failed to create temp file to source $target" >&2
-        return 1
+        return "$_source_status"
     fi
 
+    local _src_dir _src_tmp _s_ok=0 _src_res=0
+    _src_dir=$(gitsetu_private_staging_dir) || {
+        echo "Error: Failed to create a trusted private source staging directory" >&2
+        return 1
+    }
+    GITSETU_CLEANUP_DIRS+=("$_src_dir")
+    _src_tmp=$(umask 077; mktemp "${_src_dir}/module.XXXXXX" 2>/dev/null) || {
+        rmdir "$_src_dir" 2>/dev/null || true
+        echo "Error: Failed to create a trusted private source staging file" >&2
+        return 1
+    }
+    [[ -f "$_src_tmp" && ! -L "$_src_tmp" && -O "$_src_tmp" ]] || {
+        _gitsetu_remove_staged_file "$_src_tmp" "$_src_dir"
+        rmdir "$_src_dir" 2>/dev/null || true
+        return 1
+    }
+    chmod 600 "$_src_tmp" 2>/dev/null || {
+        _gitsetu_remove_staged_file "$_src_tmp" "$_src_dir"
+        rmdir "$_src_dir" 2>/dev/null || true
+        return 1
+    }
     GITSETU_CLEANUP_FILES+=("$_src_tmp")
-    local _s_ok=0
-    if command -v tr >/dev/null 2>&1; then
-        tr -d '\r' < "$target" > "$_src_tmp" && _s_ok=1
-    elif command -v sed >/dev/null 2>&1; then
-        sed -e 's/\r$//' < "$target" > "$_src_tmp" && _s_ok=1
-    elif command -v awk >/dev/null 2>&1; then
-        awk '{ sub(/\r$/, ""); print }' "$target" > "$_src_tmp" && _s_ok=1
-    else
+
+    if command -v tr >/dev/null 2>&1 && tr -d '\r' < "$target" > "$_src_tmp"; then _s_ok=1; fi
+    if [[ "$_s_ok" -eq 0 ]] && command -v sed >/dev/null 2>&1 && sed -e 's/\r$//' < "$target" > "$_src_tmp"; then _s_ok=1; fi
+    if [[ "$_s_ok" -eq 0 ]] && command -v awk >/dev/null 2>&1 && awk '{ sub(/\r$/, ""); print }' "$target" > "$_src_tmp"; then _s_ok=1; fi
+    if [[ "$_s_ok" -eq 0 ]]; then
         while IFS= read -r _l || [[ -n "$_l" ]]; do
             printf '%s\n' "${_l%$'\r'}"
         done < "$target" > "$_src_tmp" && _s_ok=1
     fi
-
     if [[ "$_s_ok" -ne 1 ]]; then
-        rm -f "$_src_tmp" 2>/dev/null || true
+        _gitsetu_remove_staged_file "$_src_tmp" "$_src_dir"
+        rmdir "$_src_dir" 2>/dev/null || true
         echo "Error: Failed to strip carriage returns from $target" >&2
         return 1
     fi
 
     # shellcheck disable=SC1090
-    source "$_src_tmp"
-    local _src_res=$?
-    rm -f "$_src_tmp" 2>/dev/null || true
+    source "$_src_tmp" || _src_res=$?
+    _gitsetu_remove_staged_file "$_src_tmp" "$_src_dir"
+    rmdir "$_src_dir" 2>/dev/null || true
+    if [[ "$_src_res" -ne 0 ]]; then
+        echo "Error: Failed to source library module: $target" >&2
+    fi
     return "$_src_res"
 }
-gitsetu_source "$GITSETU_SCRIPT_DIR/lib/core.sh"
-gitsetu_source "$GITSETU_SCRIPT_DIR/lib/platform.sh"
-gitsetu_source "$GITSETU_SCRIPT_DIR/lib/ui.sh"
-gitsetu_source "$GITSETU_SCRIPT_DIR/lib/validate.sh"
-gitsetu_source "$GITSETU_SCRIPT_DIR/lib/backup.sh"
-gitsetu_source "$GITSETU_SCRIPT_DIR/lib/ssh.sh"
-gitsetu_source "$GITSETU_SCRIPT_DIR/lib/gitconfig.sh"
-gitsetu_source "$GITSETU_SCRIPT_DIR/lib/guard.sh"
-gitsetu_source "$GITSETU_SCRIPT_DIR/lib/doctor.sh"
-gitsetu_source "$GITSETU_SCRIPT_DIR/lib/verify.sh"
-gitsetu_source "$GITSETU_SCRIPT_DIR/lib/teardown.sh"
-gitsetu_source "$GITSETU_SCRIPT_DIR/lib/discovery.sh"
-gitsetu_source "$GITSETU_SCRIPT_DIR/lib/setup.sh"
-gitsetu_source "$GITSETU_SCRIPT_DIR/lib/keychain.sh"
+
+gitsetu_validate_module_checkout() {
+    local dir="${1:-}"
+    local module
+    local modules=(
+        core.sh platform.sh ui.sh validate.sh backup.sh ssh.sh gitconfig.sh
+        guard.sh doctor.sh verify.sh teardown.sh discovery.sh setup.sh keychain.sh
+    )
+
+    [[ -n "$dir" && -d "$dir/lib" && ! -L "$dir/lib" ]] || return 1
+    for module in "${modules[@]}"; do
+        if [[ ! -f "$dir/lib/$module" || -L "$dir/lib/$module" || ! -r "$dir/lib/$module" ]]; then
+            printf 'Error: required library module is missing or unsafe: %s\n' \
+                "$dir/lib/$module" >&2
+            return 1
+        fi
+    done
+}
+
+if ! gitsetu_validate_module_checkout "$GITSETU_SCRIPT_DIR"; then
+    printf '%s\n' "Error: refusing to load GitSetu modules from an untrusted or incomplete checkout." >&2
+    exit 1
+fi
+
+gitsetu_load_modules() {
+    local module
+    local module_status=0
+    local modules=(
+        core.sh platform.sh ui.sh validate.sh backup.sh ssh.sh gitconfig.sh
+        guard.sh doctor.sh verify.sh teardown.sh discovery.sh setup.sh keychain.sh
+    )
+    for module in "${modules[@]}"; do
+        if gitsetu_source "$GITSETU_SCRIPT_DIR/lib/$module"; then
+            :
+        else
+            module_status=$?
+            printf 'Error: module loading aborted at %s (status %s)\n' "$module" "$module_status" >&2
+            return "$module_status"
+        fi
+    done
+    return 0
+}
+
+if gitsetu_load_modules; then
+    :
+else
+    _gitsetu_module_status=$?
+    gitsetu_early_cleanup
+    trap - EXIT
+    exit "$_gitsetu_module_status"
+fi
 
 # ------------------------------------------------------------------------------
 # Unified Global Cleanup Architecture
 # ------------------------------------------------------------------------------
 
+GITSETU_CLEANUP_DONE=0
+
 gitsetu_global_cleanup() {
-    # Restore terminal cursor visibility and echo if interrupted
-    printf '\033[?25h' >&2 2>/dev/null || true
-    stty echo 2>/dev/null || true
-    # Clean up CRLF self-healing temp file if any
-    if [[ -n "${GITSETU_CRLF_TMP:-}" ]] && [[ -f "$GITSETU_CRLF_TMP" ]]; then
-        rm -f "$GITSETU_CRLF_TMP" 2>/dev/null || true
+    [[ "$GITSETU_CLEANUP_DONE" -eq 0 ]] || return 0
+    GITSETU_CLEANUP_DONE=1
+
+    if declare -f ui_restore_terminal >/dev/null 2>&1; then
+        ui_restore_terminal
     fi
-    local f d
-    for f in ${GITSETU_CLEANUP_FILES[@]+"${GITSETU_CLEANUP_FILES[@]}"}; do
-        rm -f "$f" 2>/dev/null || true
-    done
-    if type release_lock >/dev/null 2>&1; then
-        GITSETU_LOCK_DEPTH=1
+
+    if type release_lock >/dev/null 2>&1 && [[ "${GITSETU_LOCK_DEPTH:-0}" =~ ^[0-9]+$ && "${GITSETU_LOCK_DEPTH:-0}" -gt 0 ]]; then
         release_lock 2>/dev/null || true
     fi
+
+    # The core cleanup helper removes only paths registered by this process and
+    # recurses through private temp directories owned by it.
+    if declare -f cleanup_temp_resources >/dev/null 2>&1; then
+        cleanup_temp_resources 2>/dev/null || true
+        return 0
+    fi
+
+    local f d lock_owner
+    for f in ${GITSETU_CLEANUP_FILES[@]+"${GITSETU_CLEANUP_FILES[@]}"}; do
+        [[ -n "$f" ]] || continue
+        rm -f "$f" 2>/dev/null || true
+    done
     for d in ${GITSETU_CLEANUP_DIRS[@]+"${GITSETU_CLEANUP_DIRS[@]}"}; do
+        [[ -n "$d" && "$d" != "/" ]] || continue
         if [[ "$d" == *.lock ]]; then
             if [[ -f "$d/pid" ]]; then
-                local lock_owner
-                lock_owner=$(cat "$d/pid" 2>/dev/null || echo "")
-                if [[ "$lock_owner" != "$$" ]]; then
-                    continue # We do not own this lock. Do not delete it.
-                fi
+                lock_owner=$(cat "$d/pid" 2>/dev/null || true)
+                [[ "$lock_owner" == "$$" ]] || continue
                 rm -f "$d/pid" "$d/timestamp" 2>/dev/null || true
             else
-                continue # Lock has no pid file; we do not own it. Do not delete it.
+                continue
             fi
         fi
-        rmdir "$d" 2>/dev/null || true
+        rm -rf "$d" 2>/dev/null || true
     done
 }
 
-cleanup() {
-    printf '\033[?25h' >&2 2>/dev/null || true
-    stty echo 2>/dev/null || true  # Restore terminal echo if interrupted during password entry
+gitsetu_signal_cleanup() {
+    local signal_status="${1:-130}"
+    trap - EXIT
     printf >&2 '\n'
-    print_warning "Interrupted. No changes were made (or partial changes were backed up)."
+    print_warning "Interrupted. Cleanup completed; review any completed operations before retrying."
     gitsetu_global_cleanup
-    exit 130
+    exit "$signal_status"
 }
+
 trap gitsetu_global_cleanup EXIT
-trap cleanup SIGINT SIGTERM
+trap 'gitsetu_signal_cleanup 130' INT
+trap 'gitsetu_signal_cleanup 143' TERM
 
 # ------------------------------------------------------------------------------
 # Usage / Help text
@@ -344,7 +753,7 @@ ${BOLD}USAGE${RESET}
     gitsetu verify                   Test SSH keys and git config
     gitsetu doctor [--repair] [--dry-run]
                                      Run diagnostic checks or auto-heal configuration
-    gitsetu update                   Update gitsetu to the latest version
+    gitsetu update --development     Verify a clean local development checkout
     gitsetu prompt                   Print active profile for \$PS1
     gitsetu backup [out_file]        Export encrypted identity state
     gitsetu restore <in_file>        Import encrypted identity state
@@ -353,7 +762,7 @@ ${BOLD}USAGE${RESET}
                                      --deep: Recursively strip local repository overrides
                                      --force: Bypass confirmation prompt
     gitsetu guard --install          Install pre-commit identity guard hook
-    gitsetu guard --uninstall        Remove the guard hook
+    gitsetu guard --uninstall        Remove the guard hook (explicit policy opt-out)
     gitsetu --help, -h               Show this help
     gitsetu --version, -v            Show version
 
@@ -376,6 +785,10 @@ ${BOLD}EXAMPLES${RESET}
     ${DIM}# Install commit safety net:${RESET}
     gitsetu guard --install
 
+${BOLD}SECURITY POLICY${RESET}
+    Guard: unmanaged repositories fail open; managed repositories fail closed
+           when the expected identity is unresolved or does not match.
+
 ${BOLD}MORE INFO${RESET}
     https://github.com/bhaskarjha-dev/gitsetu
 EOF
@@ -390,144 +803,192 @@ show_version() {
 # ------------------------------------------------------------------------------
 cmd_status() {
     detect_os
+    if ! load_profiles; then
+        print_error "The profile registry is invalid or uses an unsupported format."
+        return 1
+    fi
 
     print_header
 
-    # Current directory info
-    local cwd
-    cwd=$(pwd)
-    print_section "Current Directory"
-    printf >&2 '  %s\n\n' "$cwd"
+    local cwd current_name current_email current_ssh
+    local active_context="" active_label="global (unmanaged fallback)" active_marker="  "
+    local prompt_state="unmanaged" inside_repo=0
 
-    # Current git identity
-    local current_name current_email
-    current_name=$(git config user.name 2>/dev/null || echo "(not set)")
-    current_email=$(git config user.email 2>/dev/null || echo "(not set)")
+    cwd=$(pwd -P 2>/dev/null || printf '%s' "$PWD")
+    cwd=$(_gitsetu_context_path "$cwd" 2>/dev/null || printf '%s' "$cwd")
+    cmd_prompt >/dev/null
+    prompt_state="${GITSETU_PROMPT_STATE:-unmanaged}"
+    active_context="${GITSETU_PROMPT_PROFILE:-}"
+    if [[ -n "$active_context" ]]; then
+        active_label="$active_context"
+        active_marker="${GREEN}${SYM_CHECK} ${RESET}"
+    fi
+
+    print_section "Current Directory"
+    printf >&2 '  %s\n' "$(escape_terminal_text "$cwd")"
+    printf >&2 '  Directory context: %s\n\n' "$(escape_terminal_text "$active_label")"
+
+    if command -v git >/dev/null 2>&1; then
+        current_name=$(git config user.name 2>/dev/null || true)
+        current_email=$(git config user.email 2>/dev/null || true)
+        current_ssh=$(git config core.sshCommand 2>/dev/null || true)
+        git rev-parse --is-inside-work-tree >/dev/null 2>&1 && inside_repo=1
+    else
+        current_name=""
+        current_email=""
+        current_ssh=""
+    fi
+    [[ -n "$current_name" ]] || current_name="(not set)"
+    [[ -n "$current_email" ]] || current_email="(not set)"
+    [[ -n "$current_ssh" ]] || current_ssh="(default)"
 
     printf >&2 '  %b┌─ Active Identity ─────────────────────────────┐%b\n' "$BOLD" "$RESET"
-    printf >&2 '  %b│%b  Name:  %b%s%b\n' "$DIM" "$RESET" "$CYAN" "${current_name}" "$RESET"
-    printf >&2 '  %b│%b  Email: %b%s%b\n' "$DIM" "$RESET" "$CYAN" "${current_email}" "$RESET"
-    
-    # Check if inside a git repo
-    if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        local ssh_cmd
-        ssh_cmd=$(git config core.sshCommand 2>/dev/null || echo "(default)")
-        printf >&2 '  %b│%b  SSH:   %b%s%b\n' "$DIM" "$RESET" "$GREEN" "${ssh_cmd}" "$RESET"
-        
-        # Check for Pre-Commit Guard Subversion
-        local local_hooks
+    printf >&2 '  %b│%b  Name:  %b%s%b\n' "$DIM" "$RESET" "$CYAN" "$(escape_terminal_text "$current_name")" "$RESET"
+    printf >&2 '  %b│%b  Email: %b%s%b\n' "$DIM" "$RESET" "$CYAN" "$(escape_terminal_text "$current_email")" "$RESET"
+    if [[ "$inside_repo" -eq 1 ]]; then
+        printf >&2 '  %b│%b  SSH:   %b%s%b\n' "$DIM" "$RESET" "$GREEN" "$(escape_terminal_text "$current_ssh")" "$RESET"
+    fi
+
+    local local_hooks=""
+    if [[ "$inside_repo" -eq 1 ]]; then
         local_hooks=$(git config --local core.hooksPath 2>/dev/null || true)
         if [[ -n "$local_hooks" ]]; then
-            printf >&2 '  %b│%b\n' "$DIM" "$RESET"
-            printf >&2 '  %b│%b  %b[!] SECURITY WARNING:%b\n' "$DIM" "$RESET" "$RED" "$RESET"
-            printf >&2 '  %b│%b  This repository locally overrides core.hooksPath (%s).\n' "$DIM" "$RESET" "$local_hooks"
-            printf >&2 '  %b│%b  The global GitSetu identity guard is completely bypassed!\n' "$DIM" "$RESET"
+            printf >&2 '  %b│%b  %b[!] Local core.hooksPath override:%b\n' "$DIM" "$RESET" "$RED" "$RESET"
+            printf >&2 '  %b│%b      %s\n' "$DIM" "$RESET" "$(escape_terminal_text "$local_hooks")"
         fi
     fi
     printf >&2 '  %b└───────────────────────────────────────────────┘%b\n\n' "$DIM" "$RESET"
 
-    # Show profile registry if it exists
-    if [[ -f "$GITSETU_PROFILES_CONF" ]]; then
-        print_section "Configured Profiles"
-
-        # shellcheck disable=SC2034  # sign_commits parsed for field alignment
-        local raw_line
-        while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
-            [[ "$raw_line" == "#"* ]] && continue
-            [[ -z "$raw_line" ]] && continue
-            local clean_line
-            clean_line=$(printf '%s' "$raw_line" | sed -E 's/:([a-zA-Z]):/:\1#DRIVE#/g')
-            local label email dir provider sign_commits key_path _unused
-            IFS=: read -r label email dir provider sign_commits key_path _unused <<< "$clean_line"
-            dir="${dir//#DRIVE#/:}"
-            key_path="${key_path//#DRIVE#/:}"
-            
-            local dir_disp="${dir:-[Manual Mode]}"
-            local prov_disp="${provider:-github.com}"
-            
-            # Load email from profile gitconfig (registry leaves email column empty)
-            local profile_email
-            profile_email=$(git config -f "$GITSETU_PROFILES_DIR/${label}.gitconfig" user.email 2>/dev/null || true)
-            if [[ -z "$profile_email" ]] && [[ -n "$email" ]]; then
-                profile_email="$email"  # Legacy fallback
-            fi
-            
-            # Check if this profile matches current identity
-            local is_active="  "
-            if [[ -n "$profile_email" ]] && [[ "$profile_email" == "$current_email" ]]; then
-                is_active="${GREEN}${SYM_CHECK} ${RESET}"
-            fi
-            
-            printf >&2 '  %s%b%s%b\n' "$is_active" "$BOLD" "$label" "$RESET"
-            printf >&2 '    %b├─%b %-9s %s\n' "$DIM" "$RESET" "Email:" "$profile_email"
-            printf >&2 '    %b├─%b %-9s %s\n' "$DIM" "$RESET" "Provider:" "$prov_disp"
-            printf >&2 '    %b└─%b %-9s %s\n\n' "$DIM" "$RESET" "Path:" "$dir_disp"
-        done < "$GITSETU_PROFILES_CONF"
+    print_section "Guard Policy"
+    if [[ "$inside_repo" -eq 1 && -n "$active_context" ]]; then
+        printf >&2 '  Managed repository (%s): fail-closed when expected identity is unresolved or differs.\n' \
+            "$(escape_terminal_text "$active_context")"
+    elif [[ "$inside_repo" -eq 1 && "$prompt_state" == "invalid" ]]; then
+        printf >&2 '  Managed state indeterminate: fail-closed until the profile registry/configuration is repaired.\n'
+    elif [[ "$inside_repo" -eq 1 ]]; then
+        printf >&2 '  Unmanaged repository: fail-open; GitSetu does not enforce an identity here.\n'
     else
-        print_info "No profiles configured. Run 'gitsetu setup' to get started."
+        printf >&2 '  Unmanaged directory: fail-open; guard policy applies only inside Git repositories.\n'
+    fi
+    local global_hooks
+    global_hooks=$(git config --global core.hooksPath 2>/dev/null || true)
+    if [[ -f "$GITSETU_HOOKS_DIR/pre-commit" ]]; then
+        printf >&2 '  Guard hook: installed at %s\n' "$(escape_terminal_text "$GITSETU_HOOKS_DIR/pre-commit")"
+    else
+        printf >&2 '  Guard hook: not installed. Explicit opt-out: gitsetu guard --uninstall\n'
+    fi
+    if [[ -n "$local_hooks" ]]; then
+        printf >&2 '  %bLocal hook policy: this repository override can bypass the global guard.%b\n' "$YELLOW" "$RESET"
+    elif [[ -n "$global_hooks" && "$global_hooks" != "$GITSETU_HOOKS_DIR" ]]; then
+        printf >&2 '  %bGlobal hook policy: core.hooksPath points outside GitSetu (%s).%b\n' \
+            "$YELLOW" "$(escape_terminal_text "$global_hooks")" "$RESET"
+    fi
+    printf >&2 '\n'
+
+    if [[ "${PROFILE_COUNT:-0}" -gt 0 ]]; then
+        print_section "Configured Profiles"
+        local i label profile_email provider dir_disp safe_label safe_email safe_provider safe_dir
+        for (( i=0; i<PROFILE_COUNT; i++ )); do
+            label="${PROFILE_LABELS[$i]:-}"
+            profile_email=$(git config -f "$GITSETU_PROFILES_DIR/${label}.gitconfig" user.email 2>/dev/null || true)
+            [[ -n "$profile_email" ]] || profile_email="(unresolved)"
+            provider="${PROFILE_PROVIDERS[$i]:-github.com}"
+            dir_disp="${PROFILE_DIRS[$i]:-[Manual / global]}"
+
+            safe_label=$(escape_terminal_text "$label")
+            safe_email=$(escape_terminal_text "$profile_email")
+            safe_provider=$(escape_terminal_text "$provider")
+            safe_dir=$(escape_terminal_text "$dir_disp")
+            local marker="  "
+            [[ "$label" == "$active_context" ]] && marker="$active_marker"
+
+            printf >&2 '  %s%b%s%b\n' "$marker" "$BOLD" "$safe_label" "$RESET"
+            printf >&2 '    %b├─%b %-9s %s\n' "$DIM" "$RESET" "Email:" "$safe_email"
+            printf >&2 '    %b├─%b %-9s %s\n' "$DIM" "$RESET" "Provider:" "$safe_provider"
+            printf >&2 '    %b└─%b %-9s %s\n\n' "$DIM" "$RESET" "Path:" "$safe_dir"
+        done
+    else
+        print_info "No complete profiles configured. Run 'gitsetu setup' to get started."
     fi
 
-    # Platform info
     print_section "Environment"
-    printf >&2 '  OS:       %s\n' "$GITSETU_OS"
-    printf >&2 '  Bash:     %s\n' "${BASH_VERSION:-unknown}"
-    printf >&2 '  Git:      %s\n' "$(git --version 2>/dev/null | head -n1)"
-    printf >&2 '  Config:   %s\n' "$GITSETU_CONFIG_DIR"
+    printf >&2 '  OS:       %s\n' "$(escape_terminal_text "$GITSETU_OS")"
+    printf >&2 '  Bash:     %s\n' "$(escape_terminal_text "${BASH_VERSION:-unknown}")"
+    printf >&2 '  Git:      %s\n' "$(escape_terminal_text "$(git --version 2>/dev/null | head -n1 || printf 'unavailable')")"
+    printf >&2 '  Config:   %s\n' "$(escape_terminal_text "$GITSETU_CONFIG_DIR")"
     printf >&2 '\n'
 }
 
 # ------------------------------------------------------------------------------
-# cmd_update — Safely update gitsetu to the latest version
+# cmd_update — Verify an explicitly selected local development checkout
 # ------------------------------------------------------------------------------
+GITSETU_DEVELOPMENT_BRANCH="feature/v1.1.0-onboarding-overhaul"
+
+_gitsetu_update_git() {
+    (
+        unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY \
+            GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_INDEX_FILE GIT_NAMESPACE
+        command git -C "$GITSETU_DIR" "$@"
+    )
+}
+
 cmd_update() {
+    local mode="${1:-}"
     detect_os
     print_header
 
-    # Ensure we are in a git-based installation
+    if [[ "$mode" != "--development" && "$mode" != "--dev" ]]; then
+        print_error "Production update is disabled while v1.1.0 is in development."
+        print_info "For a clean local development checkout, run: gitsetu update --development"
+        print_info "No remote branch is fetched or used as a trust root."
+        return 1
+    fi
     if [[ ! -d "$GITSETU_DIR/.git" ]]; then
-        print_error "GitSetu was not installed via Git. Cannot auto-update."
-        print_info "If you installed via a raw script, please re-install using the official installer:"
-        print_info "  curl -sL https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.sh | bash"
+        print_error "Development verification requires the canonical GitSetu checkout."
         return 1
     fi
 
-    print_step "Checking for updates..."
-    
-    cd "$GITSETU_DIR" || return 1
-
-    if ! git fetch --quiet origin 2>/dev/null; then
-        print_error "Failed to reach GitHub. Check your network connection."
+    local status
+    status=$(_gitsetu_update_git status --porcelain=v1 --untracked-files=all 2>/dev/null) || {
+        print_error "Unable to verify the development checkout status."
+        return 1
+    }
+    if [[ -n "$status" ]]; then
+        print_error "Development checkout is dirty; no update or reset was attempted."
         return 1
     fi
 
-    local current_hash
-    local remote_hash
-    current_hash=$(git rev-parse HEAD 2>/dev/null || echo "1")
-    remote_hash=$(git rev-parse origin/main 2>/dev/null || echo "2")
-
-    if [[ "$current_hash" == "$remote_hash" ]]; then
-        print_success "GitSetu is already up-to-date (v${GITSETU_VERSION})"
-        return 0
-    fi
-
-    print_info "Update found. Applying latest patches..."
-
-    if ! git reset --quiet --hard origin/main 2>/dev/null; then
-        print_error "Failed to apply update."
+    local branch
+    branch=$(_gitsetu_update_git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+    if [[ "$branch" != "$GITSETU_DEVELOPMENT_BRANCH" ]]; then
+        print_error "Development branch drift detected (expected '$GITSETU_DEVELOPMENT_BRANCH', found '${branch:-detached}')."
         return 1
     fi
 
-    # Parse the new version from the freshly updated core.sh
-    local new_version="Unknown"
-    if [[ -f "$GITSETU_DIR/lib/core.sh" ]]; then
-        new_version=$(grep "GITSETU_VERSION=" "$GITSETU_DIR/lib/core.sh" | head -n1 | cut -d'"' -f2 || echo "Unknown")
-    fi
+    local commit
+    commit=$(_gitsetu_update_git rev-parse --verify 'HEAD^{commit}' 2>/dev/null) || {
+        print_error "Development checkout HEAD could not be verified."
+        return 1
+    }
+    [[ "$commit" =~ ^[0-9a-fA-F]{40,64}$ ]] || {
+        print_error "Development checkout HEAD is not a verified commit object."
+        return 1
+    }
 
-    if [[ "$GITSETU_VERSION" == "$new_version" ]]; then
-        print_success "GitSetu successfully updated (v${new_version})"
-    else
-        print_success "GitSetu successfully updated from v${GITSETU_VERSION} to v${new_version}"
-    fi
+    local module
+    for module in gitsetu lib/core.sh lib/platform.sh lib/ui.sh lib/validate.sh lib/backup.sh \
+        lib/ssh.sh lib/gitconfig.sh lib/guard.sh lib/doctor.sh lib/verify.sh lib/teardown.sh \
+        lib/discovery.sh lib/setup.sh lib/keychain.sh; do
+        if ! _gitsetu_update_git ls-files --error-unmatch -- "$module" >/dev/null 2>&1 || \
+           [[ ! -f "$GITSETU_DIR/$module" || -L "$GITSETU_DIR/$module" ]]; then
+            print_error "Development verification failed: required tracked file is missing or unsafe: $module"
+            return 1
+        fi
+    done
+
+    print_success "Development checkout verified at $commit."
+    print_info "No fetch, branch reset, or mutable remote update was performed."
+    return 0
 }
 
 # ------------------------------------------------------------------------------
@@ -543,8 +1004,11 @@ cmd_verify() {
         return 1
     fi
 
-    # Read profiles from registry
-    load_profiles
+    # Read profiles from the strict v2 registry.
+    if ! load_profiles; then
+        print_error "The profile registry is invalid or uses an unsupported format."
+        return 1
+    fi
 
     if [[ "$PROFILE_COUNT" -eq 0 ]]; then
         print_error "No profiles found in registry. Run 'gitsetu setup' first."
@@ -586,8 +1050,18 @@ cmd_teardown() {
     fi
 
     acquire_lock || return 1
-    teardown_all "$deep"
-    release_lock
+    local teardown_status=0
+    teardown_all "$deep" || teardown_status=$?
+    if [[ "$teardown_status" -ne 0 ]]; then
+        print_error "Teardown failed; no successful completion is being reported."
+        release_lock || print_error "Failed to release the teardown lock."
+        return 1
+    fi
+    if ! release_lock; then
+        print_error "Teardown completed but the lock could not be released."
+        return 1
+    fi
+    return 0
 }
 
 # ------------------------------------------------------------------------------
@@ -641,77 +1115,126 @@ cmd_setup() {
 }
 
 # ------------------------------------------------------------------------------
+# Runtime SSH-key validation and shell quoting
+# ------------------------------------------------------------------------------
+_gitsetu_shell_quote() {
+    local value="${1:-}"
+    value="${value//\'/\'\\\'\'}"
+    printf "'%s'" "$value"
+}
+
+_gitsetu_runtime_key_valid() {
+    local key_path="${1:-}"
+    local mode owner current_user fs_type
+    [[ -n "$key_path" && ! "$key_path" =~ [[:cntrl:]] ]] || return 1
+    case "$key_path" in
+        /*|[A-Za-z]:/*) ;;
+        *) return 1 ;;
+    esac
+    [[ -f "$key_path" && ! -L "$key_path" && -O "$key_path" && \
+       -f "${key_path}.pub" && ! -L "${key_path}.pub" && -O "${key_path}.pub" ]] || return 1
+    case "$key_path" in
+        *\\*|*//*|*/../*|*/./*) return 1 ;;
+    esac
+    if declare -f _ssh_assert_no_symlink_components >/dev/null 2>&1; then
+        _ssh_assert_no_symlink_components "$(dirname "$key_path")" || return 1
+    fi
+    if declare -f _ssh_assert_private_directory >/dev/null 2>&1; then
+        _ssh_assert_private_directory "$(dirname "$key_path")" || return 1
+    fi
+    mode=$(stat -c '%a' "$key_path" 2>/dev/null || stat -f '%Lp' "$key_path" 2>/dev/null || true)
+    if [[ "$mode" != "600" ]]; then
+        fs_type=$(df -PT "$key_path" 2>/dev/null | awk 'NR == 2 { print $2 }' | tr '[:upper:]' '[:lower:]')
+        case "${GITSETU_OS:-}:${OSTYPE:-}:$fs_type" in
+            gitbash:*:*ntfs|gitbash:*:*msfs|msys:*:*ntfs|cygwin:*:*ntfs|msys:*:*msfs|cygwin:*:*msfs) ;;
+            *) return 1 ;;
+        esac
+    fi
+    if command -v stat >/dev/null 2>&1 && command -v id >/dev/null 2>&1; then
+        owner=$(stat -c '%U' "$key_path" 2>/dev/null || stat -f '%Su' "$key_path" 2>/dev/null || true)
+        current_user=$(id -un 2>/dev/null || true)
+        [[ -z "$owner" || -z "$current_user" || "$owner" == "$current_user" ]] || return 1
+    fi
+    return 0
+}
+
+# ------------------------------------------------------------------------------
 # cmd_run — Execute a command under a specific profile identity
 # ------------------------------------------------------------------------------
 cmd_run() {
     detect_os
-    local profile="$1"
-    shift
-    profile=$(to_lower "$profile")
-    
-    if [[ -z "$profile" ]]; then
+
+    local profile="${1:-}"
+    if [[ $# -lt 2 || -z "$profile" ]]; then
         print_error "Usage: gitsetu run <profile> -- <command>"
         return 1
     fi
-    
-    if [[ "$1" == "--" ]]; then shift; fi
-    
+    shift
+    if [[ "${1:-}" != "--" ]]; then
+        print_error "The command must be separated from gitsetu arguments with '--'."
+        return 1
+    fi
+    shift
     if [[ $# -eq 0 ]]; then
         print_error "No command provided. Usage: gitsetu run <profile> -- <command>"
         return 1
     fi
-    
-    # Check if profile exists
+
+    profile=$(_gitsetu_lower "$profile")
+    if ! validate_label "$profile"; then
+        print_error "Invalid profile label: '$profile'."
+        return 1
+    fi
     if [[ ! -f "$GITSETU_PROFILES_CONF" ]]; then
         print_error "No profiles configured. Run 'gitsetu setup' first."
         return 1
     fi
 
-    local found=0
-    local found_key_path=""
-    # shellcheck disable=SC2034  # sign_commits parsed for field alignment
-    local raw_line
-    while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
-        [[ "$raw_line" == "#"* ]] && continue
-        [[ -z "$raw_line" ]] && continue
-        local clean_line
-        clean_line=$(printf '%s' "$raw_line" | sed -E 's/:([a-zA-Z]):/:\1#DRIVE#/g')
-        local label email dir provider sign_commits key_path _unused
-        IFS=: read -r label email dir provider sign_commits key_path _unused <<< "$clean_line"
-        key_path="${key_path//#DRIVE#/:}"
-
-        if [[ "$label" == "$profile" ]]; then
+    if ! load_profiles; then
+        print_error "The profile registry is invalid or uses an unsupported format."
+        return 1
+    fi
+    local found=0 found_key_path="" i
+    for (( i=0; i<PROFILE_COUNT; i++ )); do
+        if [[ "${PROFILE_LABELS[$i]:-}" == "$profile" ]]; then
             found=1
-            found_key_path="${key_path:-$HOME/.ssh/id_ed25519_${label}}"
+            found_key_path="${PROFILE_KEYS[$i]-}"
             break
         fi
-    done < "$GITSETU_PROFILES_CONF"
-    
+    done
+
     if [[ "$found" -eq 0 ]]; then
         print_error "Profile '$profile' not found in registry."
         return 1
     fi
-    
-    local name email
+
     local config_file="$GITSETU_PROFILES_DIR/${profile}.gitconfig"
-    
-    if [[ ! -f "$config_file" ]]; then
-        # Global profile (stored in ~/.gitconfig)
-        name=$(git config --global user.name 2>/dev/null || echo "")
-        email=$(git config --global user.email 2>/dev/null || echo "")
-    else
-        name=$(git config -f "$config_file" user.name 2>/dev/null || echo "")
-        email=$(git config -f "$config_file" user.email 2>/dev/null || echo "")
+    if [[ -L "$config_file" || ! -f "$config_file" ]]; then
+        print_error "Profile config is missing or unsafe: $config_file"
+        return 1
     fi
-    
+
+    local name email
+    name=$(git config -f "$config_file" user.name 2>/dev/null || true)
+    email=$(git config -f "$config_file" user.email 2>/dev/null || true)
+    if [[ -z "$name" || -z "$email" ]] || ! validate_email "$email"; then
+        print_error "Profile '$profile' has no complete, valid identity."
+        return 1
+    fi
+
+    if [[ -z "$found_key_path" ]] || ! _gitsetu_runtime_key_valid "$found_key_path"; then
+        print_error "Profile '$profile' has a missing, unsafe, or non-canonical SSH key path."
+        return 1
+    fi
+    local quoted_key
+    quoted_key=$(_gitsetu_shell_quote "$found_key_path")
+
     export GIT_AUTHOR_NAME="$name"
     export GIT_AUTHOR_EMAIL="$email"
     export GIT_COMMITTER_NAME="$name"
     export GIT_COMMITTER_EMAIL="$email"
-    export GIT_SSH_COMMAND="ssh -i \"${found_key_path}\""
-    
-    # exec replaces this process — EXIT trap will never fire.
-    # Flush any registered temp files before handoff.
+    export GIT_SSH_COMMAND="ssh -i ${quoted_key}"
+
     gitsetu_global_cleanup
     exec "$@"
 }
@@ -721,90 +1244,81 @@ cmd_run() {
 # ------------------------------------------------------------------------------
 cmd_remove() {
     detect_os
+
     local profile="${1:-}"
     local force_flag="${2:-}"
-    profile=$(to_lower "$profile")
-    
-    if [[ -z "$profile" ]]; then
-        print_error "Usage: gitsetu remove <profile> [--force]"
+    if [[ $# -gt 2 || -z "$profile" ]]; then
+        print_error "Usage: gitsetu remove <profile> [--force|-y]"
         return 1
     fi
-    
+    if [[ -n "$force_flag" && "$force_flag" != "--force" && "$force_flag" != "-y" ]]; then
+        print_error "Unknown remove option: $force_flag"
+        return 1
+    fi
+
+    profile=$(_gitsetu_lower "$profile")
+    if ! validate_label "$profile"; then
+        print_error "Invalid profile label: '$profile'."
+        return 1
+    fi
     if [[ ! -f "$GITSETU_PROFILES_CONF" ]]; then
         print_error "No profiles configured."
         return 1
     fi
-    
-    # Check if profile exists
-    local found=0
-    local found_key_path=""
-    # shellcheck disable=SC2034  # sign_commits parsed for field alignment; key_path is the target
-    local raw_line
-    while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
-        [[ "$raw_line" == "#"* ]] && continue
-        [[ -z "$raw_line" ]] && continue
-        local clean_line
-        clean_line=$(printf '%s' "$raw_line" | sed -E 's/:([a-zA-Z]):/:\1#DRIVE#/g')
-        local label _email _dir _provider _sign_commits key_path _unused
-        IFS=: read -r label _email _dir _provider _sign_commits key_path _unused <<< "$clean_line"
-        key_path="${key_path//#DRIVE#/:}"
 
-        if [[ "$label" == "$profile" ]]; then
+    if ! load_profiles; then
+        print_error "The profile registry is invalid or uses an unsupported format."
+        return 1
+    fi
+    local found=0 found_index=-1 found_key_path="" i
+    for (( i=0; i<PROFILE_COUNT; i++ )); do
+        if [[ "${PROFILE_LABELS[$i]:-}" == "$profile" ]]; then
             found=1
-            found_key_path="${key_path:-$HOME/.ssh/id_ed25519_${label}}"
+            found_index=$i
+            found_key_path="${PROFILE_KEYS[$i]-}"
             break
         fi
-    done < "$GITSETU_PROFILES_CONF"
-    
+    done
     if [[ "$found" -eq 0 ]]; then
         print_error "Profile '$profile' not found."
         return 1
     fi
+    if [[ "$found_index" -eq 0 ]]; then
+        print_error "The global/default profile cannot be removed."
+        return 1
+    fi
 
-    if [[ "$force_flag" != "--force" && "$force_flag" != "-y" ]]; then
+    if [[ -z "$force_flag" ]]; then
         if ! confirm "Are you sure you want to completely remove profile '$profile'?" "n"; then
             print_info "Cancelled."
             return 0
         fi
     fi
-    
-    acquire_lock || return 1
 
+    acquire_lock || return 1
     print_step "Removing profile '$profile'..."
-    
-    # 1. Remove from profiles.conf using awk with secure temp file permissions
-    local tmp_conf
-    tmp_conf=$(umask 077 && mktemp "${GITSETU_PROFILES_CONF}.tmp.XXXXXX")
-    GITSETU_CLEANUP_FILES+=("$tmp_conf")
-    awk -F: -v prof="$profile" '$1 != prof {print}' "$GITSETU_PROFILES_CONF" > "$tmp_conf"
-    chmod 600 "$tmp_conf" 2>/dev/null || true
-    mv "$tmp_conf" "$GITSETU_PROFILES_CONF"
-    chmod 600 "$GITSETU_PROFILES_CONF" 2>/dev/null || true
-    
-    # 2. Delete the profile gitconfig
-    local config_file="$GITSETU_PROFILES_DIR/${profile}.gitconfig"
-    if [[ -f "$config_file" ]]; then
-        rm -f "$config_file"
+
+    remove_profile_at_index "$found_index" || {
+        print_error "Unable to remove profile from the in-memory blueprint."
+        release_lock || true
+        return 1
+    }
+
+    local failed=0
+    # The v2 writer compiles profile configs and atomically publishes the encoded
+    # registry. It is the only supported persistence path.
+    write_profiles_conf || failed=1
+    if [[ "$failed" -eq 0 ]]; then
+        write_global_gitconfig || failed=1
+        write_ssh_config || failed=1
     fi
-    
-    # 3. Reload in-memory arrays from the updated registry
-    load_profiles
-    
-    # 4. Re-run block generators (idempotent, they will overwrite the global configs without the removed profile)
-    if ! write_global_gitconfig; then
-        print_warning "Failed to regenerate ~/.gitconfig. Run 'gitsetu setup' to repair."
-    fi
-    if ! write_ssh_config; then
-        print_warning "Failed to regenerate ~/.ssh/config. Run 'gitsetu setup' to repair."
-    fi
-    
-    release_lock
+    release_lock || failed=1
+    [[ "$failed" -eq 0 ]] || return 1
 
     print_success "Profile '$profile' successfully removed."
-    
-    # Ask about SSH keys
-    local key_file="${found_key_path}"
-    if [[ -f "$key_file" ]]; then
+
+    local key_file="$found_key_path"
+    if [[ -f "$key_file" && ! -L "$key_file" ]]; then
         printf >&2 '\n'
         print_warning "SSH keys for '$profile' still exist:"
         print_info "  $key_file"
@@ -825,17 +1339,20 @@ cmd_remove() {
 # ------------------------------------------------------------------------------
 cmd_credential() {
     local action="${1:-}"
-    if [[ -z "$action" ]]; then
+    if [[ $# -ne 1 ]]; then
+        print_error "Usage: gitsetu credential <get|store|erase>"
         return 1
     fi
+    case "$action" in
+        get|store|erase) ;;
+        *)
+            print_error "Unknown credential action: $action"
+            return 1
+            ;;
+    esac
 
-    # Read from stdin
-    local host=""
-    local protocol=""
-    local username=""
-    local password=""
-
-    while read -r line; do
+    local host="" protocol="" username="" password="" line
+    while IFS= read -r line || [[ -n "$line" ]]; do
         [[ -z "$line" ]] && break
         case "$line" in
             host=*) host="${line#*=}" ;;
@@ -845,32 +1362,29 @@ cmd_credential() {
         esac
     done
 
-    # We only care about https and host
-    if [[ "$protocol" != "https" ]] || [[ -z "$host" ]]; then
+    if [[ "$protocol" != "https" || -z "$host" ]]; then
         return 0
     fi
 
-    # Identify profile context
     local profile
     profile=$(cmd_prompt)
     if [[ -z "$profile" ]]; then
-        # Not in a profile directory, ignore
         return 0
     fi
 
+    detect_os
     case "$action" in
         get)
-            detect_os
             keychain_get "$profile" "$host"
             ;;
         store)
-            if [[ -n "$username" ]] && [[ -n "$password" ]]; then
-                detect_os
+            if [[ -n "$username" && -n "$password" ]]; then
                 keychain_store "$profile" "$host" "$username" "$password"
+            else
+                return 1
             fi
             ;;
         erase)
-            detect_os
             keychain_erase "$profile" "$host"
             ;;
     esac
@@ -884,18 +1398,23 @@ cmd_doctor() {
     local arg
     for arg in "$@"; do
         case "$arg" in
-            --repair)
-                repair=1
-                ;;
-            --dry-run)
-                GITSETU_DRY_RUN=1
+            --repair) repair=1 ;;
+            --dry-run) GITSETU_DRY_RUN=1 ;;
+            *)
+                print_error "Unknown doctor option: $arg"
+                printf >&2 'Usage: gitsetu doctor [--repair] [--dry-run]\n'
+                return 1
                 ;;
         esac
     done
 
-    load_profiles
+    local registry_status=0
+    load_profiles || registry_status=$?
+    if [[ "$registry_status" -ne 0 ]]; then
+        return "$registry_status"
+    fi
     if [[ "$repair" -eq 1 ]]; then
-        run_doctor_repair "$@"
+        run_doctor_repair
     else
         run_doctor
     fi
@@ -925,91 +1444,109 @@ show_brief_usage() {
 # Main — Parse arguments and route to subcommand
 # ------------------------------------------------------------------------------
 main() {
-    # No arguments → check TTY and configuration
     if [[ $# -eq 0 ]]; then
         if [[ ! -t 0 || ! -t 1 || -n "${CI:-}" ]]; then
             show_brief_usage
-            exit 0
+            return 0
         fi
 
         detect_os
-
-        load_profiles
-        if [[ -f "$GITSETU_PROFILES_CONF" ]] && [[ "$PROFILE_COUNT" -gt 0 ]]; then
+        load_profiles || return 1
+        if [[ -f "$GITSETU_PROFILES_CONF" && "$PROFILE_COUNT" -gt 0 ]]; then
             cmd_status
         else
             preset_guided_onboarding
         fi
-        return 0
+        return $?
     fi
 
-    local cmd="$1"
+    local cmd="${1:-}"
     shift
 
     case "$cmd" in
         setup|init)
-            # Parse setup flags
             local auto_mode=0
             while [[ $# -gt 0 ]]; do
                 case "$1" in
-                    --dry-run)
-                        GITSETU_DRY_RUN=1
-                        shift
-                        ;;
-                    --auto|-y|--yes)
-                        auto_mode=1
-                        shift
-                        ;;
+                    --dry-run) GITSETU_DRY_RUN=1 ;;
+                    --auto|-y|--yes) auto_mode=1 ;;
                     *)
-                        print_error "Unknown flag: $1"
+                        print_error "Unknown setup option: $1"
                         printf >&2 'Usage: gitsetu setup [--auto] [--dry-run]\n'
                         return 1
                         ;;
                 esac
+                shift
             done
             cmd_setup "$auto_mode"
             ;;
         add)
+            if [[ $# -ne 4 ]]; then
+                print_error "Usage: gitsetu add <label> \"<name>\" <email> <dir>"
+                return 1
+            fi
             cmd_add "$@"
             ;;
         status)
+            if [[ $# -ne 0 ]]; then
+                print_error "Usage: gitsetu status"
+                return 1
+            fi
             cmd_status
             ;;
         verify)
+            if [[ $# -ne 0 ]]; then
+                print_error "Usage: gitsetu verify"
+                return 1
+            fi
             cmd_verify
             ;;
         run)
-            if [[ $# -lt 1 ]]; then
-                print_error "Usage: gitsetu run <profile> -- <command>"
-                return 1
-            fi
             cmd_run "$@"
             ;;
         remove)
             cmd_remove "$@"
             ;;
         backup)
+            if [[ $# -gt 1 ]]; then
+                print_error "Usage: gitsetu backup [out_file]"
+                return 1
+            fi
             cmd_backup "$@"
             ;;
         restore)
+            if [[ $# -ne 1 ]]; then
+                print_error "Usage: gitsetu restore <in_file>"
+                return 1
+            fi
             cmd_restore "$@"
             ;;
         profile)
+            if [[ $# -lt 2 ]]; then
+                print_error "Usage: gitsetu profile <add|edit|remove> <label> [flags...]"
+                return 1
+            fi
+            case "$1" in
+                add|edit|remove) ;;
+                *)
+                    print_error "Unknown profile action: $1"
+                    return 1
+                    ;;
+            esac
             cmd_profile "$@"
             ;;
         credential)
             cmd_credential "$@"
             ;;
         teardown)
-            local force=0
-            local deep=0
+            local force=0 deep=0
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --dry-run) GITSETU_DRY_RUN=1 ;;
                     --force|-f) force=1 ;;
                     --deep) deep=1 ;;
                     *)
-                        print_error "Unknown flag: $1"
+                        print_error "Unknown teardown option: $1"
                         printf >&2 'Usage: gitsetu teardown [--dry-run] [--force] [--deep]\n'
                         return 1
                         ;;
@@ -1019,16 +1556,21 @@ main() {
             cmd_teardown "$force" "$deep"
             ;;
         guard)
-            if [[ $# -eq 0 ]]; then
+            if [[ $# -ne 1 ]]; then
                 print_error "Usage: gitsetu guard --install | --uninstall"
                 return 1
             fi
             case "$1" in
-                --install)   detect_os; install_guard ;;
-                --uninstall) detect_os; uninstall_guard ;;
+                --install)
+                    detect_os
+                    install_guard
+                    ;;
+                --uninstall)
+                    detect_os
+                    uninstall_guard
+                    ;;
                 *)
-                    print_error "Unknown flag: $1"
-                    printf >&2 'Usage: gitsetu guard --install | --uninstall\n'
+                    print_error "Unknown guard option: $1"
                     return 1
                     ;;
             esac
@@ -1037,12 +1579,24 @@ main() {
             cmd_doctor "$@"
             ;;
         update)
-            cmd_update
+            if [[ $# -ne 1 || ( "$1" != "--development" && "$1" != "--dev" ) ]]; then
+                print_error "Usage: gitsetu update --development"
+                return 1
+            fi
+            cmd_update "$1"
             ;;
         --help|-h|help)
+            if [[ $# -ne 0 ]]; then
+                print_error "Usage: gitsetu --help"
+                return 1
+            fi
             show_help
             ;;
         --version|-v)
+            if [[ $# -ne 0 ]]; then
+                print_error "Usage: gitsetu --version"
+                return 1
+            fi
             show_version
             ;;
         *)

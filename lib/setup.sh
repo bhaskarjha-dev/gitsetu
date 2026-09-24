@@ -4,6 +4,52 @@
 # Replaces the linear wizard with a fast "Review & Apply" TUI menu.
 
 # ------------------------------------------------------------------------------
+# Configure a stable lock outside the removable configuration tree
+# ------------------------------------------------------------------------------
+_gitsetu_configure_lock_path() {
+    local force="${2:-0}"
+    local configured_default="${GITSETU_CONFIG_DIR%/}/profiles.lock"
+    local core_default="${GITSETU_DEFAULT_LOCK_DIR:-}"
+    local current="${GITSETU_LOCK_DIR:-}"
+    local state_base="" candidate=""
+
+    # A caller-provided non-default path is an explicit integration choice and
+    # is still subject to absolute/control-character validation below.  The
+    # core's safe state default is not an explicit override.
+    if [[ "$force" != "1" && -n "$current" && "$current" != "$configured_default" && "$current" != "$core_default" ]]; then
+        candidate="$current"
+    elif [[ "${GITSETU_TEST:-0}" -eq 1 ]]; then
+        state_base="${GITSETU_TEST_RUNTIME_DIR:-$HOME/.gitsetu-test-runtime}"
+        candidate="${state_base%/}/profiles.lock"
+    elif [[ -n "${XDG_STATE_HOME:-}" ]]; then
+        state_base="$XDG_STATE_HOME"
+        candidate="${state_base%/}/gitsetu/profiles.lock"
+    elif [[ "${GITSETU_OS:-}" == "gitbash" && -n "${LOCALAPPDATA:-}" ]]; then
+        state_base="$LOCALAPPDATA"
+        candidate="${state_base%/}/gitsetu/profiles.lock"
+    else
+        candidate="$HOME/.local/state/gitsetu/profiles.lock"
+    fi
+
+    [[ -n "$candidate" && "$candidate" != *[[:cntrl:]]* ]] || return 1
+    case "$candidate" in
+        /*|[A-Za-z]:/*) ;;
+        *) return 1 ;;
+    esac
+    if declare -F normalize_path >/dev/null 2>&1; then
+        local normalized
+        normalized=$(normalize_path "$candidate") || return 1
+        candidate="$normalized"
+    fi
+    GITSETU_LOCK_DIR="$candidate"
+    return 0
+}
+
+# Resolve lazily in acquire_lock so test harnesses and embedders can finish
+# assigning HOME/XDG variables after sourcing the libraries.
+GITSETU_LOCK_RUNTIME_CONFIGURED=0
+
+# ------------------------------------------------------------------------------
 # render_blueprint_dashboard
 # ------------------------------------------------------------------------------
 render_blueprint_dashboard() {
@@ -135,7 +181,7 @@ preset_guided_onboarding() {
                 # shellcheck disable=SC2034
                 PROFILE_PATS[0]=""
 
-                execute_blueprint
+                execute_blueprint || return 1
                 return 0
                 ;;
             2)
@@ -270,7 +316,7 @@ preset_guided_onboarding() {
                 # shellcheck disable=SC2034
                 PROFILE_PATS[2]=""
 
-                execute_blueprint
+                execute_blueprint || return 1
                 return 0
                 ;;
             3)
@@ -450,154 +496,451 @@ ensure_workspace_dirs() {
 
 # ------------------------------------------------------------------------------
 # Concurrency Locking Mechanism
-# Implements atomic directory locking on $GITSETU_LOCK_DIR with PID liveness
-# verification, stale lock recovery, 60s timeout handling, re-entrancy depth
-# tracking, and explicit release.
+#
+# The lock is an atomically-created private directory.  Ownership is represented
+# by a high-entropy token as well as a PID.  A PID by itself is not sufficient:
+# it can be reused, and a cleanup handler in another shell can observe the same
+# numeric PID.  process_start is an additional best-effort process identity on
+# platforms that expose it.
+#
+# A live, fully-identified owner is never evicted merely because its timestamp
+# is old.  That prevents a long backup/restore from being stolen underneath the
+# owner.  Dead owners are confirmed repeatedly before atomic reaping.
+# Incomplete lock directories are not treated as valid ownership records; they
+# may only be reaped after a bounded grace period.
 # ------------------------------------------------------------------------------
+GITSETU_LOCK_PATH=""
+GITSETU_LOCK_TOKEN=""
+GITSETU_LOCK_PROCESS_START=""
+
+_gitsetu_lock_process_start() {
+    local pid="$1"
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+
+    local stat_line=""
+    if [[ -r "/proc/$pid/stat" ]]; then
+        stat_line=$(cat "/proc/$pid/stat" 2>/dev/null || true)
+        # The executable name is parenthesized and may itself contain spaces.
+        # The start-time field is field 22 overall, or field 20 after the final
+        # closing parenthesis in /proc/<pid>/stat.
+        if [[ "$stat_line" == *") "* ]]; then
+            local stat_fields=()
+            local stat_tail="${stat_line##*) }"
+            IFS=' ' read -r -a stat_fields <<< "$stat_tail"
+            if [[ ${#stat_fields[@]} -ge 20 ]]; then
+                printf '%s' "${stat_fields[19]}"
+                return 0
+            fi
+        fi
+    fi
+
+    # ps/lstart is portable across the Unix variants supported by GitSetu.  It
+    # is intentionally a stable process-start description, not a wall clock.
+    if command -v ps >/dev/null 2>&1; then
+        local ps_start=""
+        ps_start=$(ps -p "$pid" -o lstart= 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+        if [[ -n "$ps_start" ]]; then
+            printf '%s' "$ps_start"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+_gitsetu_new_lock_token() {
+    local token=""
+    if [[ -r /dev/urandom ]] && command -v od >/dev/null 2>&1; then
+        token=$(head -c 32 /dev/urandom 2>/dev/null | od -An -tx1 2>/dev/null | tr -d ' \r\n' | head -c 64)
+    fi
+    if [[ -z "$token" ]]; then
+        # This fallback is for unusual embedded systems without /dev/urandom.
+        # It remains collision-resistant by combining several changing values.
+        token="$(printf '%s' "$$-${RANDOM}-${RANDOM}-$(date +%s 2>/dev/null || printf 0)" | cksum 2>/dev/null | tr -d ' ')"
+        token="${token}$(printf '%s' "$RANDOM-$RANDOM" | cksum 2>/dev/null | tr -d ' ')"
+    fi
+    [[ "$token" =~ ^[0-9a-fA-F]{32,}$ ]] || return 1
+    printf '%s' "$token"
+}
+
+_gitsetu_lock_read_value() {
+    local lock_dir="$1"
+    local field="$2"
+    local value=""
+    if [[ -f "$lock_dir/$field" && ! -L "$lock_dir/$field" ]]; then
+        IFS= read -r value < "$lock_dir/$field" 2>/dev/null || true
+        value="${value%$'\r'}"
+    fi
+    printf '%s' "$value"
+}
+
+_gitsetu_lock_on_disk_owned_by_current_process() {
+    local target_lock="$1"
+    local disk_pid disk_token held_token
+    disk_pid=$(_gitsetu_lock_read_value "$target_lock" pid)
+    disk_token=$(_gitsetu_lock_read_value "$target_lock" token)
+    held_token="${GITSETU_LOCK_TOKEN:-}"
+    [[ "$disk_pid" == "$$" && -n "$held_token" && "$disk_token" == "$held_token" ]]
+}
+
+_gitsetu_lock_path_mtime() {
+    local path="$1" value=""
+    [[ -e "$path" && ! -L "$path" ]] || return 1
+    value=$(stat -c '%Y' "$path" 2>/dev/null || stat -f '%m' "$path" 2>/dev/null || printf '')
+    value="${value//[[:space:]]/}"
+    [[ "$value" =~ ^[0-9]+$ ]] || return 1
+    printf '%s' "$value"
+}
+
+_gitsetu_lock_age_seconds() {
+    local target_lock="$1"
+    local lock_time now marker
+    lock_time=$(_gitsetu_lock_read_value "$target_lock" timestamp)
+    if [[ ! "$lock_time" =~ ^[0-9]+$ ]]; then
+        # An incomplete lock may have no timestamp.  Prefer the directory mtime;
+        # if the platform cannot stat the directory, use the oldest available
+        # ownership-marker mtime rather than allowing the lock to live forever.
+        lock_time=$(_gitsetu_lock_path_mtime "$target_lock" || printf '')
+        if [[ ! "$lock_time" =~ ^[0-9]+$ ]]; then
+            for marker in pid token process_start; do
+                if [[ -e "$target_lock/$marker" && ! -L "$target_lock/$marker" ]]; then
+                    lock_time=$(_gitsetu_lock_path_mtime "$target_lock/$marker" || printf '')
+                    [[ "$lock_time" =~ ^[0-9]+$ ]] && break
+                fi
+            done
+        fi
+    fi
+    now=$(date +%s 2>/dev/null || printf '')
+    [[ "$lock_time" =~ ^[0-9]+$ && "$now" =~ ^[0-9]+$ ]] || return 1
+    local age=$((now - lock_time))
+    [[ "$age" -ge 0 ]] || age=0
+    printf '%s' "$age"
+}
+
+_gitsetu_lock_marker_signature() {
+    local lock_dir="$1" marker digest size
+    [[ -d "$lock_dir" && ! -L "$lock_dir" && -O "$lock_dir" ]] || return 1
+    for marker in pid token process_start timestamp; do
+        if [[ -L "$lock_dir/$marker" ]]; then
+            return 1
+        fi
+        if [[ -f "$lock_dir/$marker" ]]; then
+            digest=$(sha256sum "$lock_dir/$marker" 2>/dev/null | awk '{print $1}' || true)
+            if [[ -z "$digest" ]]; then
+                digest=$(cksum "$lock_dir/$marker" 2>/dev/null | awk '{print $1 ":" $2}' || true)
+            fi
+            size=$(wc -c < "$lock_dir/$marker" 2>/dev/null | tr -d '[:space:]' || printf '')
+            [[ -n "$digest" && "$size" =~ ^[0-9]+$ ]] || return 1
+            printf '%s=%s:%s\n' "$marker" "$size" "$digest"
+        elif [[ -e "$lock_dir/$marker" ]]; then
+            return 1
+        else
+            printf '%s=<absent>\n' "$marker"
+        fi
+    done
+    return 0
+}
+
+# Atomically move a stale directory aside, then verify that the directory moved
+# is the exact owner record observed before the rename.  A mismatched record is
+# put back when possible and is never deleted.
+_gitsetu_lock_reap_if_unchanged() {
+    local target_lock="$1"
+    local observed_token="${2:-}"
+    local observed_signature="${3:-}"
+    local stale_dir="${target_lock}.stale.$$.$RANDOM"
+    local moved_token moved_signature
+
+    [[ -d "$target_lock" && ! -L "$target_lock" && -O "$target_lock" ]] || return 1
+    if [[ -z "$observed_signature" ]]; then
+        observed_signature=$(_gitsetu_lock_marker_signature "$target_lock" 2>/dev/null) || return 1
+    fi
+    mv "$target_lock" "$stale_dir" 2>/dev/null || return 1
+    if [[ ! -d "$stale_dir" || -L "$stale_dir" ]]; then
+        return 1
+    fi
+    moved_signature=$(_gitsetu_lock_marker_signature "$stale_dir" 2>/dev/null) || {
+        if [[ ! -e "$target_lock" && ! -L "$target_lock" ]]; then
+            mv "$stale_dir" "$target_lock" 2>/dev/null || true
+        fi
+        return 1
+    }
+    moved_token=$(_gitsetu_lock_read_value "$stale_dir" token)
+
+    if [[ -n "$observed_token" && "$moved_token" != "$observed_token" ]]; then
+        if [[ ! -e "$target_lock" && ! -L "$target_lock" ]]; then
+            mv "$stale_dir" "$target_lock" 2>/dev/null || true
+        fi
+        return 1
+    fi
+    if [[ -z "$observed_token" && -n "$moved_token" ]]; then
+        if [[ ! -e "$target_lock" && ! -L "$target_lock" ]]; then
+            mv "$stale_dir" "$target_lock" 2>/dev/null || true
+        fi
+        return 1
+    fi
+    if [[ "$moved_signature" != "$observed_signature" ]]; then
+        if [[ ! -e "$target_lock" && ! -L "$target_lock" ]]; then
+            mv "$stale_dir" "$target_lock" 2>/dev/null || true
+        fi
+        return 1
+    fi
+
+    rm -rf "$stale_dir" 2>/dev/null || true
+    return 0
+}
+
+_gitsetu_lock_parent_is_safe() {
+    local parent="$1" current="$1" up canonical
+    [[ -n "$parent" && "$parent" != *[[:cntrl:]]* ]] || return 1
+    case "$parent" in /*|[A-Za-z]:/*) ;; *) return 1 ;; esac
+    canonical=$(normalize_path "$parent") || return 1
+    [[ "$canonical" == "$parent" ]] || return 1
+    while [[ -n "$current" && "$current" != "/" && ! "$current" =~ ^[A-Za-z]:/$ ]]; do
+        if [[ -e "$current" || -L "$current" ]]; then
+            [[ -d "$current" && ! -L "$current" && -O "$current" ]] || return 1
+            if declare -F _gitsetu_is_reparse_point >/dev/null 2>&1 &&
+               _gitsetu_is_reparse_point "$current"; then
+                return 1
+            fi
+        fi
+        if [[ "$current" =~ ^[A-Za-z]:$ ]]; then
+            break
+        fi
+        up=$(dirname "$current") || return 1
+        [[ "$up" != "$current" ]] || return 1
+        current="$up"
+    done
+    return 0
+}
+
 # shellcheck disable=SC2120
 acquire_lock() {
-    local target_lock="${1:-${GITSETU_LOCK_DIR:-${GITSETU_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu}/profiles.lock}}"
-    local config_dir
-    config_dir=$(dirname "$target_lock")
-    local max_retries=600  # 600 * 0.1s = 60 seconds max wait
+    local target_lock="${1:-}"
+    if [[ -z "$target_lock" && ( "${GITSETU_LOCK_RUNTIME_CONFIGURED:-0}" -ne 1 || "${GITSETU_TEST:-0}" -eq 1 ) ]]; then
+        local configure_force=0
+        [[ "${GITSETU_TEST:-0}" -eq 1 ]] && configure_force=1
+        _gitsetu_configure_lock_path 0 "$configure_force" || {
+            print_error "Could not configure a safe absolute runtime lock path."
+            return 1
+        }
+        GITSETU_LOCK_RUNTIME_CONFIGURED=1
+    fi
+    if [[ -z "$target_lock" ]]; then
+        target_lock="${GITSETU_LOCK_DIR:-}"
+    fi
+    [[ -n "$target_lock" ]] || return 1
+    target_lock="${target_lock%/}"
+    [[ -n "$target_lock" && "$target_lock" != *[[:cntrl:]] ]] || return 1
+
+    local max_retries=600  # 600 * 0.1s = 60 seconds by default
     if [[ -n "${GITSETU_LOCK_TIMEOUT:-}" ]]; then
+        if [[ ! "${GITSETU_LOCK_TIMEOUT}" =~ ^[0-9]+$ ]] || [[ "${GITSETU_LOCK_TIMEOUT}" -lt 1 ]] || [[ "${GITSETU_LOCK_TIMEOUT}" -gt 3600 ]]; then
+            print_error "GITSETU_LOCK_TIMEOUT must be an integer from 1 to 3600."
+            return 1
+        fi
         if [[ "${GITSETU_TEST:-0}" -eq 1 ]]; then
-            max_retries=$(( GITSETU_LOCK_TIMEOUT * 50 ))
+            max_retries=$((GITSETU_LOCK_TIMEOUT * 50))
         else
-            max_retries=$(( GITSETU_LOCK_TIMEOUT * 10 ))
+            max_retries=$((GITSETU_LOCK_TIMEOUT * 10))
         fi
-        [[ "$max_retries" -lt 1 ]] && max_retries=1
     fi
-    local retry=0
-    local no_pid_count=0
-    local dead_pid_count=0
 
-    # Re-entrancy: If current process already holds the lock, increment depth
+    # Re-entrancy applies only to the exact lock already held by this shell.
+    # Silently treating a different path as re-entrancy would let a caller mutate
+    # another resource while release_lock still tracks only one owner token.
     if [[ "${GITSETU_LOCK_DEPTH:-0}" -gt 0 ]]; then
-        GITSETU_LOCK_DEPTH=$((GITSETU_LOCK_DEPTH + 1))
-        return 0
-    fi
-
-    # Ensure parent config directory exists before attempting mkdir
-    mkdir -p "$config_dir" 2>/dev/null || true
-
-    while ! mkdir "$target_lock" 2>/dev/null; do
-        local lock_pid=""
-        if [[ -f "$target_lock/pid" ]]; then
-            lock_pid=$(cat "$target_lock/pid" 2>/dev/null || echo "")
-            lock_pid="${lock_pid%$'\r'}"
-        fi
-
-        # If current process already owns lock on disk, increment depth
-        if [[ -n "$lock_pid" ]] && [[ "$lock_pid" == "$$" ]]; then
+        if [[ -n "${GITSETU_LOCK_PATH:-}" && "$target_lock" == "$GITSETU_LOCK_PATH" ]] && \
+           _gitsetu_lock_on_disk_owned_by_current_process "$target_lock"; then
             GITSETU_LOCK_DEPTH=$((GITSETU_LOCK_DEPTH + 1))
             return 0
         fi
+        print_error "Cannot acquire a second lock while $GITSETU_LOCK_PATH is held by this process."
+        return 1
+    fi
 
-        # Case 1: Holding process is dead (stale lock recovery)
-        # Require 3 consecutive confirmations to avoid transient false-positives
-        if [[ -n "$lock_pid" ]] && ! kill -0 "$lock_pid" 2>/dev/null; then
-            dead_pid_count=$((dead_pid_count + 1))
-            if [[ "$dead_pid_count" -ge 3 ]]; then
-                if mv "$target_lock" "${target_lock}.stale.$$" 2>/dev/null; then
-                    rm -rf "${target_lock}.stale.$$" 2>/dev/null || true
-                    dead_pid_count=0
-                    continue
+    local config_dir
+    config_dir=$(dirname "$target_lock")
+    _gitsetu_lock_parent_is_safe "$config_dir" || {
+        print_error "Refusing redirected or non-canonical lock parent: $config_dir"
+        return 1
+    }
+    (umask 077 && mkdir -p "$config_dir") 2>/dev/null || {
+        print_error "Failed to create lock parent directory: $config_dir"
+        return 1
+    }
+    _gitsetu_lock_parent_is_safe "$config_dir" || {
+        print_error "Lock parent became redirected or non-canonical: $config_dir"
+        return 1
+    }
+    chmod 700 "$config_dir" 2>/dev/null || {
+        print_error "Failed to restrict lock parent directory: $config_dir"
+        return 1
+    }
+
+    local retry=0
+    local dead_pid_count=0
+    local incomplete_count=0
+    local test_mode=0
+    [[ "${GITSETU_TEST:-0}" -eq 1 ]] && test_mode=1
+
+    while ! (umask 077 && mkdir "$target_lock") 2>/dev/null; do
+        # Never follow or remove a symlink posing as the lock directory.
+        if [[ -L "$target_lock" ]]; then
+            print_error "Refusing unsafe lock path (symbolic link): $target_lock"
+            return 1
+        fi
+
+        local lock_pid lock_token lock_start recorded_start now_start observed_signature=""
+        lock_pid=$(_gitsetu_lock_read_value "$target_lock" pid)
+        lock_token=$(_gitsetu_lock_read_value "$target_lock" token)
+        lock_start=$(_gitsetu_lock_read_value "$target_lock" process_start)
+
+        # A fully identified, live owner is authoritative regardless of age.
+        if [[ "$lock_pid" =~ ^[0-9]+$ && -n "$lock_token" ]]; then
+            local owner_alive=0
+            if kill -0 "$lock_pid" 2>/dev/null; then
+                owner_alive=1
+            fi
+            if [[ "$owner_alive" -eq 1 ]]; then
+                if [[ -n "$lock_start" ]]; then
+                    now_start=$(_gitsetu_lock_process_start "$lock_pid" || printf '')
+                    if [[ -n "$now_start" && "$now_start" != "$lock_start" ]]; then
+                        owner_alive=0
+                    fi
+                fi
+            fi
+
+            if [[ "$owner_alive" -eq 1 ]]; then
+                dead_pid_count=0
+                incomplete_count=0
+            else
+                dead_pid_count=$((dead_pid_count + 1))
+                incomplete_count=0
+                # Require repeated observations so PID startup/exit races do not
+                # cause another live owner to be reaped.
+                if [[ "$dead_pid_count" -ge 3 ]]; then
+                    observed_signature=$(_gitsetu_lock_marker_signature "$target_lock" 2>/dev/null || printf '')
+                    if [[ -n "$observed_signature" ]] &&
+                       _gitsetu_lock_reap_if_unchanged "$target_lock" "$lock_token" "$observed_signature"; then
+                        dead_pid_count=0
+                        continue
+                    fi
                 fi
             fi
         else
             dead_pid_count=0
-        fi
-
-        # Case 2: PID file missing or empty (process died before writing PID)
-        if [[ -z "$lock_pid" ]]; then
-            no_pid_count=$((no_pid_count + 1))
-            if [[ "$no_pid_count" -ge 50 ]]; then
-                if mv "$target_lock" "${target_lock}.stale.$$" 2>/dev/null; then
-                    rm -rf "${target_lock}.stale.$$" 2>/dev/null || true
-                    no_pid_count=0
-                    continue
-                fi
-            fi
-        else
-            no_pid_count=0
-        fi
-
-        # Case 3: 60-second timeout recovery for abandoned locks
-        local lock_time=""
-        if [[ -f "$target_lock/timestamp" ]]; then
-            lock_time=$(cat "$target_lock/timestamp" 2>/dev/null || echo "")
-            lock_time="${lock_time%$'\r'}"
-        fi
-        if [[ -z "$lock_time" ]]; then
-            lock_time=$(stat -c '%Y' "$target_lock" 2>/dev/null || stat -f '%m' "$target_lock" 2>/dev/null || echo "")
-            lock_time="${lock_time%$'\r'}"
-        fi
-        local now
-        now=$(date +%s 2>/dev/null || echo "")
-        if [[ -n "$lock_time" ]] && [[ -n "$now" ]] && [[ "$now" =~ ^[0-9]+$ ]] && [[ "$lock_time" =~ ^[0-9]+$ ]]; then
-            local age=$((now - lock_time))
-            if [[ "$age" -ge 60 ]]; then
-                if mv "$target_lock" "${target_lock}.stale.$$" 2>/dev/null; then
-                    rm -rf "${target_lock}.stale.$$" 2>/dev/null || true
-                    continue
+            incomplete_count=$((incomplete_count + 1))
+            local required_incomplete=250
+            [[ "$test_mode" -eq 1 ]] && required_incomplete=5
+            if [[ "$incomplete_count" -ge "$required_incomplete" ]]; then
+                local lock_age=""
+                lock_age=$(_gitsetu_lock_age_seconds "$target_lock" || printf '')
+                if [[ -n "$lock_age" && "$lock_age" -ge 60 ]]; then
+                    observed_signature=$(_gitsetu_lock_marker_signature "$target_lock" 2>/dev/null || printf '')
+                    if [[ -n "$observed_signature" ]] &&
+                       _gitsetu_lock_reap_if_unchanged "$target_lock" "$lock_token" "$observed_signature"; then
+                        incomplete_count=0
+                        continue
+                    fi
                 fi
             fi
         fi
 
         retry=$((retry + 1))
         if [[ "$retry" -ge "$max_retries" ]]; then
-            print_error "Failed to acquire lock for profiles.conf after timeout. Is another gitsetu process running?"
+            print_error "Failed to acquire lock $target_lock after timeout. Is another gitsetu process running?"
             return 1
         fi
         local sleep_dur=0.1
-        if [[ "${GITSETU_TEST:-0}" -eq 1 ]]; then
-            sleep_dur=0.02
-        fi
+        [[ "$test_mode" -eq 1 ]] && sleep_dur=0.02
         sleep "$sleep_dur"
     done
 
-    # Lock acquired: atomically write PID (via temp file rename) and creation timestamp
-    echo "$$" > "$target_lock/pid.tmp.$$" 2>/dev/null || echo "$$" > "$target_lock/pid"
-    mv -f "$target_lock/pid.tmp.$$" "$target_lock/pid" 2>/dev/null || true
-    date +%s > "$target_lock/timestamp" 2>/dev/null || true
+    local new_token process_start
+    new_token=$(_gitsetu_new_lock_token) || {
+        rmdir "$target_lock" 2>/dev/null || true
+        print_error "Failed to generate lock ownership token."
+        return 1
+    }
+    process_start=$(_gitsetu_lock_process_start "$$" || printf '')
+
+    # The mkdir is the ownership gate.  Populate identity files before exposing
+    # the lock to API callers; contenders treat incomplete records as invalid.
+    if ! (umask 077
+          printf '%s\n' "$$" > "$target_lock/pid" &&
+          printf '%s\n' "$new_token" > "$target_lock/token" &&
+          printf '%s\n' "$process_start" > "$target_lock/process_start" &&
+          date +%s > "$target_lock/timestamp") ||
+       ! chmod 700 "$target_lock" 2>/dev/null; then
+        rm -f "$target_lock/pid" "$target_lock/token" "$target_lock/process_start" "$target_lock/timestamp" 2>/dev/null || true
+        rmdir "$target_lock" 2>/dev/null || true
+        print_error "Failed to initialize lock ownership metadata."
+        return 1
+    fi
+
+    GITSETU_LOCK_PATH="$target_lock"
+    GITSETU_LOCK_TOKEN="$new_token"
+    GITSETU_LOCK_PROCESS_START="$process_start"
     GITSETU_LOCK_DEPTH=1
-    GITSETU_CLEANUP_DIRS+=("$target_lock")
     return 0
 }
 
 # shellcheck disable=SC2120
 release_lock() {
-    local target_lock="${1:-${GITSETU_LOCK_DIR:-${GITSETU_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu}/profiles.lock}}"
+    local target_lock="${1:-${GITSETU_LOCK_PATH:-${GITSETU_LOCK_DIR:-}}}"
+    target_lock="${target_lock%/}"
 
-    # If current process does not hold the lock, do nothing
     if [[ "${GITSETU_LOCK_DEPTH:-0}" -le 0 ]]; then
         return 0
+    fi
+    if [[ -z "${GITSETU_LOCK_PATH:-}" || "$target_lock" != "$GITSETU_LOCK_PATH" ]]; then
+        print_error "Refusing to release $target_lock; this process owns ${GITSETU_LOCK_PATH:-no lock}."
+        return 1
     fi
 
     if [[ "$GITSETU_LOCK_DEPTH" -gt 1 ]]; then
         GITSETU_LOCK_DEPTH=$((GITSETU_LOCK_DEPTH - 1))
         return 0
     fi
-    GITSETU_LOCK_DEPTH=0
 
-    if [[ -d "$target_lock" ]]; then
-        local lock_pid=""
-        if [[ -f "$target_lock/pid" ]]; then
-            lock_pid=$(cat "$target_lock/pid" 2>/dev/null || echo "")
-            lock_pid="${lock_pid%$'\r'}"
-        fi
-        # Only release if current process strictly owns the lock on disk
-        if [[ "$lock_pid" == "$$" ]]; then
-            # Atomic release: rename lock dir away so competing processes can immediately acquire
-            local releasing_dir="${target_lock}.rel.$$"
-            if mv "$target_lock" "$releasing_dir" 2>/dev/null; then
+    local disk_pid disk_token releasing_dir
+    disk_pid=$(_gitsetu_lock_read_value "$target_lock" pid)
+    disk_token=$(_gitsetu_lock_read_value "$target_lock" token)
+    if [[ -d "$target_lock" && ! -L "$target_lock" && "$disk_pid" == "$$" && -n "${GITSETU_LOCK_TOKEN:-}" && "$disk_token" == "$GITSETU_LOCK_TOKEN" ]]; then
+        releasing_dir="${target_lock}.rel.$$.$RANDOM"
+        if mv "$target_lock" "$releasing_dir" 2>/dev/null; then
+            # Re-verify the renamed directory before deleting it.  This avoids a
+            # path-replacement race turning release into deletion of a new owner.
+            local moved_pid moved_token
+            moved_pid=$(_gitsetu_lock_read_value "$releasing_dir" pid)
+            moved_token=$(_gitsetu_lock_read_value "$releasing_dir" token)
+            if [[ "$moved_pid" == "$$" && "$moved_token" == "$GITSETU_LOCK_TOKEN" ]]; then
                 rm -rf "$releasing_dir" 2>/dev/null || true
-            else
-                rm -f "$target_lock/pid" "$target_lock/timestamp" 2>/dev/null || true
-                rmdir "$target_lock" 2>/dev/null || true
             fi
         fi
+    fi
+
+    GITSETU_LOCK_DEPTH=0
+    GITSETU_LOCK_PATH=""
+    GITSETU_LOCK_TOKEN=""
+    GITSETU_LOCK_PROCESS_START=""
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# Registry entrypoint guard
+# ------------------------------------------------------------------------------
+_setup_load_registry_for_entrypoint() {
+    if [[ ! -e "$GITSETU_PROFILES_CONF" && ! -L "$GITSETU_PROFILES_CONF" ]]; then
+        load_profiles || {
+            print_error "Could not initialize an empty profile state."
+            return 1
+        }
+        return 0
+    fi
+    if ! load_profiles; then
+        print_error "Profile registry validation failed; no changes were made."
+        return 1
     fi
     return 0
 }
@@ -606,13 +949,13 @@ release_lock() {
 # render_setup_summary — Displays post-setup completion summary (T2.5)
 # ------------------------------------------------------------------------------
 render_setup_summary() {
+    if [[ "${PROFILE_COUNT:-0}" -eq 0 ]]; then
+        _setup_load_registry_for_entrypoint || return 1
+    fi
+
     print_section "Setup Complete"
     print_success "Setup complete! You're ready to go."
     printf >&2 '\n'
-
-    if [[ "${PROFILE_COUNT:-0}" -eq 0 ]] && declare -f load_profiles >/dev/null 2>&1; then
-        load_profiles 2>/dev/null || true
-    fi
 
     printf >&2 '  %bProfiles:%b\n' "$BOLD" "$RESET"
     local i
@@ -651,7 +994,260 @@ render_setup_summary() {
     printf >&2 '  %bQuick Reference:%b\n' "$BOLD" "$RESET"
     printf >&2 '    %bgitsetu status%b    — check active identity\n' "$CYAN" "$RESET"
     printf >&2 '    %bgitsetu doctor%b    — diagnose issues\n' "$CYAN" "$RESET"
-    printf >&2 '    %bgitsetu backup%b    — encrypted migration vault\n\n' "$CYAN" "$RESET"
+    printf >&2 '    %bgitsetu backup%b    — authenticated encrypted backup\n\n' "$CYAN" "$RESET"
+}
+
+# ------------------------------------------------------------------------------
+# execute_blueprint transaction helpers
+# ------------------------------------------------------------------------------
+_setup_prepare_transaction_parent() {
+    local parent="${GITSETU_CONFIG_DIR%/}"
+    parent=$(dirname "$parent") || return 1
+    [[ -n "$parent" && "$parent" != *[[:cntrl:]]* ]] || return 1
+    case "$parent" in
+        /*|[A-Za-z]:/*) ;;
+        *) return 1 ;;
+    esac
+
+    # Validate all existing ancestors before creating a missing config parent;
+    # never let mktemp follow a symlink/reparse point.
+    _gitsetu_lock_parent_is_safe "$parent" || return 1
+    (umask 077 && mkdir -p "$parent") 2>/dev/null || return 1
+    _gitsetu_lock_parent_is_safe "$parent" || return 1
+    chmod 700 "$parent" 2>/dev/null || return 1
+    if declare -F _gitsetu_private_directory >/dev/null 2>&1; then
+        _gitsetu_private_directory "$parent" || return 1
+    fi
+    return 0
+}
+
+_SETUP_TRANSACTION_DIR=""
+_SETUP_CREATED_KEYS=()
+_SETUP_STORED_CREDENTIAL_LABELS=()
+_SETUP_STORED_CREDENTIAL_PROVIDERS=()
+
+_setup_snapshot_regular_or_tree() {
+    local source_path="$1" snapshot_path="$2"
+    if [[ -e "$source_path" || -L "$source_path" ]]; then
+        [[ -O "$source_path" ]] || return 1
+        if declare -F _gitsetu_is_reparse_point >/dev/null 2>&1 &&
+           _gitsetu_is_reparse_point "$source_path"; then
+            return 1
+        fi
+    fi
+    if [[ -f "$source_path" && ! -L "$source_path" ]]; then
+        cp -p "$source_path" "$snapshot_path" 2>/dev/null || return 1
+        printf 'present\n' > "${snapshot_path}.state" || return 1
+        return 0
+    fi
+    if [[ -d "$source_path" && ! -L "$source_path" ]]; then
+        cp -pR "$source_path" "$snapshot_path" 2>/dev/null || return 1
+        printf 'present\n' > "${snapshot_path}.state" || return 1
+        return 0
+    fi
+    [[ ! -e "$source_path" && ! -L "$source_path" ]] || return 1
+    printf 'absent\n' > "${snapshot_path}.state" || return 1
+}
+
+_setup_snapshot_target() {
+    local txn="$1" name="$2" source_path="$3"
+    _setup_snapshot_regular_or_tree "$source_path" "$txn/snapshots/$name"
+}
+
+_setup_restore_target() {
+    local txn="$1" name="$2" destination="$3"
+    local state="$txn/snapshots/$name.state"
+    [[ -f "$state" ]] || return 1
+    # A replacement symlink/reparse point is not owned state.  Refuse rollback
+    # rather than deleting anything at that path or following it.
+    if [[ -L "$destination" ]]; then
+        return 1
+    fi
+    if [[ -d "$destination" ]]; then
+        rm -rf "$destination" 2>/dev/null || return 1
+    else
+        rm -f "$destination" 2>/dev/null || return 1
+    fi
+    if grep -q '^present$' "$state" 2>/dev/null; then
+        if [[ -d "$txn/snapshots/$name" && ! -L "$txn/snapshots/$name" ]]; then
+            cp -pR "$txn/snapshots/$name" "$destination" 2>/dev/null || return 1
+        elif [[ -f "$txn/snapshots/$name" && ! -L "$txn/snapshots/$name" ]]; then
+            cp -p "$txn/snapshots/$name" "$destination" 2>/dev/null || return 1
+        else
+            return 1
+        fi
+    fi
+    return 0
+}
+
+_setup_begin_transaction() {
+    _SETUP_TRANSACTION_DIR=""
+    _SETUP_CREATED_KEYS=()
+    _SETUP_STORED_CREDENTIAL_LABELS=()
+    _SETUP_STORED_CREDENTIAL_PROVIDERS=()
+    [[ "${GITSETU_DRY_RUN:-0}" -eq 0 ]] || return 0
+
+    local parent txn
+    _setup_prepare_transaction_parent || return 1
+    parent=$(dirname "${GITSETU_CONFIG_DIR%/}") || return 1
+    txn=$(umask 077 && mktemp -d "$parent/.gitsetu-setup.XXXXXX" 2>/dev/null) || return 1
+    chmod 700 "$txn" 2>/dev/null || { rm -rf "$txn" 2>/dev/null || true; return 1; }
+    (umask 077 && mkdir -p "$txn/snapshots") 2>/dev/null || {
+        rm -rf "$txn" 2>/dev/null || true
+        return 1
+    }
+    _SETUP_TRANSACTION_DIR="$txn"
+
+    _setup_snapshot_target "$txn" profiles-conf "$GITSETU_PROFILES_CONF" || return 1
+    _setup_snapshot_target "$txn" profiles-dir "$GITSETU_PROFILES_DIR" || return 1
+    _setup_snapshot_target "$txn" hooks-dir "$GITSETU_HOOKS_DIR" || return 1
+    _setup_snapshot_target "$txn" tokens "$GITSETU_CONFIG_DIR/.tokens" || return 1
+    _setup_snapshot_target "$txn" gitconfig "$HOME/.gitconfig" || return 1
+    _setup_snapshot_target "$txn" sshconfig "$HOME/.ssh/config" || return 1
+    return 0
+}
+
+delete_managed_key_after_confirmation() {
+    local key_path="${1:-}"
+    _setup_validate_managed_key_destination "$key_path" || return 1
+    if ! confirm "Delete SSH key '$key_path' and its public key permanently?" "n"; then
+        print_info "Key kept."
+        return 0
+    fi
+    # Recheck immediately after the prompt: a replacement/reparse point invalidates
+    # the user's confirmation and must never be removed.
+    _setup_validate_managed_key_destination || return 1
+    rm -f "$key_path" "${key_path}.pub" || return 1
+}
+
+_setup_validate_managed_key_destination() {
+    local key_path="${1:-}" managed_root current
+    validate_key_path "$key_path" || return 1
+    managed_root=$(normalize_path "$HOME/.ssh") || return 1
+    case "$key_path" in "$managed_root"/*) ;; *) return 1 ;; esac
+    if [[ -L "$key_path" || -L "${key_path}.pub" ]]; then
+        return 1
+    fi
+    if [[ -e "$key_path" && ! -f "$key_path" ]]; then return 1; fi
+    if [[ -e "${key_path}.pub" && ! -f "${key_path}.pub" ]]; then return 1; fi
+    current="${key_path%/*}"
+    while [[ -n "$current" && "$current" != "." && ! "$current" =~ ^[A-Za-z]:/$ ]]; do
+        [[ ! -L "$current" ]] || return 1
+        [[ "$current" == "$managed_root" ]] && return 0
+        local parent
+        parent=$(dirname "$current") || return 1
+        [[ "$parent" != "$current" ]] || return 1
+        current="$parent"
+    done
+    return 1
+}
+
+_setup_remove_created_key_safely() {
+    local key_path="$1" managed_root current
+    validate_key_path "$key_path" || return 1
+    managed_root=$(normalize_path "$HOME/.ssh") || return 1
+    case "$key_path" in
+        "$managed_root"/*) ;;
+        *) return 1 ;;
+    esac
+    [[ ! -L "$key_path" ]] || return 1
+    current="${key_path%/*}"
+    while [[ -n "$current" && "$current" != "." && ! "$current" =~ ^[A-Za-z]:/$ ]]; do
+        [[ ! -L "$current" ]] || return 1
+        [[ "$current" == "$managed_root" ]] && break
+        local parent
+        parent=$(dirname "$current") || return 1
+        [[ "$parent" != "$current" ]] || return 1
+        current="$parent"
+    done
+    rm -f "$key_path" "${key_path}.pub" 2>/dev/null || return 1
+}
+
+_setup_rollback_transaction() {
+    local txn="${_SETUP_TRANSACTION_DIR:-}" i failed=0
+    # Remove credentials stored during this attempt before restoring files.
+    for (( i=${#_SETUP_STORED_CREDENTIAL_LABELS[@]}-1; i>=0; i-- )); do
+        if declare -F keychain_erase >/dev/null 2>&1; then
+            keychain_erase "${_SETUP_STORED_CREDENTIAL_LABELS[$i]}" \
+                "${_SETUP_STORED_CREDENTIAL_PROVIDERS[$i]}" >/dev/null 2>&1 || failed=1
+        fi
+    done
+    _SETUP_STORED_CREDENTIAL_LABELS=()
+    _SETUP_STORED_CREDENTIAL_PROVIDERS=()
+
+    for (( i=${#_SETUP_CREATED_KEYS[@]}-1; i>=0; i-- )); do
+        _setup_remove_created_key_safely "${_SETUP_CREATED_KEYS[$i]}" || failed=1
+    done
+    _SETUP_CREATED_KEYS=()
+
+    if [[ -n "$txn" && -d "$txn" ]]; then
+        _setup_restore_target "$txn" profiles-conf "$GITSETU_PROFILES_CONF" || failed=1
+        _setup_restore_target "$txn" profiles-dir "$GITSETU_PROFILES_DIR" || failed=1
+        _setup_restore_target "$txn" hooks-dir "$GITSETU_HOOKS_DIR" || failed=1
+        _setup_restore_target "$txn" tokens "$GITSETU_CONFIG_DIR/.tokens" || failed=1
+        _setup_restore_target "$txn" gitconfig "$HOME/.gitconfig" || failed=1
+        _setup_restore_target "$txn" sshconfig "$HOME/.ssh/config" || failed=1
+        if [[ "$failed" -eq 0 ]]; then
+            if rm -rf "$txn" 2>/dev/null; then
+                _SETUP_TRANSACTION_DIR=""
+            else
+                failed=1
+            fi
+        fi
+    else
+        _SETUP_TRANSACTION_DIR=""
+    fi
+    return "$failed"
+}
+
+_setup_blueprint_abort() {
+    local message="$1"
+    print_error "$message"
+    if ! _setup_rollback_transaction; then
+        print_error "Setup rollback was incomplete. Recovery snapshots remain in $_SETUP_TRANSACTION_DIR."
+    fi
+    release_lock || true
+    return 1
+}
+
+remove_profile_transaction() {
+    local label="${1:-}" acquired=0 i idx=-1
+    validate_label "$label" || return 1
+    acquire_lock || return 1
+    acquired=1
+    if ! _setup_load_registry_for_entrypoint; then
+        release_lock || true
+        return 1
+    fi
+    for (( i=0; i<PROFILE_COUNT; i++ )); do
+        if [[ "${PROFILE_LABELS[$i]}" == "$label" ]]; then idx="$i"; break; fi
+    done
+    if [[ "$idx" == "0" ]] || ! validate_array_index "$idx" "$PROFILE_COUNT"; then
+        print_error "The global profile cannot be removed and the profile must exist."
+        release_lock || true
+        return 1
+    fi
+    if ! _setup_begin_transaction; then
+        _setup_blueprint_abort "Could not initialize the profile-removal transaction."
+        return 1
+    fi
+    if ! remove_profile_at_index "$idx"; then
+        _setup_blueprint_abort "Could not stage profile removal."
+        return 1
+    fi
+    if ! write_profiles_conf ||
+       ! write_global_gitconfig ||
+       ! write_ssh_config; then
+        _setup_blueprint_abort "Profile removal could not regenerate all state; rolling back."
+        return 1
+    fi
+    if [[ -n "$_SETUP_TRANSACTION_DIR" ]]; then
+        rm -rf "$_SETUP_TRANSACTION_DIR" 2>/dev/null || true
+        _SETUP_TRANSACTION_DIR=""
+    fi
+    release_lock || return 1
+    print_success "Profile '$label' successfully removed."
+    return 0
 }
 
 # ------------------------------------------------------------------------------
@@ -660,36 +1256,66 @@ render_setup_summary() {
 execute_blueprint() {
     acquire_lock || return 1
 
-    clear || printf '\033c'
+    if [[ -t 2 ]]; then
+        clear || printf '\033c'
+    else
+        printf '\033c'
+    fi
     print_section "Executing Setup Blueprint"
-    
-    ensure_dirs
-    ensure_workspace_dirs
+
+    if ! _setup_begin_transaction; then
+        _setup_blueprint_abort "Could not initialize the setup transaction."
+        return 1
+    fi
+    if ! ensure_dirs; then
+        _setup_blueprint_abort "Could not create GitSetu state directories."
+        return 1
+    fi
+    if ! ensure_workspace_dirs; then
+        _setup_blueprint_abort "Could not prepare profile workspace directories."
+        return 1
+    fi
 
     # 1. Generate SSH keys
     print_section "Generating SSH Keys"
-    local i
+    local i key_path fallback_path
     for (( i=0; i<PROFILE_COUNT; i++ )); do
-        local key_path="${PROFILE_KEYS[i]}"
-        
-        if [[ -f "$key_path" ]]; then
+        key_path="${PROFILE_KEYS[i]}"
+
+        if [[ -f "$key_path" && ! -L "$key_path" ]]; then
             print_info "Using existing key: $key_path"
             continue
         fi
-        
-        generate_ssh_key "${PROFILE_LABELS[i]}" "${PROFILE_EMAILS[i]}" "$key_path"
-        # shellcheck disable=SC2181
-        if [[ $? -ne 0 ]] && [[ "$key_path" == *"_sk_"* ]]; then
-            print_warning "FIDO2 Hardware Key generation failed."
-            if confirm "Fallback to standard software SSH key for '${PROFILE_LABELS[i]}'?" "y"; then
-                key_path="$HOME/.ssh/id_ed25519_${PROFILE_LABELS[i]}"
-                PROFILE_KEYS[i]="$key_path"
-                generate_ssh_key "${PROFILE_LABELS[i]}" "${PROFILE_EMAILS[i]}" "$key_path"
-            else
-                print_error "Setup aborted due to FIDO2 key generation failure."
-                release_lock
-                exit 1
+        if [[ -e "$key_path" || -L "$key_path" ]]; then
+            _setup_blueprint_abort "Key path is not a regular file: $key_path"
+            return 1
+        fi
+        _SETUP_CREATED_KEYS+=("$key_path")
+
+        if ! generate_ssh_key "${PROFILE_LABELS[i]}" "${PROFILE_EMAILS[i]}" "$key_path"; then
+            if [[ "$key_path" != *"_sk_"* ]]; then
+                _setup_blueprint_abort "SSH key generation failed for profile '${PROFILE_LABELS[i]}'."
+                return 1
             fi
+            print_warning "FIDO2 hardware key generation failed for '${PROFILE_LABELS[i]}'."
+            if ! confirm "Fallback to a software SSH key for '${PROFILE_LABELS[i]}'?" "n"; then
+                _setup_blueprint_abort "Setup aborted at the explicit FIDO2 fallback prompt."
+                return 1
+            fi
+            fallback_path="$HOME/.ssh/id_ed25519_${PROFILE_LABELS[i]}"
+            if [[ ! -e "$fallback_path" && ! -L "$fallback_path" ]]; then
+                _SETUP_CREATED_KEYS+=("$fallback_path")
+            fi
+            if ! generate_ssh_key "${PROFILE_LABELS[i]}" "${PROFILE_EMAILS[i]}" "$fallback_path"; then
+                _setup_blueprint_abort "Software SSH key fallback failed for profile '${PROFILE_LABELS[i]}'."
+                return 1
+            fi
+            PROFILE_KEYS[i]="$fallback_path"
+            key_path="$fallback_path"
+        fi
+        if [[ "${GITSETU_DRY_RUN:-0}" -ne 1 ]] && [[ ! -f "$key_path" || -L "$key_path" ]]; then
+            _setup_blueprint_abort "SSH key generation did not produce a regular key: $key_path"
+            return 1
         fi
     done
 
@@ -706,12 +1332,14 @@ execute_blueprint() {
         for (( i=0; i<PROFILE_COUNT; i++ )); do
             if [[ -n "${PROFILE_PATS[$i]:-}" ]] && [[ -n "${PROFILE_USERS[$i]:-}" ]]; then
                 local provider="${PROFILE_PROVIDERS[$i]:-github.com}"
-                if keychain_store "${PROFILE_LABELS[i]}" "$provider" "${PROFILE_USERS[i]}" "${PROFILE_PATS[i]}"; then
-                    print_success "Stored PAT for ${PROFILE_USERS[i]}@${provider}"
-                else
-                    print_error "Failed to store PAT for ${PROFILE_USERS[i]}@${provider}"
+                if ! keychain_store "${PROFILE_LABELS[i]}" "$provider" "${PROFILE_USERS[i]}" "${PROFILE_PATS[i]}"; then
+                    PROFILE_PATS[i]=""
+                    _setup_blueprint_abort "Failed to store PAT for ${PROFILE_USERS[i]}@${provider}."
+                    return 1
                 fi
-                # Erase PAT from memory after storing
+                _SETUP_STORED_CREDENTIAL_LABELS+=("${PROFILE_LABELS[i]}")
+                _SETUP_STORED_CREDENTIAL_PROVIDERS+=("$provider")
+                print_success "Stored PAT for ${PROFILE_USERS[i]}@${provider}"
                 PROFILE_PATS[i]=""
             fi
         done
@@ -719,20 +1347,29 @@ execute_blueprint() {
 
     # 2. Write global gitconfig
     print_section "Writing Git Configuration"
-    write_global_gitconfig
+    if ! write_global_gitconfig; then
+        _setup_blueprint_abort "Failed to write global Git configuration."
+        return 1
+    fi
 
-    # 3. Write SSH config
     print_section "Updating SSH Configuration"
-    write_ssh_config
+    if ! write_ssh_config; then
+        _setup_blueprint_abort "Failed to write SSH configuration."
+        return 1
+    fi
 
-    # 4. Write profiles registry
-    write_profiles_conf
+    if ! write_profiles_conf; then
+        _setup_blueprint_abort "Failed to write the v2 profile registry."
+        return 1
+    fi
 
-    # 5. Display public keys
-    display_public_keys
-    
-    # 6. SSH agent key registration (T2.1)
-    auto_register_ssh_keys
+    if ! display_public_keys; then
+        _setup_blueprint_abort "Failed to display generated public keys."
+        return 1
+    fi
+    if ! auto_register_ssh_keys; then
+        print_warning "SSH keys were generated, but automatic agent registration did not complete."
+    fi
     printf >&2 '\n'
 
     # 6.5 Live SSH handshake verification with Port 443 fallback (T2.3)
@@ -748,28 +1385,42 @@ execute_blueprint() {
 
         if [[ "${GITSETU_PORT443_NEEDED:-0}" -eq 1 ]]; then
             print_info "Regenerating SSH configuration with Port 443 corporate fallback..."
-            write_ssh_config
+            if ! write_ssh_config; then
+                _setup_blueprint_abort "Failed to regenerate SSH configuration after Port 443 fallback."
+                return 1
+            fi
         fi
     fi
 
     # 7. Guard activation prompt (T2.4)
     if [[ ! -f "$GITSETU_HOOKS_DIR/pre-commit" ]] && [[ -z "${GITSETU_TEST:-}" ]]; then
-        if confirm "Enable pre-commit identity guard (prevents wrong-email commits)?" "y"; then
-            install_guard
+        if confirm "Enable pre-commit identity guard (prevents wrong-email commits)?" "y" &&
+           ! install_guard; then
+            _setup_blueprint_abort "Failed to install the pre-commit identity guard."
+            return 1
         fi
     fi
 
-    # 8. Post-setup completion summary (T2.5)
+    if [[ -n "$_SETUP_TRANSACTION_DIR" ]]; then
+        if rm -rf "$_SETUP_TRANSACTION_DIR" 2>/dev/null; then
+            _SETUP_TRANSACTION_DIR=""
+        else
+            print_warning "Could not remove completed setup snapshots: $_SETUP_TRANSACTION_DIR"
+            _SETUP_TRANSACTION_DIR=""
+        fi
+    fi
+    if ! release_lock; then
+        print_error "Setup state was written, but the runtime lock could not be released cleanly."
+        return 1
+    fi
     render_setup_summary
-
-    release_lock
 }
 
 # ------------------------------------------------------------------------------
 # auto_setup_runner — Zero-prompt autonomous onboarding pipeline
 # ------------------------------------------------------------------------------
 auto_setup_runner() {
-    load_profiles
+    _setup_load_registry_for_entrypoint || return 1
     if [[ "$PROFILE_COUNT" -eq 0 ]]; then
         generate_initial_blueprint
     fi
@@ -816,8 +1467,8 @@ auto_setup_runner() {
 # interactive_setup_wizard
 # ------------------------------------------------------------------------------
 interactive_setup_wizard() {
-    # Bootstrap initial state if empty
-    load_profiles
+    # A missing registry bootstraps; a present invalid registry is fail-closed.
+    _setup_load_registry_for_entrypoint || return 1
     if [[ "$PROFILE_COUNT" -eq 0 ]]; then
         generate_initial_blueprint
     fi
@@ -870,7 +1521,9 @@ interactive_setup_wizard() {
                     fi
                 done
                 if [[ "$valid" -eq 1 ]]; then
-                    execute_blueprint
+                    if ! execute_blueprint; then
+                        return 1
+                    fi
                     break
                 fi
                 ;;
@@ -881,18 +1534,24 @@ interactive_setup_wizard() {
                 if [[ "$PROFILE_COUNT" -eq 1 ]]; then
                     prompt_edit_profile 0
                 else
+                    local idx menu_index
                     read -r -p "Enter profile number to edit (1-$PROFILE_COUNT): " idx
-                    if [[ "$idx" =~ ^[0-9]+$ ]] && [[ "$idx" -ge 1 ]] && [[ "$idx" -le "$PROFILE_COUNT" ]]; then
-                        prompt_edit_profile $((idx - 1))
+                    if validate_positive_integer "$idx"; then
+                        menu_index=$(_gitsetu_uint_predecessor "$idx")
+                        if validate_array_index "$menu_index" "$PROFILE_COUNT"; then
+                            prompt_edit_profile "$menu_index"
+                        fi
                     fi
                 fi
                 ;;
             "R")
+                local idx menu_index
                 read -r -p "Enter profile number to remove: " idx
-                if [[ "$idx" =~ ^[0-9]+$ ]] && [[ "$idx" -ge 2 ]] && [[ "$idx" -le "$PROFILE_COUNT" ]]; then
-                    # Use safe array removal to preserve empty strings
-                    local rem_idx=$((idx - 1))
-                    remove_profile_at_index "$rem_idx"
+                if validate_positive_integer "$idx"; then
+                    menu_index=$(_gitsetu_uint_predecessor "$idx")
+                    if [[ "$menu_index" != "0" ]] && validate_array_index "$menu_index" "$PROFILE_COUNT"; then
+                        remove_profile_at_index "$menu_index"
+                    fi
                 else
                     print_warning "Cannot remove default profile or invalid index."
                     sleep 1
@@ -919,9 +1578,13 @@ interactive_setup_wizard() {
                 read -r
                 ;;
             *)
-                # If they typed a number, edit that profile
-                if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le "$PROFILE_COUNT" ]]; then
-                    prompt_edit_profile $((choice - 1))
+                # If they typed a canonical number, edit that profile.
+                local choice_index
+                if validate_positive_integer "$choice"; then
+                    choice_index=$(_gitsetu_uint_predecessor "$choice")
+                    if validate_array_index "$choice_index" "$PROFILE_COUNT"; then
+                        prompt_edit_profile "$choice_index"
+                    fi
                 fi
                 ;;
         esac
@@ -967,7 +1630,7 @@ cmd_profile() {
 
     acquire_lock || exit 1
 
-    load_profiles
+    _setup_load_registry_for_entrypoint || { release_lock; exit 1; }
     if [[ "$PROFILE_COUNT" -eq 0 ]]; then
         generate_initial_blueprint
     fi
@@ -1048,7 +1711,10 @@ cmd_profile() {
                 exit 1
             fi
 
-            execute_blueprint
+            if ! execute_blueprint; then
+                release_lock || true
+                return 1
+            fi
             ;;
         remove)
             local idx=-1
@@ -1070,12 +1736,11 @@ cmd_profile() {
                 exit 1
             fi
 
-            rm -f "$GITSETU_PROFILES_DIR/${label}.gitconfig"
-
-            # Use safe array removal to preserve empty strings
-            remove_profile_at_index "$idx"
-
-            execute_blueprint
+            if ! remove_profile_transaction "$label"; then
+                release_lock || true
+                return 1
+            fi
+            return 0
             ;;
         *)
             print_error "Unknown profile action: $action"
