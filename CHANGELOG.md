@@ -19,6 +19,7 @@ The v1.1.0 line is a verified, security-hardened, publication-ready release cand
 - Separated generated release provenance from tagged source metadata; the release workflow is now preparation-only until a separately reviewed publish-only gate exists.
 - Made setup dry-run avoid GitHub account lookups and PAT storage, with regression coverage for the offline boundary.
 - Made the HTTPS credential broker honor Git's exact `path=` tuple component, with strict protocol parsing and an explicit environment override for controlled wrappers.
+- Restricted GitHub Port 443 SSH routing and verification to the exact `github.com` host, with deceptive-host regression coverage.
 - Added a fail-latching regression harness, isolated test environments, adversarial tamper/concurrency tests, and supported-platform matrix coverage.
 
 ### Security policy notes
