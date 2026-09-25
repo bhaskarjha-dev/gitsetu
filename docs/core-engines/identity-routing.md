@@ -55,7 +55,7 @@ The isolated target file (`work.gitconfig`) contains your precise overrides:
     sshCommand = ssh -F ~/.ssh/config -o IdentitiesOnly=yes -i "~/.ssh/id_ed25519_work"
 ```
 
-This absolute separation of concerns guarantees that **personal sandbox credentials never leak into corporate repositories**, while preventing single-key remote auth failures.
+This separation of concerns substantially reduces accidental cross-profile routing and avoids loading a single global key for every remote. It is not a guarantee against a compromised same-user process, manually overridden Git configuration, or a provider-side account mistake; review effective identity and repository state before committing.
 
 ---
 
@@ -64,9 +64,9 @@ This absolute separation of concerns guarantees that **personal sandbox credenti
 Because cross-platform filesystems handle casing, symlinks, and trailing paths differently, GitSetu applies strict compilation guard rails:
 - **Trailing Slashes:** Every compiled `gitdir:` path string strictly terminates with a `/` character to ensure deep sub-folder recursion acts properly.
 - **Tilde Expansion:** Standardizes shell `$HOME` prefixes to absolute directory markers to stop parsing errors across disparate terminal environments.
-- **Windows Case-Insensitive Matching (`gitdir/i:`):** On Windows / Git Bash, GitSetu automatically compiles `gitdir/i:` instead of `gitdir:`. Because Windows filesystems (NTFS) are case-preserving but case-insensitive, this ensures that directory matching never breaks if paths differ in casing (e.g. `C:/Users` vs `c:/users`).
+- **Windows Case-Insensitive Matching (`gitdir/i:`):** On Windows / Git Bash, GitSetu automatically compiles `gitdir/i:` instead of `gitdir:`. Because Windows filesystems (NTFS) are case-preserving but case-insensitive, this handles common casing differences in managed paths (e.g. `C:/Users` vs `c:/users`).
 - **Canonical Drive Letter Normalization:** Converts Windows paths (`/c/Users/...` or `c:\users\...`) into canonical `C:/Users/...` format, which is fully recognized and resolved by native Win32 `git.exe` across both Git Bash and Windows native shells (PowerShell, CMD).
-- **Virtualization Support:** Silently filters out malformed line endings and maps target workspace trees across Windows Subsystem for Linux (WSL) boundaries flawlessly.
+- **Virtualization Support:** Normalizes supported Windows/WSL path representations and rejects malformed or ambiguous path input rather than silently guessing.
 
 ### Automatic Workspace Directory Provisioning (`mkdir -p`)
 When registering a new profile (interactively in `gitsetu setup` or via `gitsetu add`), GitSetu automatically checks if the declared target directory exists on disk. If absent, it provisions the directory hierarchy via `mkdir -p` (while respecting `--dry-run` invariants), eliminating "directory does not exist" failures before cloning or committing.

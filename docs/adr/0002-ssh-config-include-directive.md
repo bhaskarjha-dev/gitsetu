@@ -24,6 +24,6 @@ OpenSSH configuration parsing operates on a **"first-match wins"** rule. If the 
 Testing confirmed that if the included file (`~/.config/gitsetu/profiles/ssh_config`) does not exist (e.g., following a `gitsetu teardown` operation), OpenSSH gracefully and silently ignores the `Include` directive without crashing or terminating the SSH handshake.
 
 ## Consequences
-*   **For Security:** Complete Zero-Trust isolation is achieved. GitSetu no longer risks corrupting the user's legacy SSH configurations.
+*   **For Security:** GitSetu-managed SSH aliases are isolated from unrelated user host blocks, and the tool avoids rewriting those legacy blocks. This is a configuration boundary, not a complete security boundary against a compromised same-user process or a malicious provider configuration.
 *   **For Maintainability:** The Bash script logic in `lib/ssh.sh` becomes drastically simpler, eliminating the need for brittle, multi-line `awk` parsers.
 *   **For Compatibility:** The `Include` directive requires OpenSSH 7.3+ (released August 2016). This is deemed an acceptable minimum requirement for modern Git multi-tenant environments.

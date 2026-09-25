@@ -67,7 +67,22 @@ if (development) {
   }
 }
 
-const allDocs = currentDocs.concat(['docs/overview/comparisons.md', 'docs/guides/vault-backups.md', 'docs/reference/faq.md']);
+function collectMarkdown(relativeDirectory) {
+  const directory = path.join(root, relativeDirectory);
+  if (!fs.existsSync(directory)) return [];
+  const files = [];
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const relative = path.join(relativeDirectory, entry.name).replaceAll(path.sep, '/');
+    if (entry.isDirectory()) files.push(...collectMarkdown(relative));
+    else if (entry.isFile() && entry.name.endsWith('.md')) files.push(relative);
+  }
+  return files;
+}
+
+const allDocs = [...new Set([
+  ...currentDocs,
+  ...collectMarkdown('docs')
+])];
 for (const file of allDocs) {
   const text = read(file);
   if (/raw\.githubusercontent\.com\/[^\s)]+\/(?:main|master)\//i.test(text)) {
