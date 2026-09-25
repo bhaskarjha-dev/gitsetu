@@ -13521,7 +13521,7 @@ cmd_credential() {
             ;;
     esac
 
-    local host="" protocol="" username="" password="" line
+    local host="" protocol="" username="" password="" credential_path="" line
     local seen_protocol=0 seen_host=0 seen_username=0 seen_password=0 seen_path=0
     local terminated=0 malformed=0
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -13554,9 +13554,8 @@ cmd_credential() {
                 [[ "$seen_password" -eq 0 ]] || { malformed=1; break; }
                 password="${line#*=}"; seen_password=1 ;;
             path=*)
-                # Git's path= attribute is intentionally ignored by the current
-                # CLI contract; still reject duplicate attributes below.
                 [[ "$seen_path" -eq 0 ]] || { malformed=1; break; }
+                credential_path="${line#*=}"
                 seen_path=1 ;;
             *)
                 malformed=1; break ;;
@@ -13565,6 +13564,11 @@ cmd_credential() {
     if [[ "$malformed" -eq 1 || "$terminated" -eq 0 ]]; then
         print_error "Malformed credential protocol input."
         return 1
+    fi
+    # An explicit environment override is useful for wrappers and tests; normal
+    # Git requests use the protocol's path= value as the exact tuple component.
+    if [[ "${GITSETU_CREDENTIAL_PATH+x}" == "x" ]]; then
+        credential_path="$GITSETU_CREDENTIAL_PATH"
     fi
 
     if [[ "$protocol" != "https" || -z "$host" ]]; then
@@ -13580,17 +13584,17 @@ cmd_credential() {
     detect_os
     case "$action" in
         get)
-            keychain_get "$profile" "$host"
+            keychain_get "$profile" "$host" "$credential_path"
             ;;
         store)
             if [[ -n "$username" && -n "$password" ]]; then
-                keychain_store "$profile" "$host" "$username" "$password"
+                keychain_store "$profile" "$host" "$username" "$password" "$credential_path"
             else
                 return 1
             fi
             ;;
         erase)
-            keychain_erase "$profile" "$host"
+            keychain_erase "$profile" "$host" "$credential_path"
             ;;
     esac
 }
