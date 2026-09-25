@@ -139,6 +139,7 @@ if [[ "$list_suites" -eq 1 ]]; then
         "$TEST_DIR/test_gh_extension_e2e.ps1" \
         "$TEST_DIR/test_powershell_installer_e2e.ps1" \
         "$TEST_DIR/test_windows_launcher.ps1" \
+        "$TEST_DIR/test_windows_cli_dispatch.ps1" \
         "$TEST_DIR/test_scoop_e2e.ps1"; do
         [[ -f "$suite" ]] && printf '%s\n' "$suite"
     done
@@ -351,6 +352,7 @@ run_default_mode() {
         "$TEST_DIR/test_gh_extension_e2e.ps1" \
         "$TEST_DIR/test_powershell_installer_e2e.ps1" \
         "$TEST_DIR/test_windows_launcher.ps1" \
+        "$TEST_DIR/test_windows_cli_dispatch.ps1" \
         "$TEST_DIR/test_scoop_e2e.ps1"; do
         [[ -f "$ps_suite" ]] || continue
         if ! matches_suite_filter "$ps_suite"; then
