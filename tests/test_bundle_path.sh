@@ -131,6 +131,19 @@ bundle_invoke() {
 # Start one isolated artifact invocation and write its status beside its output.
 # This is used only by the lock-contention case; ordinary cases use
 # bundle_invoke so their output remains easy to diagnose.
+bundle_invoke_input() {
+    local input="$1"
+    shift
+    BUNDLE_OUTPUT=""
+    BUNDLE_STATUS=0
+    if BUNDLE_OUTPUT=$(printf '%s' "$input" | bundle_exec "$@" 2>&1); then
+        BUNDLE_STATUS=0
+    else
+        BUNDLE_STATUS=$?
+    fi
+    return 0
+}
+
 bundle_start() {
     local output_file="$1"
     shift
@@ -803,6 +816,44 @@ bundle_backup_restore_round_trip() {
     assert_equals "2" "$(bundle_registry_profile_count)" "restore preserves both registry profiles" || return 1
 }
 
+bundle_credential_paths_are_isolated() {
+    if ! bundle_prepare_configured; then
+        return 1
+    fi
+    if [[ "$BUNDLE_FIXTURE_SKIPPED" -ne 0 ]]; then
+        return 0
+    fi
+
+    export GITSETU_CREDENTIAL_BACKEND=file
+    BUNDLE_CWD="$BUNDLE_REPO_DIR"
+    bundle_invoke_input $'protocol=https\nhost=github.com\npath=/repo-a\nusername=alice\npassword=alice-secret\n\n' credential store
+    assert_equals "0" "$BUNDLE_STATUS" "bundle stores the first path-scoped credential" || return 1
+    bundle_invoke_input $'protocol=https\nhost=github.com\npath=/repo-b\nusername=bob\npassword=bob-secret\n\n' credential store
+    assert_equals "0" "$BUNDLE_STATUS" "bundle stores the second path-scoped credential" || return 1
+
+    bundle_invoke_input $'protocol=https\nhost=github.com\npath=/repo-a\n\n' credential get
+    assert_equals "0" "$BUNDLE_STATUS" "bundle reads the first path-scoped credential" || return 1
+    assert_contains "$BUNDLE_OUTPUT" "username=alice" "first path resolves its own username" || return 1
+    assert_not_contains "$BUNDLE_OUTPUT" "bob-secret" "first path does not expose the second secret" || return 1
+
+    bundle_invoke_input $'protocol=https\nhost=github.com\npath=/repo-b\n\n' credential get
+    assert_equals "0" "$BUNDLE_STATUS" "bundle reads the second path-scoped credential" || return 1
+    assert_contains "$BUNDLE_OUTPUT" "username=bob" "second path resolves its own username" || return 1
+    assert_not_contains "$BUNDLE_OUTPUT" "alice-secret" "second path does not expose the first secret" || return 1
+
+    bundle_invoke_input $'protocol=https\nhost=github.com\npath=/repo-a\n\n' credential erase
+    assert_equals "0" "$BUNDLE_STATUS" "bundle erases only the selected path" || return 1
+    bundle_invoke_input $'protocol=https\nhost=github.com\npath=/repo-a\n\n' credential get
+    assert_equals "1" "$BUNDLE_STATUS" "erased path is absent" || return 1
+    bundle_invoke_input $'protocol=https\nhost=github.com\npath=/repo-b\n\n' credential get
+    assert_equals "0" "$BUNDLE_STATUS" "other path survives selected-path erase" || return 1
+    assert_contains "$BUNDLE_OUTPUT" "username=bob" "other path remains readable after erase" || return 1
+
+    bundle_invoke_input $'protocol=https\nhost=github.com\npath=/repo-b\n\n' credential erase
+    unset GITSETU_CREDENTIAL_BACKEND
+    return 0
+}
+
 bundle_registry_rejects_legacy_format() {
     if ! bundle_require_command git "bundle registry contract"; then
         return 0
@@ -926,6 +977,7 @@ run_test "bundle add/remove/status/prompt/run lifecycle" bundle_add_remove_statu
 run_test "bundle verify validates isolated state" bundle_verify_validates_isolated_state
 run_test "bundle doctor validates isolated state" bundle_doctor_validates_isolated_state
 run_test "bundle backup/restore round trip" bundle_backup_restore_round_trip
+run_test "bundle credential paths are isolated" bundle_credential_paths_are_isolated
 run_test "bundle rejects concurrent registry mutation while locked" bundle_concurrent_registry_mutations_serialize
 run_test "bundle rejects legacy registry format" bundle_registry_rejects_legacy_format
 run_test "copied bundle remains byte-for-byte exact" bundle_artifact_remains_exact
