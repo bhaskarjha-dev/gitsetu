@@ -328,6 +328,21 @@ test_ssh_host_block_port443() {
     assert_contains "$block" "Host github-work" "has Host alias"
 }
 
+test_ssh_host_block_port443_exact_host_policy() {
+    local host block
+    GITSETU_PORT443_NEEDED=1
+    for host in github.com.evil evilgithub.com gitlab.com; do
+        block=$(build_ssh_host_block "work" "$host") || return 1
+        assert_not_contains "$block" "HostName ssh.github.com" \
+            "Port 443 is not applied to deceptive/non-GitHub host $host" || return 1
+        assert_not_contains "$block" "Port 443" \
+            "deceptive/non-GitHub host $host does not receive Port 443" || return 1
+        assert_contains "$block" "HostName $host" \
+            "deceptive/non-GitHub host $host retains its literal HostName" || return 1
+    done
+    unset GITSETU_PORT443_NEEDED
+}
+
 # --- Run ---
 
 printf '\n%btest_ssh.sh%b\n' "$T_BOLD" "$T_RESET"
@@ -335,6 +350,7 @@ run_test "SSH host block has correct format" test_ssh_host_block_format
 run_test "SSH host block uses custom hostname" test_ssh_host_block_custom_host
 run_test "one-argument path validation is set -u safe" test_ssh_assert_components_one_argument_under_set_u
 run_test "SSH host block with Port 443 fallback" test_ssh_host_block_port443
+run_test "Port 443 host matching is exact" test_ssh_host_block_port443_exact_host_policy
 run_test "generate_ssh_key creates key files" test_generate_key_creates_files
 run_test "generated key has 600 permissions" test_generate_key_permissions
 run_test "dry run does not create keys" test_generate_key_dry_run

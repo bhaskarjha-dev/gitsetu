@@ -509,7 +509,10 @@ build_ssh_host_block() {
     local prefix
     prefix=${hostname%%.*}
 
-    if [[ "${GITSETU_PORT443_NEEDED:-0}" -eq 1 ]] && [[ "$hostname" == *"github"* ]]; then
+    # Port 443 routing is an explicit GitHub.com endpoint policy, not a
+    # substring match. Deceptive hosts such as github.com.evil must retain
+    # their literal HostName and never be redirected to ssh.github.com.
+    if [[ "${GITSETU_PORT443_NEEDED:-0}" -eq 1 ]] && [[ "$hostname" == "github.com" ]]; then
         cat <<EOF
 Host ${prefix}-${label}
     HostName ssh.github.com
