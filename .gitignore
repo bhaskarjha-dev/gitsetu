@@ -59,6 +59,8 @@ dist/*.tar.gz
 
 # --- One-off & generated ---
 commit_plan.sh
+release-assets/
+release-manifest.json
 
 # --- Separate repos ---
 gitsetu-web/
