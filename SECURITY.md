@@ -4,7 +4,7 @@
 
 The v1.1.0 line is a **verified, publication-ready release candidate**. The canonical release metadata remains non-public until an intentional release process creates a clean tag, signed artifacts, and published provenance. The latest official release remains the release documented by its published tag.
 
-“Release candidate” describes the verified local channel, not a public production claim: the current tree has passed the local regression, adversarial, packaging, and platform gates, but it is not a public production artifact until an intentional release process publishes and signs it.
+“Release candidate” describes an unpublished local channel, not a public production claim. Verification is tied to a named clean source commit, test run, and matching provenance; the current tree is not a public production artifact until an intentional release process publishes and signs it.
 
 | Version/channel | Security handling |
 | --------------- | ----------------- |
