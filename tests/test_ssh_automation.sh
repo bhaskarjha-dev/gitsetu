@@ -562,6 +562,28 @@ test_verify_handshake_dry_run_never_calls_ssh() {
     assert_equals "0" "$(wc -c < "$calls" | tr -d ' ')" "dry-run does not invoke ssh" || return 1
 }
 
+test_verify_handshake_deceptive_host_never_uses_443() {
+    local dummy_key="$TEST_HOME/id_ed25519_deceptive"
+    local calls="$TEST_HOME/ssh-deceptive.calls"
+    : > "$calls"
+    touch "$dummy_key"
+
+    local rc=0
+    (
+        ssh() {
+            printf '%s\n' "$*" >> "$calls"
+            return 255
+        }
+        GITSETU_TEST_SSH_VERIFY=1 GITSETU_ALLOW_SSH_PORT443=1 \
+            verify_ssh_handshake "$dummy_key" "github.com.evil"
+    ) >/dev/null 2>&1 || rc=$?
+    unset GITSETU_ALLOW_SSH_PORT443
+
+    assert_equals "1" "$rc" "deceptive host verification fails" || return 1
+    assert_equals "1" "$(wc -l < "$calls" | tr -d ' ')" "deceptive host is attempted only on its literal port 22 route" || return 1
+    assert_not_contains "$(cat "$calls")" " -p 443 " "deceptive host never receives the GitHub 443 route" || return 1
+}
+
 # ------------------------------------------------------------------------------
 # Run all tests
 # ------------------------------------------------------------------------------
@@ -588,6 +610,7 @@ run_test "build_ssh_host_block standard configuration" test_build_ssh_host_block
 run_test "build_ssh_host_block corporate Port 443 for GitHub" test_build_ssh_host_block_port443_github
 run_test "build_ssh_host_block Port 443 ignored for non-GitHub" test_build_ssh_host_block_port443_ignored_gitlab
 run_test "handshake refuses implicit port 443 and host trust" test_verify_handshake_refuses_implicit_port443_and_host_trust
+run_test "handshake deceptive host never receives GitHub 443" test_verify_handshake_deceptive_host_never_uses_443
 run_test "handshake accepts explicit first-use host trust" test_verify_handshake_explicit_host_key_consent
 run_test "handshake dry-run performs no network" test_verify_handshake_dry_run_never_calls_ssh
 print_results "SSH Automation tests"

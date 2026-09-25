@@ -1113,7 +1113,7 @@ verify_ssh_handshake() {
         return 0
     fi
 
-    if [[ "$host" == *"github.com"* || "$provider" == *"github.com"* ]]; then
+    if [[ "$host" == "github.com" || "$provider" == "github.com" ]]; then
         if [[ "${GITSETU_ALLOW_SSH_PORT443:-0}" != "1" ]]; then
             print_info "GitHub port 443 was not attempted. Set GITSETU_ALLOW_SSH_PORT443=1 to opt in to that route."
         else
