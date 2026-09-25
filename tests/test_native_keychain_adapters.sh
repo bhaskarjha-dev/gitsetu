@@ -32,6 +32,9 @@ _native_setup() {
     # platform override after module loading (as production callers do).
     export GITSETU_OS="$os_name"
     export GITSETU_CREDENTIAL_BACKEND="$backend"
+    # Adapter tests model routing through explicit GITSETU_OS; keep incidental
+    # file-backend permission checks off the host's Git Bash filesystem.
+    export OSTYPE=linux-gnu
     export PATH="$BASE_PATH"
 
     ADAPTER_LOG="$HOME/adapter.log"
@@ -456,6 +459,30 @@ test_linux_secret_tool_failure_modes_and_wsl() {
         "WSL uses the Secret Service shim" || return 1
 }
 
+test_native_setup_pat_fallback_preserves_backend_policy() {
+    _native_setup linux native || return 1
+    _make_secret_tool_shim || return 1
+
+    local setup_scope="" status=0 output=""
+    setup_scope=$(keychain_setup_pat_scope) || return 1
+    keychain_store "work" "github.com" "work-user" "setup-pass" "$setup_scope" >/dev/null 2>&1 || return 1
+    output=$(keychain_get_with_setup_fallback "work" "github.com" "/org/repo") || return 1
+    assert_equals $'username=work-user\npassword=setup-pass' "$output" \
+        "native setup fallback returns through the selected backend" || return 1
+    assert_file_contains "$ADAPTER_LOG" "op=lookup args=<gitsetu><v2><profile><work><host><github.com><path></org/repo>" \
+        "native fallback first probes the exact path" || return 1
+    assert_file_contains "$ADAPTER_LOG" "<$setup_scope>" \
+        "native fallback uses the canonical setup scope" || return 1
+    assert_file_not_exists "$GITSETU_CONFIG_DIR/.tokens" \
+        "native setup fallback never creates a plaintext store" || return 1
+
+    keychain_erase_with_setup_fallback "work" "github.com" "/org/repo" >/dev/null 2>&1 || return 1
+    output=$(keychain_get "work" "github.com" "$setup_scope" 2>/dev/null) || status=$?
+    assert_equals 1 "$status" "native fallback erase removes the setup scope" || return 1
+    assert_equals "" "$output" "erased native setup fallback emits no secret" || return 1
+    return 0
+}
+
 test_gcm_target_names_and_command_selection() {
     _native_setup gitbash native || return 1
 
@@ -620,7 +647,9 @@ exit 1
 EOF
     cat > "$stat_bin/icacls.exe" <<'EOF'
 #!/usr/bin/env sh
-exit 0
+printf '%s BUILTIN\\Administrators:(F)\n' "$1"
+printf '  NT AUTHORITY\\SYSTEM:(F)\n'
+printf '  %s:(F)\n' "$(id -un)"
 EOF
     chmod 700 "$stat_bin/fsutil.exe" "$stat_bin/icacls.exe"
     local stat_path="$stat_bin"
@@ -661,6 +690,7 @@ run_test "macOS security malformed and erase failures" test_macos_security_failu
 run_test "macOS security not-found normalization" test_macos_security_not_found_is_a_public_miss
 run_test "Linux secret-tool attributes and lifecycle" test_linux_secret_tool_attributes_and_lifecycle
 run_test "Linux secret-tool failures and WSL routing" test_linux_secret_tool_failure_modes_and_wsl
+run_test "native setup PAT fallback stays native" test_native_setup_pat_fallback_preserves_backend_policy
 run_test "GCM target names and command selection" test_gcm_target_names_and_command_selection
 run_test "GCM exact roundtrip and noninteractive flags" test_gcm_roundtrip_is_noninteractive_and_exact
 run_test "GCM not-found, malformed, and erase failures" test_gcm_failure_modes_are_not_ambiguous

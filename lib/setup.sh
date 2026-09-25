@@ -1038,6 +1038,7 @@ _SETUP_TRANSACTION_DIR=""
 _SETUP_CREATED_KEYS=()
 _SETUP_STORED_CREDENTIAL_LABELS=()
 _SETUP_STORED_CREDENTIAL_PROVIDERS=()
+_SETUP_STORED_CREDENTIAL_PATHS=()
 
 _setup_snapshot_regular_or_tree() {
     local source_path="$1" snapshot_path="$2"
@@ -1098,6 +1099,7 @@ _setup_begin_transaction() {
     _SETUP_CREATED_KEYS=()
     _SETUP_STORED_CREDENTIAL_LABELS=()
     _SETUP_STORED_CREDENTIAL_PROVIDERS=()
+    _SETUP_STORED_CREDENTIAL_PATHS=()
     [[ "${GITSETU_DRY_RUN:-0}" -eq 0 ]] || return 0
 
     local parent txn
@@ -1182,11 +1184,13 @@ _setup_rollback_transaction() {
     for (( i=${#_SETUP_STORED_CREDENTIAL_LABELS[@]}-1; i>=0; i-- )); do
         if declare -F keychain_erase >/dev/null 2>&1; then
             keychain_erase "${_SETUP_STORED_CREDENTIAL_LABELS[$i]}" \
-                "${_SETUP_STORED_CREDENTIAL_PROVIDERS[$i]}" >/dev/null 2>&1 || failed=1
+                "${_SETUP_STORED_CREDENTIAL_PROVIDERS[$i]}" \
+                "${_SETUP_STORED_CREDENTIAL_PATHS[$i]}" >/dev/null 2>&1 || failed=1
         fi
     done
     _SETUP_STORED_CREDENTIAL_LABELS=()
     _SETUP_STORED_CREDENTIAL_PROVIDERS=()
+    _SETUP_STORED_CREDENTIAL_PATHS=()
 
     for (( i=${#_SETUP_CREATED_KEYS[@]}-1; i>=0; i-- )); do
         _setup_remove_created_key_safely "${_SETUP_CREATED_KEYS[$i]}" || failed=1
@@ -1341,7 +1345,12 @@ execute_blueprint() {
         fi
     done
     if [[ "$has_pats" -eq 1 ]]; then
+        local setup_pat_scope=""
         print_section "Storing Credentials in Keychain"
+        setup_pat_scope=$(keychain_setup_pat_scope) || {
+            _setup_blueprint_abort "Could not resolve the canonical setup PAT scope."
+            return 1
+        }
         for (( i=0; i<PROFILE_COUNT; i++ )); do
             if [[ -n "${PROFILE_PATS[$i]:-}" ]] && [[ -n "${PROFILE_USERS[$i]:-}" ]]; then
                 local provider="${PROFILE_PROVIDERS[$i]:-github.com}"
@@ -1350,13 +1359,15 @@ execute_blueprint() {
                     PROFILE_PATS[i]=""
                     continue
                 fi
-                if ! keychain_store "${PROFILE_LABELS[i]}" "$provider" "${PROFILE_USERS[i]}" "${PROFILE_PATS[i]}"; then
+                if ! keychain_store "${PROFILE_LABELS[i]}" "$provider" "${PROFILE_USERS[i]}" \
+                    "${PROFILE_PATS[i]}" "$setup_pat_scope"; then
                     PROFILE_PATS[i]=""
                     _setup_blueprint_abort "Failed to store PAT for ${PROFILE_USERS[i]}@${provider}."
                     return 1
                 fi
                 _SETUP_STORED_CREDENTIAL_LABELS+=("${PROFILE_LABELS[i]}")
                 _SETUP_STORED_CREDENTIAL_PROVIDERS+=("$provider")
+                _SETUP_STORED_CREDENTIAL_PATHS+=("$setup_pat_scope")
                 print_success "Stored PAT for ${PROFILE_USERS[i]}@${provider}"
                 PROFILE_PATS[i]=""
             fi

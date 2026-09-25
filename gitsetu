@@ -692,6 +692,11 @@ gitsetu_global_cleanup() {
         ui_restore_terminal
     fi
 
+    if type _keychain_release_plaintext_mutation_lock >/dev/null 2>&1 &&
+       [[ "${KEYCHAIN_PLAINTEXT_LOCK_DEPTH:-0}" =~ ^[0-9]+$ && "${KEYCHAIN_PLAINTEXT_LOCK_DEPTH:-0}" -gt 0 ]]; then
+        _keychain_release_plaintext_mutation_lock 2>/dev/null || true
+    fi
+
     if type release_lock >/dev/null 2>&1 && [[ "${GITSETU_LOCK_DEPTH:-0}" =~ ^[0-9]+$ && "${GITSETU_LOCK_DEPTH:-0}" -gt 0 ]]; then
         release_lock 2>/dev/null || true
     fi
@@ -1356,6 +1361,7 @@ cmd_credential() {
     esac
 
     local host="" protocol="" username="" password="" credential_path="" line
+    local use_setup_fallback=1
     local seen_protocol=0 seen_host=0 seen_username=0 seen_password=0 seen_path=0
     local terminated=0 malformed=0
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -1403,6 +1409,9 @@ cmd_credential() {
     # Git requests use the protocol's path= value as the exact tuple component.
     if [[ "${GITSETU_CREDENTIAL_PATH+x}" == "x" ]]; then
         credential_path="$GITSETU_CREDENTIAL_PATH"
+        # Controlled wrappers selecting a path explicitly retain strict exact
+        # tuple semantics and do not opt into the setup-PAT compatibility path.
+        use_setup_fallback=0
     fi
 
     if [[ "$protocol" != "https" || -z "$host" ]]; then
@@ -1418,7 +1427,11 @@ cmd_credential() {
     detect_os
     case "$action" in
         get)
-            keychain_get "$profile" "$host" "$credential_path"
+            if [[ "$use_setup_fallback" -eq 1 ]]; then
+                keychain_get_with_setup_fallback "$profile" "$host" "$credential_path"
+            else
+                keychain_get "$profile" "$host" "$credential_path"
+            fi
             ;;
         store)
             if [[ -n "$username" && -n "$password" ]]; then
@@ -1428,7 +1441,11 @@ cmd_credential() {
             fi
             ;;
         erase)
-            keychain_erase "$profile" "$host" "$credential_path"
+            if [[ "$use_setup_fallback" -eq 1 ]]; then
+                keychain_erase_with_setup_fallback "$profile" "$host" "$credential_path"
+            else
+                keychain_erase "$profile" "$host" "$credential_path"
+            fi
             ;;
     esac
 }

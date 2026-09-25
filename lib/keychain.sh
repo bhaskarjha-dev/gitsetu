@@ -23,6 +23,16 @@
 _KEYCHAIN_CREDENTIAL_STORE_HEADER="# gitsetu-credential-store-v2"
 GITSETU_CREDENTIAL_STORE_HEADER="$_KEYCHAIN_CREDENTIAL_STORE_HEADER"
 
+# Setup asks for a provider credential before Git supplies a repository path.
+# Keep that record in a reserved, canonical tuple scope instead of overloading
+# the empty URL path.  The credential broker tries an exact Git path first and
+# consults this scope only as a profile-and-host-isolated compatibility fallback.
+_KEYCHAIN_SETUP_PAT_SCOPE="gitsetu:setup-pat:v1"
+
+keychain_setup_pat_scope() {
+    printf '%s' "$_KEYCHAIN_SETUP_PAT_SCOPE"
+}
+
 _keychain_init_constants() {
     # Restore the private constant after test sandboxes clear GITSETU_* values;
     # never honor a caller-supplied header or permit a legacy format alias.
@@ -480,41 +490,180 @@ _keychain_ntfs_acl_command() {
     fi
 }
 
+_KEYCHAIN_NTFS_IDENTITY_INITIALIZED=0
+_KEYCHAIN_NTFS_CURRENT_USER=""
+_KEYCHAIN_NTFS_CURRENT_ACCOUNT=""
+_KEYCHAIN_NTFS_CURRENT_SID=""
+_KEYCHAIN_NTFS_CURRENT_UID=""
+_KEYCHAIN_NTFS_CURRENT_COMPUTER=""
+
+_keychain_ntfs_initialize_identity() {
+    local whoami_cmd="" current_account="" current_sid="" current_computer=""
+    [[ "${KEYCHAIN_NTFS_IDENTITY_INITIALIZED:-0}" -eq 1 ]] && return 0
+
+    KEYCHAIN_NTFS_CURRENT_USER=$(id -un 2>/dev/null || true)
+    [[ -n "$KEYCHAIN_NTFS_CURRENT_USER" ]] || KEYCHAIN_NTFS_CURRENT_USER=${USER:-}
+    KEYCHAIN_NTFS_CURRENT_UID=$(id -u 2>/dev/null || true)
+    if command -v hostname >/dev/null 2>&1; then
+        current_computer=$(hostname 2>/dev/null | head -n 1) || current_computer=""
+        current_computer="${current_computer%$'\r'}"
+    fi
+    if command -v whoami.exe >/dev/null 2>&1; then
+        whoami_cmd="whoami.exe"
+    elif command -v whoami >/dev/null 2>&1; then
+        whoami_cmd="whoami"
+    fi
+    if [[ -n "$whoami_cmd" ]]; then
+        current_account=$("$whoami_cmd" 2>/dev/null | head -n 1) || current_account=""
+        current_account="${current_account%$'\r'}"
+        if command -v whoami.exe >/dev/null 2>&1; then
+            current_sid=$(whoami.exe /user /fo csv /nh 2>/dev/null |
+                sed -n 's/.*"\(S-[0-9][0-9-]*\)".*/\1/p' | head -n 1) || current_sid=""
+        fi
+    fi
+    KEYCHAIN_NTFS_CURRENT_ACCOUNT="$current_account"
+    KEYCHAIN_NTFS_CURRENT_SID="$current_sid"
+    KEYCHAIN_NTFS_CURRENT_COMPUTER="$current_computer"
+    KEYCHAIN_NTFS_IDENTITY_INITIALIZED=1
+    [[ -n "$KEYCHAIN_NTFS_CURRENT_USER" ]]
+}
+
 _keychain_ntfs_warn_once() {
     if [[ "${KEYCHAIN_NTFS_WARNING_EMITTED:-0}" != "1" ]]; then
-        _keychain_print_warning "Git Bash/NTFS does not expose POSIX mode bits; relying on verified current-user ownership and inherited Windows ACL semantics (no plaintext mode relaxation on POSIX)."
+        _keychain_print_warning "Git Bash/NTFS does not expose POSIX mode bits; using verified current-user ownership and a restrictive Windows DACL (no plaintext mode relaxation on POSIX)."
         KEYCHAIN_NTFS_WARNING_EMITTED=1
     fi
 }
 
-# Verify the strongest ownership/ACL evidence available without treating an
-# NTFS mode-bit approximation as a POSIX permission check.
+_keychain_ntfs_lower() {
+    if declare -F _gitsetu_lower >/dev/null 2>&1; then
+        _gitsetu_lower "$1"
+    else
+        printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+    fi
+}
+
+_keychain_ntfs_principal_is_current_user() {
+    local principal="${1-}"
+    local current_sid="${KEYCHAIN_NTFS_CURRENT_SID:-}"
+    local current_account="${KEYCHAIN_NTFS_CURRENT_ACCOUNT:-}"
+    local current_user="${KEYCHAIN_NTFS_CURRENT_USER:-}"
+    local current_computer="${KEYCHAIN_NTFS_CURRENT_COMPUTER:-}"
+    local normalized principal_normalized
+
+    principal_normalized=$(_keychain_ntfs_lower "$principal")
+    if [[ -n "$current_sid" ]]; then
+        current_sid=$(_keychain_ntfs_lower "$current_sid")
+        [[ "$principal_normalized" != "$current_sid" ]] || return 0
+    fi
+    if [[ -n "$current_account" ]]; then
+        current_account=$(_keychain_ntfs_lower "$current_account")
+        [[ "$principal_normalized" != "$current_account" ]] || return 0
+    fi
+    normalized=$(_keychain_ntfs_lower "$current_user")
+    if [[ -n "$normalized" && "$principal_normalized" == "$normalized" ]]; then
+        return 0
+    fi
+    if [[ -n "$current_computer" && -n "$normalized" ]]; then
+        current_computer=$(_keychain_ntfs_lower "$current_computer")
+        [[ "$principal_normalized" == "${current_computer}\\${normalized}" ]]
+    else
+        return 1
+    fi
+}
+
+# Parse icacls' human-readable DACL.  It is not sufficient for the command to
+# exit successfully: empty/unknown output and ACEs for broad or untrusted
+# principals are rejected.  Known SYSTEM/Administrators ACEs are accepted only
+# in addition to an explicit full-control ACE for the current account.
+_keychain_ntfs_acl_is_restrictive() {
+    local acl_output="${1-}"
+    local current_user="${KEYCHAIN_NTFS_CURRENT_USER:-}"
+    local line trimmed principal rights normalized
+    local ace_count=0 current_full_control=0
+    local first_line=1
+
+    [[ -n "$current_user" ]] || return 1
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line%$'\r'}"
+        [[ -n "$line" ]] || continue
+        trimmed="${line#"${line%%[![:space:]]*}"}"
+        trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+        [[ -n "$trimmed" ]] || continue
+        case "$trimmed" in
+            'Successfully processed '*|'Successfully processed'*) continue ;;
+        esac
+        [[ "$trimmed" == *:* ]] || {
+            [[ "$first_line" -eq 1 ]] || return 1
+            first_line=0
+            continue
+        }
+        # icacls commonly prefixes the first ACE with the inspected path:
+        #   C:\\path BUILTIN\\Administrators:(F)
+        principal="${trimmed%:*}"
+        rights="${trimmed##*:}"
+        if [[ "$rights" != \(*\)* ]]; then
+            [[ "$first_line" -eq 1 ]] || return 1
+            first_line=0
+            continue
+        fi
+        if [[ "$first_line" -eq 1 ]]; then
+            case "$principal" in
+                /*|[A-Za-z]:*|\\*)
+                    principal="${principal##*[[:space:]]}"
+                    ;;
+            esac
+        fi
+        first_line=0
+        principal="${principal#"${principal%%[![:space:]]*}"}"
+        principal="${principal%"${principal##*[![:space:]]}"}"
+        [[ -n "$principal" && "$principal" != *[[:cntrl:]]* ]] || return 1
+        [[ "$rights" != *[[:cntrl:]]* ]] || return 1
+        [[ "$rights" =~ ^\([A-Z0-9()]+\)$ ]] || return 1
+        ace_count=$((ace_count + 1))
+        normalized=$(_keychain_ntfs_lower "$principal")
+        if _keychain_ntfs_principal_is_current_user "$principal"; then
+            case "$rights" in
+                *"(F)"*) current_full_control=1 ;;
+            esac
+        else
+            case "$normalized" in
+                's-1-5-18'|'nt authority\system'|'builtin\administrators'|'s-1-5-32-544') ;;
+                *) return 1 ;;
+            esac
+        fi
+    done <<< "$acl_output"
+
+    [[ "$first_line" -eq 0 && "$ace_count" -gt 0 && "$current_full_control" -eq 1 ]]
+}
+
+# Verify ownership plus explicit DACL evidence without treating an NTFS mode-bit
+# approximation as a POSIX permission check.  ACL command failure, missing ACE
+# evidence, and permissive/unknown ACEs all fail closed.
 _keychain_ntfs_private_semantics() {
     local path="$1" owner="" current_user owner_uid="" current_uid acl_cmd=""
-    local acl_path="$path"
-    if _keychain_ntfs_acl_command >/dev/null 2>&1; then
-        acl_cmd=$(_keychain_ntfs_acl_command) || return 1
-        if _keychain_is_ntfs && command -v cygpath >/dev/null 2>&1; then
-            acl_path=$(cygpath -w "$path" 2>/dev/null || printf '%s' "$path")
-        fi
-        "$acl_cmd" "$acl_path" >/dev/null 2>&1 || return 1
+    local acl_path="$path" acl_output=""
+
+    _keychain_ntfs_initialize_identity || return 1
+    current_user="$KEYCHAIN_NTFS_CURRENT_USER"
+    current_uid="$KEYCHAIN_NTFS_CURRENT_UID"
+    acl_cmd=$(_keychain_ntfs_acl_command) || return 1
+    if _keychain_is_ntfs && command -v cygpath >/dev/null 2>&1; then
+        acl_path=$(cygpath -w "$path" 2>/dev/null) || return 1
     fi
+    acl_output=$("$acl_cmd" "$acl_path" 2>/dev/null) || return 1
+
     owner=$(stat -c '%U' "$path" 2>/dev/null) || owner=$(stat -f '%Su' "$path" 2>/dev/null) || owner=""
-    current_user=$(id -un 2>/dev/null || true)
-    [[ -n "$current_user" ]] || current_user=${USER:-}
     if [[ -n "$owner" && -n "$current_user" && "$owner" != "$current_user" ]]; then
         return 1
     fi
     owner_uid=$(stat -c '%u' "$path" 2>/dev/null) || owner_uid=""
-    current_uid=$(id -u 2>/dev/null || true)
     if [[ -n "$owner_uid" && -n "$current_uid" && "$owner_uid" != "$current_uid" ]]; then
         return 1
     fi
-    # An unavailable ACL utility is an explicit platform limitation, not a
-    # reason to claim POSIX 0600/0700 semantics. Callers may require evidence.
-    if [[ "${GITSETU_REQUIRE_NTFS_ACL:-0}" == "1" && -z "$owner" && -z "$owner_uid" && -z "$acl_cmd" ]]; then
-        return 1
-    fi
+
+    _keychain_ntfs_acl_is_restrictive "$acl_output" || return 1
+
     _keychain_ntfs_warn_once
     return 0
 }
@@ -637,10 +786,14 @@ _keychain_prepare_plaintext_dir() {
         _keychain_print_error "Cannot enforce private semantics on credential directory: $tokens_dir"
         return 1
     }
-    _keychain_assert_private_directory "$tokens_dir" || {
-        _keychain_print_error "Refusing plaintext credential fallback without private ownership/mode on directory: $tokens_dir"
-        return 1
-    }
+    # NTFS apply_private_mode already performed the stricter DACL/owner check.
+    # POSIX still needs the independent exact mode/owner validation here.
+    if ! _keychain_is_ntfs; then
+        _keychain_assert_private_directory "$tokens_dir" || {
+            _keychain_print_error "Refusing plaintext credential fallback without private ownership/mode on directory: $tokens_dir"
+            return 1
+        }
+    fi
     KEYCHAIN_TOKENS_FILE="$tokens_dir/.tokens"
 }
 
@@ -681,13 +834,207 @@ _keychain_new_plaintext_temp() {
     fi
 }
 
+# Plaintext store/erase are read-modify-write operations.  Serialize every
+# explicit file-backend mutation across independent CLI processes with one
+# private directory beside the exact token path.  Native backends are untouched.
+_KEYCHAIN_PLAINTEXT_LOCK_PATH=""
+_KEYCHAIN_PLAINTEXT_LOCK_TOKEN=""
+_KEYCHAIN_PLAINTEXT_LOCK_DEPTH=0
+
+_keychain_plaintext_lock_owner() {
+    local lock_path="$1" owner=""
+    if [[ -f "$lock_path/owner" && ! -L "$lock_path/owner" ]]; then
+        IFS= read -r owner < "$lock_path/owner" 2>/dev/null || true
+        owner="${owner%$'\r'}"
+    fi
+    printf '%s' "$owner"
+}
+
+_keychain_plaintext_lock_current_owner() {
+    local lock_path="$1"
+    printf '%s|%s' "$$" "${KEYCHAIN_PLAINTEXT_LOCK_TOKEN:-}"
+}
+
+_keychain_plaintext_lock_token() {
+    local token=""
+    if declare -F _gitsetu_new_lock_token >/dev/null 2>&1; then
+        token=$(_gitsetu_new_lock_token 2>/dev/null) || token=""
+    fi
+    if [[ -z "$token" && -r /dev/urandom ]] && command -v od >/dev/null 2>&1; then
+        token=$(head -c 32 /dev/urandom 2>/dev/null | od -An -tx1 2>/dev/null | tr -d ' \r\n') || token=""
+    fi
+    if [[ -z "$token" ]] && command -v cksum >/dev/null 2>&1; then
+        token=$(printf '%s-%s-%s' "$$" "$RANDOM" "$RANDOM" | cksum 2>/dev/null | tr -d ' ') || token=""
+        token="${token}$(printf '%s-%s' "$RANDOM" "$RANDOM" | cksum 2>/dev/null | tr -d ' ')"
+    fi
+    [[ "$token" =~ ^[0-9a-fA-F]{16,}$ ]] || return 1
+    printf '%s' "$token"
+}
+
+_keychain_acquire_plaintext_mutation_lock() {
+    local tokens_file="$1" lock_path="${1}.mutation.lock"
+    local token owner retries timeout=60 sleep_duration=0.1
+
+    _keychain_assert_no_symlink_components "$lock_path" || {
+        _keychain_print_error "Refusing redirected plaintext credential lock path: $lock_path"
+        return 1
+    }
+    if [[ "${KEYCHAIN_PLAINTEXT_LOCK_DEPTH:-0}" -gt 0 ]]; then
+        owner=$(_keychain_plaintext_lock_owner "$lock_path")
+        if [[ "$KEYCHAIN_PLAINTEXT_LOCK_PATH" == "$lock_path" && "$owner" == "$(_keychain_plaintext_lock_current_owner "$lock_path")" ]]; then
+            KEYCHAIN_PLAINTEXT_LOCK_DEPTH=$((KEYCHAIN_PLAINTEXT_LOCK_DEPTH + 1))
+            return 0
+        fi
+        _keychain_print_error "Cannot acquire a second plaintext credential mutation lock."
+        return 1
+    fi
+    if [[ -n "${GITSETU_LOCK_TIMEOUT:-}" ]]; then
+        if [[ ! "${GITSETU_LOCK_TIMEOUT}" =~ ^[1-9][0-9]*$ || "${#GITSETU_LOCK_TIMEOUT}" -gt 4 || "${GITSETU_LOCK_TIMEOUT}" -gt 3600 ]]; then
+            _keychain_print_error "GITSETU_LOCK_TIMEOUT must be an integer from 1 to 3600."
+            return 1
+        fi
+        timeout="${GITSETU_LOCK_TIMEOUT}"
+    fi
+    if [[ "${GITSETU_TEST:-0}" == "1" ]]; then
+        retries=$((timeout * 50))
+        sleep_duration=0.02
+    else
+        retries=$((timeout * 10))
+    fi
+    token=$(_keychain_plaintext_lock_token) || {
+        _keychain_print_error "Cannot generate plaintext credential lock ownership token."
+        return 1
+    }
+
+    while ! (umask 077; mkdir "$lock_path") 2>/dev/null; do
+        if [[ -L "$lock_path" || ( -e "$lock_path" && ! -d "$lock_path" ) ]]; then
+            _keychain_print_error "Refusing redirected plaintext credential lock path: $lock_path"
+            return 1
+        fi
+        retries=$((retries - 1))
+        if [[ "$retries" -le 0 ]]; then
+            _keychain_print_error "Timed out waiting for plaintext credential mutation lock: $lock_path"
+            return 1
+        fi
+        sleep "$sleep_duration"
+    done
+
+    if ! _keychain_apply_private_mode "$lock_path" 700 ||
+       ! printf '%s|%s\n' "$$" "$token" > "$lock_path/owner" 2>/dev/null; then
+        rm -f "$lock_path/owner" 2>/dev/null || true
+        rmdir "$lock_path" 2>/dev/null || true
+        _keychain_print_error "Cannot initialize plaintext credential mutation lock: $lock_path"
+        return 1
+    fi
+    KEYCHAIN_PLAINTEXT_LOCK_PATH="$lock_path"
+    KEYCHAIN_PLAINTEXT_LOCK_TOKEN="$token"
+    KEYCHAIN_PLAINTEXT_LOCK_DEPTH=1
+    return 0
+}
+
+_keychain_release_plaintext_mutation_lock() {
+    local lock_path="${KEYCHAIN_PLAINTEXT_LOCK_PATH:-}"
+    local owner releasing_dir moved_owner
+
+    if [[ "${KEYCHAIN_PLAINTEXT_LOCK_DEPTH:-0}" -le 0 ]]; then
+        return 0
+    fi
+    if [[ -z "$lock_path" ]]; then
+        _keychain_print_error "Plaintext credential lock ownership is unavailable."
+        return 1
+    fi
+    if [[ "${KEYCHAIN_PLAINTEXT_LOCK_DEPTH}" -gt 1 ]]; then
+        KEYCHAIN_PLAINTEXT_LOCK_DEPTH=$((KEYCHAIN_PLAINTEXT_LOCK_DEPTH - 1))
+        return 0
+    fi
+    if [[ ! -d "$lock_path" || -L "$lock_path" ]]; then
+        _keychain_print_error "Refusing to release missing or redirected plaintext credential lock: $lock_path"
+        return 1
+    fi
+    owner=$(_keychain_plaintext_lock_owner "$lock_path")
+    if [[ "$owner" != "$(_keychain_plaintext_lock_current_owner "$lock_path")" ]]; then
+        _keychain_print_error "Plaintext credential lock ownership changed; refusing release."
+        return 1
+    fi
+
+    releasing_dir="${lock_path}.releasing.$$.$RANDOM"
+    if ! mv "$lock_path" "$releasing_dir" 2>/dev/null; then
+        _keychain_print_error "Failed to atomically release plaintext credential lock: $lock_path"
+        return 1
+    fi
+    moved_owner=$(_keychain_plaintext_lock_owner "$releasing_dir")
+    if [[ "$moved_owner" != "$owner" ]]; then
+        if [[ ! -e "$lock_path" && ! -L "$lock_path" ]]; then
+            mv "$releasing_dir" "$lock_path" 2>/dev/null || true
+        fi
+        _keychain_print_error "Plaintext credential lock changed during release; retained it for recovery."
+        return 1
+    fi
+    if ! rm -f "$releasing_dir/owner" 2>/dev/null || ! rmdir "$releasing_dir" 2>/dev/null; then
+        if [[ ! -e "$lock_path" && ! -L "$lock_path" ]]; then
+            mv "$releasing_dir" "$lock_path" 2>/dev/null || true
+        fi
+        _keychain_print_error "Failed to remove plaintext credential lock metadata."
+        return 1
+    fi
+
+    KEYCHAIN_PLAINTEXT_LOCK_DEPTH=0
+    KEYCHAIN_PLAINTEXT_LOCK_PATH=""
+    KEYCHAIN_PLAINTEXT_LOCK_TOKEN=""
+    return 0
+}
+
+# Deterministic test-only rendezvous used to prove that the second process is
+# outside the mutation critical section. It has no effect outside GITSETU_TEST.
+_keychain_test_plaintext_mutation_barrier() {
+    local barrier_dir="${GITSETU_TEST_CREDENTIAL_BARRIER_DIR:-}"
+    local marker="" attempts=0
+
+    [[ "${GITSETU_TEST:-0}" == "1" && -n "$barrier_dir" ]] || return 0
+    [[ -d "$barrier_dir" && ! -L "$barrier_dir" ]] || {
+        _keychain_print_error "Invalid plaintext credential test barrier directory."
+        return 1
+    }
+    _keychain_assert_no_symlink_components "$barrier_dir" || return 1
+    marker="${barrier_dir}/entered.$$.$RANDOM"
+    (umask 077; : > "$marker") || return 1
+    while [[ ! -e "$barrier_dir/release" ]]; do
+        attempts=$((attempts + 1))
+        if [[ "$attempts" -ge 250 ]]; then
+            rm -f "$marker" 2>/dev/null || true
+            _keychain_print_error "Timed out at plaintext credential mutation test barrier."
+            return 1
+        fi
+        sleep 0.02
+    done
+    rm -f "$marker" 2>/dev/null || return 1
+    return 0
+}
+
 _keychain_plaintext_store() {
+    _keychain_init_constants
+    local profile="$1" host="$2" credential_path="$3" record="$4"
+    local mutation_status=0
+
+    _keychain_prepare_plaintext_dir || return 1
+    _keychain_warn_plaintext "$KEYCHAIN_TOKENS_FILE"
+    _keychain_acquire_plaintext_mutation_lock "$KEYCHAIN_TOKENS_FILE" || return 1
+    _keychain_assert_private_directory "${KEYCHAIN_TOKENS_FILE%/*}" || mutation_status=1
+    if [[ "$mutation_status" -eq 0 ]]; then
+        _keychain_test_plaintext_mutation_barrier || mutation_status=$?
+    fi
+    if [[ "$mutation_status" -eq 0 ]]; then
+        _keychain_plaintext_store_locked "$profile" "$host" "$credential_path" "$record" || mutation_status=$?
+    fi
+    _keychain_release_plaintext_mutation_lock || return 1
+    return "$mutation_status"
+}
+
+_keychain_plaintext_store_locked() {
     _keychain_init_constants
     local profile="$1" host="$2" credential_path="$3" record="$4"
     local line match_status wrote_match=0
 
-    _keychain_prepare_plaintext_dir || return 1
-    _keychain_warn_plaintext "$KEYCHAIN_TOKENS_FILE"
     if [[ -e "$KEYCHAIN_TOKENS_FILE" || -L "$KEYCHAIN_TOKENS_FILE" ]]; then
         _keychain_validate_plaintext_store "$KEYCHAIN_TOKENS_FILE" || return 1
     fi
@@ -768,10 +1115,27 @@ _keychain_plaintext_get() {
 _keychain_plaintext_erase() {
     _keychain_init_constants
     local profile="$1" host="$2" credential_path="$3"
-    local line match_status matches=0
+    local mutation_status=0
 
     _keychain_prepare_plaintext_dir || return 1
     _keychain_warn_plaintext "$KEYCHAIN_TOKENS_FILE"
+    _keychain_acquire_plaintext_mutation_lock "$KEYCHAIN_TOKENS_FILE" || return 1
+    _keychain_assert_private_directory "${KEYCHAIN_TOKENS_FILE%/*}" || mutation_status=1
+    if [[ "$mutation_status" -eq 0 ]]; then
+        _keychain_test_plaintext_mutation_barrier || mutation_status=$?
+    fi
+    if [[ "$mutation_status" -eq 0 ]]; then
+        _keychain_plaintext_erase_locked "$profile" "$host" "$credential_path" || mutation_status=$?
+    fi
+    _keychain_release_plaintext_mutation_lock || return 1
+    return "$mutation_status"
+}
+
+_keychain_plaintext_erase_locked() {
+    _keychain_init_constants
+    local profile="$1" host="$2" credential_path="$3"
+    local line match_status matches=0
+
     [[ -e "$KEYCHAIN_TOKENS_FILE" || -L "$KEYCHAIN_TOKENS_FILE" ]] || return 0
     _keychain_validate_plaintext_store "$KEYCHAIN_TOKENS_FILE" || return 1
     _keychain_new_plaintext_temp "$KEYCHAIN_TOKENS_FILE" || return 1
@@ -869,6 +1233,44 @@ keychain_get() {
             fi
             printf 'username=%s\npassword=%s\n' "$KEYCHAIN_RECORD_USERNAME" "$KEYCHAIN_RECORD_PASSWORD"
             ;;
+    esac
+}
+
+# Credential-helper compatibility lookup. Exact path tuples always win.  A
+# normal miss may use only the setup PAT in the same profile and protocol host,
+# so a credential from one mapped account can never satisfy another account or
+# provider request.  Backend failures are not converted into fallback misses.
+keychain_get_with_setup_fallback() {
+    local profile="${1-}" host="${2-}" credential_path="${3-${GITSETU_CREDENTIAL_PATH:-}}"
+    local setup_scope="$_KEYCHAIN_SETUP_PAT_SCOPE"
+    local output="" status=0
+
+    output=$(keychain_get "$profile" "$host" "$credential_path") || status=$?
+    if [[ "$status" -eq 0 ]]; then
+        [[ -n "$output" ]] && printf '%s\n' "$output"
+        return 0
+    fi
+    [[ "$status" -eq 1 && "$credential_path" != "$setup_scope" ]] || return "$status"
+    keychain_get "$profile" "$host" "$setup_scope"
+}
+
+# Erase the same tuple selected by the compatibility lookup. Probe the exact
+# record first so erasing a repository-specific credential does not also erase
+# the setup PAT; when the exact tuple is absent, erase the setup fallback.
+keychain_erase_with_setup_fallback() {
+    local profile="${1-}" host="${2-}" credential_path="${3-${GITSETU_CREDENTIAL_PATH:-}}"
+    local setup_scope="$_KEYCHAIN_SETUP_PAT_SCOPE"
+    local status=0
+
+    [[ "$credential_path" != "$setup_scope" ]] || {
+        keychain_erase "$profile" "$host" "$credential_path"
+        return $?
+    }
+    keychain_get "$profile" "$host" "$credential_path" >/dev/null || status=$?
+    case "$status" in
+        0) keychain_erase "$profile" "$host" "$credential_path" ;;
+        1) keychain_erase "$profile" "$host" "$setup_scope" ;;
+        *) return "$status" ;;
     esac
 }
 

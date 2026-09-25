@@ -61,7 +61,9 @@ exit 1
 EOF
     cat > "$bin/icacls.exe" <<'EOF'
 #!/usr/bin/env sh
-exit 0
+printf '%s BUILTIN\\Administrators:(F)\n' "$1"
+printf '  NT AUTHORITY\\SYSTEM:(F)\n'
+printf '  %s:(F)\n' "$(id -un)"
 EOF
     chmod 700 "$bin/fsutil.exe" "$bin/icacls.exe"
     local path_bin="$bin"
@@ -82,6 +84,9 @@ _setup_contract_home() {
     cd "$ROOT_DIR" || return 1
     source_gitsetu_libs || return 1
     export GITSETU_OS=unknown
+    # Keep ordinary tuple/lock cases on deterministic POSIX semantics. The
+    # dedicated keychain suite exercises the Git Bash/NTFS DACL parser.
+    export OSTYPE=linux-gnu
     export GITSETU_CREDENTIAL_BACKEND=file
     export PATH="$BASE_PATH"
     _install_contract_stat_shim
@@ -175,6 +180,65 @@ _run_cli() {
     CLI_STDERR="$(cat "$err_file")"
     rm -f "$out_file" "$err_file"
     return 0
+}
+
+# Start one real credential CLI process at a test-only mutation barrier.  The
+# barrier is reached only after the process owns the plaintext lock, making the
+# critical-section ordering observable without timing the read-modify-write.
+_start_barrier_cli() {
+    local input="$1" barrier_dir="$2" tag="$3" action="$4"
+    BARRIER_OUT="$HOME/$tag.out"
+    BARRIER_ERR="$HOME/$tag.err"
+    (
+        : > "$barrier_dir/started.$tag"
+        printf '%s' "$input" |
+            GITSETU_TEST=1 \
+            GITSETU_TEST_CREDENTIAL_BARRIER_DIR="$barrier_dir" \
+            GITSETU_LOCK_TIMEOUT=10 \
+            bash "$CONTRACT_EXE" credential "$action"
+    ) >"$BARRIER_OUT" 2>"$BARRIER_ERR" &
+    BARRIER_PID=$!
+}
+
+_wait_for_barrier_entry() {
+    local barrier_dir="$1" process_pid="$2" minimum="${3:-1}"
+    local attempts=0 count=0
+    while [[ "$attempts" -lt 500 ]]; do
+        count=$(find "$barrier_dir" -maxdepth 1 -type f -name 'entered.*' 2>/dev/null | wc -l | tr -d '[:space:]')
+        [[ -n "$count" && "$count" -ge "$minimum" ]] && return 0
+        kill -0 "$process_pid" 2>/dev/null || return 1
+        attempts=$((attempts + 1))
+        sleep 0.02
+    done
+    return 1
+}
+
+_wait_for_barrier_start() {
+    local barrier_dir="$1" tag="$2" process_pid="$3"
+    local attempts=0
+    while [[ "$attempts" -lt 500 ]]; do
+        [[ -f "$barrier_dir/started.$tag" ]] && return 0
+        kill -0 "$process_pid" 2>/dev/null || return 1
+        attempts=$((attempts + 1))
+        sleep 0.02
+    done
+    return 1
+}
+
+_barrier_entry_count() {
+    local barrier_dir="$1" count=""
+    count=$(find "$barrier_dir" -maxdepth 1 -type f -name 'entered.*' 2>/dev/null | wc -l | tr -d '[:space:]')
+    [[ "$count" =~ ^[0-9]+$ ]] || return 1
+    printf '%s' "$count"
+}
+
+_wait_for_process() {
+    local process_pid="$1"
+    if wait "$process_pid"; then
+        BARRIER_WAIT_STATUS=0
+    else
+        BARRIER_WAIT_STATUS=$?
+    fi
 }
 
 _assert_cli_status() {
@@ -281,6 +345,175 @@ test_cli_path_is_exact_but_env_path_can_override() {
     status=0
     _get_silently "work" "github.com" "/cli-path" >/dev/null || status=$?
     assert_equals 1 "$status" "CLI erase removes the environment-selected tuple" || return 1
+}
+
+# Setup stores its PAT in one reserved canonical scope. The Git helper keeps
+# exact repository tuples authoritative, then falls back only within the same
+# profile and host. Both lookup and erase must use the same compatibility rule.
+test_setup_pat_scope_fallback_is_exact_and_account_isolated() {
+    _setup_contract_home || return 1
+    _seed_cli_profile || return 1
+
+    local setup_scope status=0 output=""
+    setup_scope=$(keychain_setup_pat_scope) || return 1
+    [[ -n "$setup_scope" ]] || return 1
+    _store_silently "work" "github.com" "work-user" "work-setup-pass" "$setup_scope" || return 1
+    _store_silently "global" "github.com" "other-user" "other-setup-pass" "$setup_scope" || return 1
+
+    # Low-level exact lookup remains exact; compatibility is a broker policy.
+    _get_silently "work" "github.com" "/org/repo" >/dev/null || status=$?
+    assert_equals 1 "$status" "setup PAT does not blur low-level path exactness" || return 1
+
+    _run_cli $'protocol=https\nhost=github.com\npath=/org/repo\n\n' __default__ credential get
+    _assert_cli_status 0 "path-scoped request retrieves the setup PAT fallback" || return 1
+    _assert_cli_stdout $'username=work-user\npassword=work-setup-pass' \
+        "fallback selects only the active profile's setup PAT" || return 1
+
+    _run_cli $'protocol=https\nhost=gitlab.example\npath=/org/repo\n\n' __default__ credential get
+    _assert_cli_status 1 "setup PAT fallback never crosses provider hosts" || return 1
+    _assert_cli_stdout "" "cross-host fallback emits no credential" || return 1
+
+    _run_cli $'protocol=https\nhost=github.com\npath=/org/repo\n\n' __exact-override credential get
+    _assert_cli_status 1 "explicit environment paths retain exact miss semantics" || return 1
+    _assert_cli_stdout "" "exact environment override does not use setup fallback" || return 1
+
+    _run_cli $'protocol=https\nhost=github.com\npath=/org/repo\nusername=repo-user\npassword=repo-pass\n\n' \
+        __default__ credential store
+    _assert_cli_status 0 "repository-specific credential stores normally" || return 1
+    _run_cli $'protocol=https\nhost=github.com\npath=/org/repo\n\n' __default__ credential get
+    _assert_cli_stdout $'username=repo-user\npassword=repo-pass' \
+        "exact repository credential takes precedence over setup PAT" || return 1
+
+    _run_cli $'protocol=https\nhost=github.com\npath=/org/repo\n\n' __default__ credential erase
+    _assert_cli_status 0 "exact repository credential erases normally" || return 1
+    _run_cli $'protocol=https\nhost=github.com\npath=/org/repo\n\n' __default__ credential get
+    _assert_cli_status 0 "setup fallback returns after exact credential erase" || return 1
+    _assert_cli_stdout $'username=work-user\npassword=work-setup-pass' \
+        "exact erase leaves the profile setup PAT intact" || return 1
+
+    _run_cli $'protocol=https\nhost=github.com\npath=/org/repo\n\n' __default__ credential erase
+    _assert_cli_status 0 "absent exact erase falls back to the setup PAT" || return 1
+    _run_cli $'protocol=https\nhost=github.com\npath=/org/repo\n\n' __default__ credential get
+    _assert_cli_status 1 "fallback setup PAT is erased" || return 1
+    _assert_cli_stdout "" "erased setup PAT emits no credential" || return 1
+
+    output=$(_get_silently "global" "github.com" "$setup_scope") || return 1
+    assert_equals $'username=other-user\npassword=other-setup-pass' "$output" \
+        "work fallback/erase does not affect another profile" || return 1
+}
+
+# Two independent CLI writers must not both enter the plaintext mutation
+# critical section. Releasing the first at the barrier lets the second proceed
+# and proves that distinct records survive without a read-modify-write race.
+test_concurrent_plaintext_stores_are_serialized() {
+    _setup_contract_home || return 1
+    _seed_cli_profile || return 1
+
+    local barrier_dir="$HOME/store-barrier"
+    local failed=0 first_pid="" second_pid="" entry_count=""
+    mkdir -p "$barrier_dir"
+
+    _start_barrier_cli $'protocol=https\nhost=github.com\npath=/one\nusername=one-user\npassword=one-pass\n\n' \
+        "$barrier_dir" concurrent-store-one store
+    first_pid="$BARRIER_PID"
+    if ! _wait_for_barrier_entry "$barrier_dir" "$first_pid" 1; then
+        : > "$barrier_dir/release"
+        _wait_for_process "$first_pid"
+        assert_equals 0 "$BARRIER_WAIT_STATUS" "first blocked store completed after release" || failed=1
+        return "$failed"
+    fi
+
+    _start_barrier_cli $'protocol=https\nhost=github.com\npath=/two\nusername=two-user\npassword=two-pass\n\n' \
+        "$barrier_dir" concurrent-store-two store
+    second_pid="$BARRIER_PID"
+    if ! _wait_for_barrier_start "$barrier_dir" concurrent-store-two "$second_pid"; then
+        failed=1
+    else
+        # Let the fully started second CLI contend for the lock. It must remain
+        # alive outside the barrier while the first process owns the lock.
+        sleep 1
+        if ! kill -0 "$second_pid" 2>/dev/null; then
+            failed=1
+        fi
+        entry_count=$(_barrier_entry_count "$barrier_dir") || entry_count=""
+        assert_equals 1 "$entry_count" "only one plaintext mutation enters the barrier" || failed=1
+    fi
+
+    : > "$barrier_dir/release"
+    _wait_for_process "$first_pid"
+    assert_equals 0 "$BARRIER_WAIT_STATUS" "first concurrent store succeeds" || failed=1
+    if [[ -n "$second_pid" ]]; then
+        _wait_for_process "$second_pid"
+        assert_equals 0 "$BARRIER_WAIT_STATUS" "second concurrent store succeeds after serialization" || failed=1
+    fi
+
+    local output_one="" output_two=""
+    output_one=$(_get_silently "work" "github.com" "/one") || failed=1
+    assert_equals $'username=one-user\npassword=one-pass' "$output_one" \
+        "first concurrent record survives" || failed=1
+    output_two=$(_get_silently "work" "github.com" "/two") || failed=1
+    assert_equals $'username=two-user\npassword=two-pass' "$output_two" \
+        "second concurrent record is not lost" || failed=1
+    assert_file_not_exists "$GITSETU_CONFIG_DIR/.tokens.mutation.lock" \
+        "plaintext mutation lock is released" || failed=1
+    return "$failed"
+}
+
+# Store and erase share the same cross-process lock. An erase paused in the
+# critical section must block a later store, after which both operations commit.
+test_concurrent_plaintext_store_and_erase_are_serialized() {
+    _setup_contract_home || return 1
+    _seed_cli_profile || return 1
+    _store_silently "work" "github.com" "keep-user" "keep-pass" "/keep" || return 1
+    _store_silently "work" "github.com" "remove-user" "remove-pass" "/remove" || return 1
+
+    local barrier_dir="$HOME/store-erase-barrier"
+    local failed=0 erase_pid="" store_pid="" entry_count=""
+    mkdir -p "$barrier_dir"
+
+    _start_barrier_cli $'protocol=https\nhost=github.com\npath=/remove\n\n' \
+        "$barrier_dir" concurrent-erase erase
+    erase_pid="$BARRIER_PID"
+    if ! _wait_for_barrier_entry "$barrier_dir" "$erase_pid" 1; then
+        : > "$barrier_dir/release"
+        _wait_for_process "$erase_pid"
+        return 1
+    fi
+
+    _start_barrier_cli $'protocol=https\nhost=github.com\npath=/new\nusername=new-user\npassword=new-pass\n\n' \
+        "$barrier_dir" concurrent-store-after-erase store
+    store_pid="$BARRIER_PID"
+    if ! _wait_for_barrier_start "$barrier_dir" concurrent-store-after-erase "$store_pid"; then
+        failed=1
+    else
+        sleep 1
+        if ! kill -0 "$store_pid" 2>/dev/null; then
+            failed=1
+        fi
+        entry_count=$(_barrier_entry_count "$barrier_dir") || entry_count=""
+        assert_equals 1 "$entry_count" "store cannot enter while erase owns the mutation lock" || failed=1
+    fi
+
+    : > "$barrier_dir/release"
+    _wait_for_process "$erase_pid"
+    assert_equals 0 "$BARRIER_WAIT_STATUS" "concurrent erase succeeds" || failed=1
+    if [[ -n "$store_pid" ]]; then
+        _wait_for_process "$store_pid"
+        assert_equals 0 "$BARRIER_WAIT_STATUS" "store commits after the erase releases the lock" || failed=1
+    fi
+
+    local status=0 output=""
+    _get_silently "work" "github.com" "/remove" >/dev/null || status=$?
+    assert_equals 1 "$status" "serialized erase removed its exact record" || failed=1
+    output=$(_get_silently "work" "github.com" "/keep") || failed=1
+    assert_equals $'username=keep-user\npassword=keep-pass' "$output" \
+        "unrelated record survives erase/store serialization" || failed=1
+    output=$(_get_silently "work" "github.com" "/new") || failed=1
+    assert_equals $'username=new-user\npassword=new-pass' "$output" \
+        "serialized store is retained after erase" || failed=1
+    assert_file_not_exists "$GITSETU_CONFIG_DIR/.tokens.mutation.lock" \
+        "shared plaintext mutation lock is released" || failed=1
+    return "$failed"
 }
 
 # A real profile can have several path-scoped records.  A nonmatching record
@@ -534,6 +767,9 @@ EOF
 
 printf '\n%btest_credential_path_contract.sh%b\n' "$T_BOLD" "$T_RESET"
 run_test "CLI path= exactness and environment override" test_cli_path_is_exact_but_env_path_can_override
+run_test "setup PAT fallback is exact and account-isolated" test_setup_pat_scope_fallback_is_exact_and_account_isolated
+run_test "concurrent plaintext stores are serialized" test_concurrent_plaintext_stores_are_serialized
+run_test "concurrent plaintext store and erase are serialized" test_concurrent_plaintext_store_and_erase_are_serialized
 run_test "CLI tolerates nonmatching records before exact match" test_cli_multiple_records_do_not_abort_on_nonmatch
 run_test "CLI duplicate credential fields fail closed" test_cli_duplicate_fields_fail_closed
 run_test "CLI unsupported and malformed input" test_cli_unsupported_and_malformed_input

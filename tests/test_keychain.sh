@@ -6,6 +6,9 @@
 set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
+# Each backend-sensitive case calls _keychain_setup, which explicitly restores
+# its HOME, backend, OS, and PATH. Avoid redundant full-environment snapshots.
+_TEST_SKIP_ENV_SNAPSHOT=1
 setup_test_home
 
 source_gitsetu_libs
@@ -21,6 +24,9 @@ _keychain_setup() {
     source_gitsetu_libs
     GITSETU_OS="unknown"
     export GITSETU_CREDENTIAL_BACKEND=file
+    # Use POSIX permission checks for ordinary cases. The dedicated ACL case
+    # below restores an MSYS environment before invoking the DACL parser.
+    export OSTYPE=linux-gnu
 
     # Supply a test-only stat shim so mode/owner checks are deterministic on
     # Git Bash/NTFS as well as POSIX hosts.
@@ -49,13 +55,61 @@ case "$format" in
 esac
 EOF
     chmod +x "$mock_bin/stat"
+    local path_bin="$mock_bin"
+    if command -v cygpath >/dev/null 2>&1; then
+        path_bin=$(cygpath -u "$mock_bin" 2>/dev/null || printf '%s' "$mock_bin")
+    fi
     case ":$PATH:" in
-        *":$mock_bin:"*) ;;
-        *) export PATH="$mock_bin:$PATH" ;;
+        *":$path_bin:"*) ;;
+        *) export PATH="$path_bin:$PATH" ;;
     esac
 
     # keychain_store expects the config dir to exist (ensure_dirs creates it in production)
     mkdir -p "$HOME/.config/gitsetu"
+    _install_ntfs_acl_shim
+}
+
+_install_ntfs_acl_shim() {
+    local mock_bin="$HOME/test-bin"
+    cat > "$mock_bin/icacls.exe" <<'EOF'
+#!/usr/bin/env sh
+case "${GITSETU_TEST_ACL_MODE:-restrictive}" in
+    restrictive)
+        printf '%s BUILTIN\\Administrators:(F)\n' "$1"
+        printf '  NT AUTHORITY\\SYSTEM:(F)\n'
+        printf '  %s:(F)\n' "$(id -un)"
+        ;;
+    permissive)
+        printf '%s BUILTIN\\Administrators:(F)\n' "$1"
+        printf '  NT AUTHORITY\\SYSTEM:(F)\n'
+        printf '  %s:(F)\n' "$(id -un)"
+        printf '  Everyone:(RX)\n'
+        ;;
+    empty)
+        printf '%s\n' "$1"
+        printf 'Successfully processed 1 files; Failed processing 0 files\n'
+        ;;
+    failure)
+        exit 1
+        ;;
+    *)
+        exit 2
+        ;;
+esac
+EOF
+    cat > "$mock_bin/fsutil.exe" <<'EOF'
+#!/usr/bin/env sh
+exit 1
+EOF
+    chmod 700 "$mock_bin/icacls.exe" "$mock_bin/fsutil.exe"
+    local path_bin="$mock_bin"
+    if command -v cygpath >/dev/null 2>&1; then
+        path_bin=$(cygpath -u "$mock_bin" 2>/dev/null || printf '%s' "$mock_bin")
+    fi
+    case ":$PATH:" in
+        *":$path_bin:"*) ;;
+        *) export PATH="$path_bin:$PATH" ;;
+    esac
 }
 
 # Remove a test-created directory symlink/junction without allowing cleanup
@@ -533,6 +587,58 @@ test_keychain_rejects_symlinked_token_file() {
     [[ "$status" -eq 1 ]] || return 1
 }
 
+# A successful icacls exit is not sufficient evidence.  The explicit plaintext
+# backend must reject permissive, empty, and failed DACL probes before it writes.
+test_keychain_ntfs_acl_evidence_fails_closed() {
+    _keychain_setup
+    GITSETU_OS="gitbash"
+    OSTYPE="msys"
+    export GITSETU_OS OSTYPE GITSETU_TEST_ACL_MODE=restrictive
+
+    local fixture="$HOME/acl-object"
+    local failed=0 status=0
+    printf 'fixture\n' > "$fixture"
+
+    _keychain_ntfs_private_semantics "$fixture" || {
+        printf '    FAIL: restrictive current-user DACL was rejected\n'
+        failed=1
+    }
+
+    GITSETU_TEST_ACL_MODE=permissive
+    status=0
+    _keychain_ntfs_private_semantics "$fixture" >/dev/null 2>&1 || status=$?
+    assert_equals 1 "$status" "permissive DACL is rejected" || failed=1
+
+    GITSETU_TEST_ACL_MODE=empty
+    status=0
+    _keychain_ntfs_private_semantics "$fixture" >/dev/null 2>&1 || status=$?
+    assert_equals 1 "$status" "missing DACL ACE evidence is rejected" || failed=1
+
+    GITSETU_TEST_ACL_MODE=failure
+    status=0
+    _keychain_ntfs_private_semantics "$fixture" >/dev/null 2>&1 || status=$?
+    assert_equals 1 "$status" "failed ACL inspection is rejected" || failed=1
+
+    status=0
+    (
+        # shellcheck disable=SC2329  # invoked indirectly by the validator
+        _keychain_ntfs_acl_command() { return 1; }
+        _keychain_ntfs_private_semantics "$fixture"
+    ) >/dev/null 2>&1 || status=$?
+    assert_equals 1 "$status" "missing ACL utility is rejected" || failed=1
+    rm -f "$fixture"
+
+    # Exercise the public file mutation gate as well: a permissive directory
+    # DACL must fail before any plaintext token file is created.
+    GITSETU_TEST_ACL_MODE=permissive
+    status=0
+    keychain_store "work" "github.com" "user" "permissive-pass" >/dev/null 2>&1 || status=$?
+    assert_equals 1 "$status" "permissive DACL blocks the file backend" || failed=1
+    assert_file_not_exists "$GITSETU_CONFIG_DIR/.tokens" \
+        "permissive DACL cannot create a plaintext store" || failed=1
+    return "$failed"
+}
+
 # ==============================================================================
 # Run
 # ==============================================================================
@@ -553,4 +659,5 @@ run_test "GCM native backend preserves exact tuple" test_keychain_gcm_native_bac
 run_test "legacy plaintext record is rejected" test_keychain_rejects_legacy_plaintext_record
 run_test "symlinked config directory is rejected" test_keychain_rejects_symlinked_config_directory
 run_test "symlinked token file is rejected" test_keychain_rejects_symlinked_token_file
+run_test "NTFS DACL evidence fails closed" test_keychain_ntfs_acl_evidence_fails_closed
 print_results "Keychain tests"

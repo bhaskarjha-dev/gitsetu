@@ -4,6 +4,26 @@ Set-StrictMode -Version 2.0
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
+function Assert-LauncherSidecar([string]$Directory) {
+    $launcher = Join-Path $Directory "gitsetu.exe"
+    $sidecar = "$launcher.sha256"
+    if (-not (Test-Path -LiteralPath $sidecar -PathType Leaf)) {
+        throw "Launcher checksum sidecar is missing: $sidecar"
+    }
+    $lines = [IO.File]::ReadAllLines($sidecar)
+    if ($lines.Count -ne 1 -or $lines[0] -notmatch '^([0-9a-f]{64})  gitsetu\.exe$') {
+        throw "Launcher checksum sidecar has the wrong digest or filename: $sidecar"
+    }
+    $expectedDigest = (Get-FileHash -LiteralPath $launcher -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($lines[0] -notmatch "^$expectedDigest  gitsetu\.exe$") {
+        throw "Launcher checksum sidecar digest does not match: $sidecar"
+    }
+    $misspelledSidecar = Join-Path $Directory "gitsetsu.exe.sha256"
+    if (Test-Path -LiteralPath $misspelledSidecar) {
+        throw "Misspelled launcher checksum sidecar was generated: $misspelledSidecar"
+    }
+}
+
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $temp = Join-Path ([IO.Path]::GetTempPath()) ("gitsetu-launcher-test-" + [Guid]::NewGuid().ToString("N"))
 $one = Join-Path $temp "one"
@@ -19,6 +39,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "First launcher build failed" }
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot "packaging\windows\build_launcher.ps1") -OutDir $two -TestMode
     if ($LASTEXITCODE -ne 0) { throw "Second launcher build failed" }
+    Assert-LauncherSidecar $one
+    Assert-LauncherSidecar $two
     $hashOne = (Get-FileHash (Join-Path $one "gitsetu.exe") -Algorithm SHA256).Hash
     $hashTwo = (Get-FileHash (Join-Path $two "gitsetu.exe") -Algorithm SHA256).Hash
     if ($hashOne -ne $hashTwo) { throw "Native launcher build is not deterministic" }

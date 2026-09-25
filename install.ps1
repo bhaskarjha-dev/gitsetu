@@ -459,7 +459,9 @@ if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "GitSetu release 
 exit $LASTEXITCODE
 '@
     $psShim = $psShim.Replace('__ROOT__', $escapedRoot)
-    $cmdShim = "@echo off`r`nREM gitsetu-managed-installation v1`r`npowershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File `"%~dp0gitsetu.ps1`" %*`r`nexit /b %errorlevel%`r`n"
+    # Invoke the verified native launcher by an installation-root-relative path.
+    # A bare PowerShell command would be resolved from the caller's current directory or PATH.
+    $cmdShim = "@echo off`r`nREM gitsetu-managed-installation v1`r`n`"%~dp0..\releases\$releaseId\gitsetu.exe`" %*`r`nexit /b %errorlevel%`r`n"
     $utf8NoBom = New-Object Text.UTF8Encoding($false)
     foreach ($name in @("gitsetu", "git-setu")) {
         $target = Join-Path $binDir $name

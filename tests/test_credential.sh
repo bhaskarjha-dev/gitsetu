@@ -7,6 +7,9 @@
 set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
+# This suite owns one fixed backend/PATH environment; per-case snapshots only
+# duplicate that environment and are especially costly on Git Bash/Windows.
+_TEST_SKIP_ENV_SNAPSHOT=1
 setup_test_home
 source_gitsetu_libs
 
@@ -28,9 +31,12 @@ mkdir -p "$HOME/.config/gitsetu"
 printf 'test' > "$HOME/.config/gitsetu/.test_os"
 
 # The credential roundtrip deliberately selects the supported zero-dependency
-# plaintext backend. On NTFS, mock only mode reporting so the production
-# permission checks remain active and testable.
+# plaintext backend. Permission metadata is shimmed so the production checks
+# remain deterministic on both POSIX CI and Git Bash hosts.
 export GITSETU_CREDENTIAL_BACKEND=file
+# Keep the broker protocol suite deterministic; NTFS DACL behavior has a
+# dedicated shimmed contract in test_keychain.sh.
+export OSTYPE=linux-gnu
 mkdir -p "$HOME/test-bin"
 cat > "$HOME/test-bin/stat" <<'EOF'
 #!/usr/bin/env sh
@@ -55,7 +61,22 @@ case "$format" in
 esac
 EOF
 chmod +x "$HOME/test-bin/stat"
-export PATH="$HOME/test-bin:$PATH"
+cat > "$HOME/test-bin/icacls.exe" <<'EOF'
+#!/usr/bin/env sh
+printf '%s BUILTIN\\Administrators:(F)\n' "$1"
+printf '  NT AUTHORITY\\SYSTEM:(F)\n'
+printf '  %s:(F)\n' "$(id -un)"
+EOF
+cat > "$HOME/test-bin/fsutil.exe" <<'EOF'
+#!/usr/bin/env sh
+exit 1
+EOF
+chmod +x "$HOME/test-bin/icacls.exe" "$HOME/test-bin/fsutil.exe"
+test_bin="$HOME/test-bin"
+if command -v cygpath >/dev/null 2>&1; then
+    test_bin=$(cygpath -u "$test_bin" 2>/dev/null || printf '%s' "$test_bin")
+fi
+export PATH="$test_bin:$PATH"
 
 # ------------------------------------------------------------------------------
 # Helper: run gitsetu credential with a portable POSIX timeout watchdog.

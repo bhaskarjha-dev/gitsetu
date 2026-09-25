@@ -127,6 +127,12 @@ test_backup_restore_and_profile_arity_contracts() {
     invoke_cli profile unknown action
     assert_cli_status 1 "profile rejects unknown actions"
     assert_cli_contains "Unknown profile action" "profile action error is named"
+    local action
+    for action in add edit remove; do
+        invoke_cli profile "$action"
+        assert_cli_status 1 "profile $action requires a label"
+        assert_cli_contains "Usage: gitsetu profile" "profile $action missing-label usage is explained"
+    done
 }
 
 test_credential_arity_and_non_https_behavior() {

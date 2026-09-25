@@ -160,6 +160,7 @@ Normalize-CompilerOutput $outTemp
 Move-Item -LiteralPath $outTemp -Destination $outFile -Force
 Remove-Item -LiteralPath $buildTempDir -Force
 $digest = (Get-FileHash -LiteralPath $outFile -Algorithm SHA256).Hash.ToLowerInvariant()
-[IO.File]::WriteAllText("$outFile.sha256", "$digest  gitsetsu.exe`n", (New-Object Text.UTF8Encoding($false)))
+# Keep the checksum manifest's embedded filename tied to the actual launcher.
+[IO.File]::WriteAllText("$outFile.sha256", "$digest  $([IO.Path]::GetFileName($outFile))`n", (New-Object Text.UTF8Encoding($false)))
 Write-Host "Successfully compiled native launcher: $outFile"
 Write-Host "SHA-256: $digest"
