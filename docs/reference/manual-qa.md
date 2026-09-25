@@ -4,9 +4,9 @@ A step-by-step integration test checklist for verifying that every GitSetu featu
 
 > **Release-state boundary:** This checklist validates the current v1.1.0
 > publication-ready release candidate. It does not authorize publication. A
-> public release requires a clean release commit, immutable tag, signed
-> artifacts, provenance, and the release metadata transition described in
-> `packaging/README.md`.
+> public release requires a clean source commit, immutable tag, detached
+> release manifest, signed artifacts, provenance, and a separately reviewed
+> publish-only workflow as described in `packaging/README.md`.
 
 > **Prerequisites:** A machine with `bash`, `git`, and `ssh-keygen`. Two GitHub/GitLab accounts are ideal but not required — you can verify most features with one account.
 
@@ -385,10 +385,12 @@ After all manual tests pass:
 
 Do not mark the release public until all of these are complete:
 
-- [ ] Create the clean release commit and immutable `v1.1.0` tag
-- [ ] Build the source archive and every exact artifact
-- [ ] Sign artifacts and publish verified checksums/provenance
-- [ ] Update `packaging/release.json` to `released` and render package manifests
+- [ ] Create the clean release source commit and immutable annotated `v1.1.0` tag; do not put the tag commit's own hash in a tracked file
+- [ ] Build the source archive and every exact artifact from the resolved source commit
+- [ ] Generate the detached release manifest only after all asset bytes exist
+- [ ] Sign and attest every primary asset and the manifest, then reverify signatures, checksums, and attestations
+- [ ] Add and review a protected, publish-only workflow; the current preparation workflow must remain non-publishing
+- [ ] Render package-manager manifests from the detached manifest without feeding generated digests back into hashed source inputs
 - [ ] Convert the changelog entry to a dated public release with immutable links
-- [ ] Synchronize and test the website from the released source commit
-- [ ] Publish only after the release workflow verifies every asset and provenance record
+- [ ] Synchronize and test the website from the immutable released source commit
+- [ ] Publish only after the publish-only workflow verifies every asset and provenance record and resumes idempotently

@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 'use strict';
 
-// Dependency-free release policy and metadata renderer. Development checkouts
-// intentionally have no installable v1.1.0 release URLs or digests.
+// Dependency-free source-policy and metadata renderer. Development checkouts
+// intentionally have no installable v1.1.0 release URLs or digests. Generated
+// publication facts belong in packaging/release-manifest.js, outside the
+// tagged source tree.
 
 const crypto = require('crypto');
 const fs = require('fs');

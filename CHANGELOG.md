@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.1.0 — Verified publication-ready release candidate]
 
-The v1.1.0 line is a verified, security-hardened, publication-ready release candidate. This versioned entry is intentionally separate from the public release history until the release workflow creates the clean release commit, immutable tag, signed artifacts, provenance, and publication. It must not be treated as permission to install a mutable branch artifact. Once those gates pass, this entry becomes the dated `[1.1.0]` public-release entry without requiring a rewrite of the feature or security documentation.
+The v1.1.0 line is a verified, security-hardened, publication-ready release candidate. This versioned entry is intentionally separate from the public release history until the preparation workflow creates the clean source commit, immutable tag, detached release manifest, signed artifacts, provenance, and a separately reviewed publication step. It must not be treated as permission to install a mutable branch artifact. Once those gates pass, this entry becomes the dated `[1.1.0]` public-release entry without requiring a rewrite of the feature or security documentation.
 
 ### Changed
 

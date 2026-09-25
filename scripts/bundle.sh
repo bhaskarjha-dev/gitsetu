@@ -36,7 +36,22 @@ GITSETU_RELEASE_STATE="$(node -e "const fs=require('fs');const m=JSON.parse(fs.r
 
 SOURCE_COMMIT="unavailable"
 SOURCE_DIRTY="unavailable"
-if command -v git >/dev/null 2>&1 && git -C "$REPO_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+if [[ -n "${GITSETU_BUNDLE_SOURCE_COMMIT:-}" ]]; then
+    if ! command -v git >/dev/null 2>&1; then
+        printf 'Error: Git is required when overriding the bundle source commit.\n' >&2
+        exit 1
+    fi
+    if ! [[ "$GITSETU_BUNDLE_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || ! git -C "$REPO_DIR" cat-file -e "${GITSETU_BUNDLE_SOURCE_COMMIT}^{commit}" >/dev/null 2>&1; then
+        printf 'Error: GITSETU_BUNDLE_SOURCE_COMMIT must name an existing full Git commit.\n' >&2
+        exit 1
+    fi
+    if [[ -n "$(git -C "$REPO_DIR" status --porcelain=v1 --untracked-files=all)" ]]; then
+        printf 'Error: a clean checkout is required when overriding the bundle source commit.\n' >&2
+        exit 1
+    fi
+    SOURCE_COMMIT="$GITSETU_BUNDLE_SOURCE_COMMIT"
+    SOURCE_DIRTY="clean"
+elif command -v git >/dev/null 2>&1 && git -C "$REPO_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     SOURCE_COMMIT="$(git -C "$REPO_DIR" rev-parse HEAD)"
     if [[ -z "$(git -C "$REPO_DIR" status --porcelain=v1 --untracked-files=all)" ]]; then
         SOURCE_DIRTY="clean"
