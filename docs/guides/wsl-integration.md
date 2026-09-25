@@ -29,7 +29,7 @@ When profiles are configured with absolute Linux paths, Git evaluates the corres
 
 ## HTTPS Credential Brokering in WSL
 
-The primary operational complexity introduced by headless WSL containers centers around mapping HTTPS Personal Access Tokens (PATs) securely, as standard Linux secret layers (e.g., `secret-tool`) typically remain unavailable in CLI-only runtimes.
+The primary operational complexity introduced by headless WSL containers centers around mapping HTTPS Personal Access Tokens (PATs) securely. GitSetu's native WSL backend uses the Secret Service through `secret-tool`; it does not automatically turn a WSL installation into a native Windows GCM client.
 
 ### Explicit plaintext fallback
 When a headless WSL instance has no D-Bus Secret Service, native credential operations fail by default. A user can explicitly select the zero-dependency file backend:
@@ -41,7 +41,7 @@ GITSETU_CREDENTIAL_BACKEND=file gitsetu credential store
 The resulting `~/.config/gitsetu/.tokens` file is plaintext, with a `0700` directory and `0600` file. It is permission-restricted but not encrypted and cannot protect a token from malware or another process running as the same user.
 
 ### Microsoft Git Credential Manager (GCM) Interoperability
-If your local environment utilizes Microsoft's cross-platform [Git Credential Manager](https://github.com/git-ecosystem/git-credential-manager) to securely proxy WSL Git operations back into your native Windows Credential Store, GitSetu respects the configuration gracefully.
+If your environment separately configures Microsoft's cross-platform [Git Credential Manager](https://github.com/git-ecosystem/git-credential-manager) to proxy WSL Git operations into a native Windows Credential Store, review that helper policy separately. GitSetu's WSL native mode is `secret-tool`; its Windows broker uses a namespaced synthetic GCM target and is not equivalent to automatically configuring `credential.helper = manager` inside WSL.
 
 > [!WARNING]
 > **GCM Identity Collisions:** Standard GCM pipelines may not partition tokens bound to identical overlapping hostnames. GitSetu's namespaced helper is the supported way to keep profile records separate; do not assume a generic GCM query can provide that isolation.

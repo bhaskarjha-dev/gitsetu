@@ -41,11 +41,12 @@ You **must** upload your newly generated public key to your provider, otherwise 
 If you rely on Personal Access Tokens (PATs) instead of SSH keys, you must securely bind your token to your profile so you aren't prompted for a password on every push.
 
 1. Provision or update credentials:
-   You can provide PATs during the interactive `gitsetu setup` wizard, register profiles with credentials via `gitsetu profile add <label> --email=<email> ...`, or pipe credentials into the broker:
+   You can provide PATs during the interactive `gitsetu setup` wizard, or pipe credentials into the broker. Headless `gitsetu profile add` does not accept a PAT or username-credential flag:
    ```bash
    printf "protocol=https\nhost=github.com\nusername=YOUR_USERNAME\npassword=YOUR_PAT\n" | gitsetu credential store
    ```
-2. On Windows, GitSetu integrates directly with Windows Credential Manager (`credential.helper = manager` via DPAPI/GCM). On macOS and Linux, native keychains are preferred; a user may explicitly select the zero-dependency file backend, which stores a warned-about plaintext `~/.config/gitsetu/.tokens` file with `chmod 600` and does not provide encryption.
+   The normal broker resolves the active profile and host from the current directory; Git's `path=` field is not currently parsed by the CLI. Use the lower-level API or an explicit `GITSETU_CREDENTIAL_PATH` when path-level separation is required.
+2. On Windows, GitSetu's broker can use GCM with a namespaced synthetic target; it does not automatically replace an existing `credential.helper` policy. On macOS and Linux, native keychains are preferred; a user may explicitly select the zero-dependency file backend, which stores a warned-about plaintext `~/.config/gitsetu/.tokens` file with `chmod 600` and does not provide encryption.
 
 ---
 

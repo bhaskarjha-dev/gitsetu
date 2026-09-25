@@ -1,8 +1,8 @@
 # Product Roadmap (2026 Vision)
 
-**Charting the trajectory from 82/100 to an unassailable 100/100 Enterprise Identity Platform.**
+**Charting the trajectory from the current v1.1.0 candidate toward a broader enterprise identity platform.** Scores and market projections in this roadmap are illustrative planning estimates, not measured product guarantees.
 
-Our mission is to make identity leakage structurally impossible. GitSetu currently holds an industry-leading position for zero-dependency identity orchestration, yet significant expansion opportunities exist within the enterprise, CI/CD, and deeper IDE integration layers.
+Our mission is to reduce identity leakage through explicit routing, reviewable configuration, and conservative defaults. GitSetu is an unpublished Bash-core candidate; broader enterprise, CI/CD, and IDE integration remain future work.
 
 This research-driven roadmap synthesizes competitive analysis, developer pain-point research, and macro identity security trends to chart the complete path forward over the next 18 months. Items under Phases 1–4 are aspirational plans, not claims about the current v1.1.0 candidate.
 
@@ -10,19 +10,15 @@ This research-driven roadmap synthesizes competitive analysis, developer pain-po
 
 ## The Strategic Baseline
 
-Based on exhaustive ecosystem analysis (May 2026), GitSetu maintains a composite feature/safety score of **82/100**, acting as the most comprehensive identity manager for macOS and Linux engineers.
+The planning baseline is qualitative: GitSetu currently provides a Bash configuration compiler with managed identity, SSH, vault, and packaging primitives. External ecosystem statistics require citations and retrieval dates before they are used in a decision.
 
-However, the industry landscape reveals escalating threat vectors:
-- **64% of credentials** leaked in 2022 remained actively valid four years later due to stagnant key rotation practices.
-- **Non-Human Identities (NHI)** in CI/CD environments now outnumber human identities **144:1**, representing the primary target for credential compromise.
-
-Our target is a flawless **100/100**. A developer using GitSetu should never have to manually manage key generation, rotation, identity switching, or pipeline authentication ever again. The bridge must become entirely invisible.
+Potential threat vectors include credential leakage, stale keys, unmanaged automation identities, and unreviewed repository configuration. The figures sometimes quoted for credential lifetime and non-human identity ratios are not maintained as guarantees in this repository; cite the original research before repeating them.
 
 ---
 
 ## Foundation: Completed in the v1.1.0 Release-Candidate Baseline
 
-The following architectural hardening milestones establish the current local release-candidate baseline. They are backed by automated regression, adversarial, packaging, and platform checks; an isolated Windows Sandbox run is environment-dependent, and a run without a terminal status is inconclusive rather than a product pass:
+The following architectural hardening milestones describe the current local release-candidate baseline. They are not timeless claims: verification is tied to a named source commit and test run, and an isolated Windows Sandbox run is environment-dependent; a run without a terminal status is inconclusive rather than a product pass:
 - **Zero-Trust Identity Guard**: Hard pre-commit intercepts preventing dual-state leaks with longest-prefix directory matching, Windows/macOS case-insensitivity, and dynamic email re-reading.
 - **Single Source of Truth (SSOT)**: Dynamic resolution via isolated `.gitconfig` files without registry polling.
 - **Native Windows PowerShell Distribution**: Provides local-candidate `install.ps1` & `uninstall.ps1` installers, automated Command Prompt (`gitsetu.cmd`) and PowerShell (`gitsetu.ps1`) shims in `%LOCALAPPDATA%\gitsetu\bin`, and User `PATH` environment management.
@@ -30,7 +26,7 @@ The following architectural hardening milestones establish the current local rel
 - **Headless & Dotfiles Automation**: Scriptable, non-interactive profile provisioning via `gitsetu add` and `gitsetu profile add` backed by POSIX directory concurrency locking (`profiles.lock`).
 - **Automated Workspace Provisioning**: Auto-creates missing workspace directories (`mkdir -p`) upon profile registration, with clean unmounting and pruning on profile deletion.
 - **Multi-Profile Persistence & Re-hydration**: Preserves and re-hydrates existing profiles across multiple `gitsetu setup` runs.
-- **Safe SSH Space Quoting**: Double-quotes key paths with spaces in `core.sshCommand` and `GIT_SSH_COMMAND`.
+- **Safe SSH Space Quoting**: Uses POSIX single-quote shell quoting for key paths in generated SSH commands; review the effective Git/OpenSSH command on each platform.
 - **SSH Commit Signing**: Full native support for SSH-based cryptographic commit signatures (`gpg.format = ssh`, `commit.gpgsign = true`).
 - **Cross-Platform Normalization**: Native Windows drive path conversion (`pwd -W`), case-insensitive path comparisons on Windows and macOS.
 - **Unified Global Lifecycle**: Complete signal trapping (`EXIT/SIGINT/SIGTERM`) ensuring zero lock leaks.
@@ -44,10 +40,11 @@ The following architectural hardening milestones establish the current local rel
 
 ## Phase 1: Zero-Friction Onboarding & Universal Distribution
 
-> **Release-candidate preparation:** v1.1.0 has passed the local verification
-> gates and is publication-ready. Publication remains gated until the intentional
-> release workflow publishes pinned artifacts and manifests. None of the
-> package-manager or extension commands below are available before that gate.
+> **Release-candidate preparation:** v1.1.0 is an unpublished candidate with
+> named-commit verification records. Publication remains gated until a reviewed
+> publish-only workflow verifies and publishes pinned artifacts and manifests.
+> None of the package-manager or extension commands below are available before
+> that gate.
 
 **Goal:** Eliminate all adoption friction by ensuring GitSetu is instantly discoverable, installable, and trusted across all developer environments without requiring git clones or elevated permissions.
 
@@ -65,7 +62,7 @@ The following architectural hardening milestones establish the current local rel
   - **Nix / Nixpkgs Flake:** Maintain a pinned `flake.nix` in the repository root for reproducible, zero-dependency NixOS execution from a reviewed checkout.
   - **npm / npx Wrapper:** Publish a thin npm binary wrapper (`npx gitsetu setup` / `npm i -g gitsetu`) for JavaScript and fullstack web developers.
 - **GitHub CLI Extensions (`gh gitsetu` / `gh setu`):** Publish separate `gh-gitsetu` and `gh-setu` extension repositories, allowing developers working inside GitHub CLI workflows to run either command natively.
-- **Smart Zero-Prompt Auto-Discovery (`gitsetu setup --auto`):** Expand the discovery engine in `lib/discovery.sh` into an instant, non-interactive one-shot setup command that auto-detects existing Git identities, SSH keys, and workspace folders (`~/work`, `~/personal`), applying a recommended zero-trust configuration in under 1 second.
+- **Smart Auto-Discovery (`gitsetu setup --auto`):** Expand the discovery engine in `lib/discovery.sh` into a one-shot setup command that auto-detects existing Git identities, SSH keys, and workspace folders (`~/work`, `~/personal`), while keeping the current apply-mode and TTY consent boundaries visible.
 - **Sponsorship & Governance:** Establish a formal Technical Steering Committee and define open-source contribution guidelines to guarantee long-term operational sustainability.
 
 ---

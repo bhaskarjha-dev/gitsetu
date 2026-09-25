@@ -139,14 +139,16 @@ export PATH="$HOME/.local/bin:$PATH"
 Once installed, verify that GitSetu is available:
 ```bash
 gitsetu --version
-# Outputs the current candidate version and release channel (development until publication)
+# Outputs: gitsetu v1.1.0
 ```
 
 ### Automated Setup
-Bootstrap all detected identities without prompts:
+Apply the detected identity blueprint without interactive input in non-TTY use:
 ```bash
 gitsetu setup --auto
 ```
+
+This is an apply mode, not a review-only proposal. In a TTY it can still ask about guard installation or an explicit FIDO2 fallback; use interactive `gitsetu setup` when review is required.
 
 ### Interactive Dashboard Setup
 Review and tweak your identities visually:
@@ -160,10 +162,12 @@ git setu setup
 
 ## Testing in Windows Sandbox
 
-If you are on Windows and want to test GitSetu safely in an isolated, disposable virtual machine without touching your personal configuration, clone the repository and launch the sandbox harness:
+If you are on Windows and want to test GitSetu in an isolated, disposable virtual machine without touching your personal configuration, clone the repository and launch the experimental sandbox harness:
 ```cmd
 .\sandbox\launch_sandbox.bat
 ```
+
+The harness is not a release qualification gate while its legacy fixtures are being reconciled. A run without a terminal status is inconclusive, and the regression suite remains the primary local test signal.
 
 ---
 

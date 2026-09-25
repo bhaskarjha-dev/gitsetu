@@ -14,7 +14,7 @@ Before executing manual log investigation, rely on GitSetu's built-in advanced d
 Surfaces configuration context. Run this inside the affected repository. It evaluates your current directory path against managed `includeIf` rules and states which identity Git currently resolves.
 
 ### `gitsetu doctor`
-The ultimate configuration health scanner. It deeply verifies global `~/.gitconfig` syntax integrity, `~/.ssh/config` block placement, agent availability, and cross-checks local repository state overrides.
+Runs offline structural, configuration, permission, and identity diagnostics. It does not test provider connectivity; use an explicit SSH or provider test for network failures.
 
 ---
 
@@ -27,13 +27,13 @@ The ultimate configuration health scanner. It deeply verifies global `~/.gitconf
 If GitSetu generated a fresh keypair for your target profile, you **must** manually associate the public side of that signature with your upstream provider (GitHub, GitLab, Bitbucket).
 1. Output the public signature: `cat ~/.ssh/id_ed25519_<profile>.pub`
 2. Navigate to your provider's SSH Settings portal and paste the block exactly.
-3. Verify connection manually using the isolated alias: `ssh -T git@github-<profile>`
+3. Verify connection manually using the generated alias when needed: `ssh -T git@github-<profile>` (for example, `github-work`).
 
 > [!IMPORTANT]
 > **"Key already exists" Error on GitHub:** GitHub strictly enforces a 1-to-1 mapping. Each SSH public key can only be attached to **ONE** GitHub account. If you see this error, you are trying to add a key to your `work` account that is already attached to your `personal` account. You must generate a unique key for each account (which `gitsetu setup` handles automatically).
 
 > [!NOTE]
-> **"Could not resolve hostname github-pro":** GitSetu generates host aliases (like `github-pro`) **purely for testing connectivity**. You do NOT need to use them when cloning repositories. You can continue cloning using standard `git@github.com:...` strings.
+> **"Could not resolve hostname github-pro":** GitSetu generates aliases such as `github-work` for explicit external workflows. You do not need to use them for ordinary clones; continue with standard `git@github.com:...` URLs and review the effective SSH configuration.
 
 ### Resolution: Agent Saturation ("Too many authentication failures")
 If you manually loaded multiple legacy keys into your global `ssh-agent`, target hosts may disconnect after your host attempts to cycle blindly through incorrect signatures.
@@ -102,7 +102,7 @@ powershell -ExecutionPolicy Bypass -File .\sandbox\launch_sandbox.ps1
 # Or via Command Prompt / Explorer:
 .\sandbox\launch_sandbox.bat
 ```
-This boots a clean, disposable Windows Sandbox container and attempts the available regression and audit checks without modifying the host setup. A run with no terminal status is **inconclusive**, not a product pass.
+This boots a clean, disposable Windows Sandbox container and attempts the available regression and audit checks without modifying the host setup. The harness is experimental and is not a release qualification gate while its legacy fixtures are reconciled. A run with no terminal status is **inconclusive**, not a product pass.
 
 ---
 

@@ -1,8 +1,8 @@
 # Git Identity Tools: Comprehensive Comparison
 
-**An authoritative, evidence-backed evaluation of multi-identity Git managers across architecture, features, security guardrails, and developer experience.**
+**An editorial, time-sensitive comparison of multi-identity Git managers across architecture, features, security guardrails, and developer experience.** Star counts, maintenance labels, and competitor behavior require independent citations and retrieval dates; they are not product guarantees.
 
-Managing multiple directory-scoped Git identities securely across work, open-source, and personal contexts is a foundational engineering problem. To help developers and engineering teams make informed tooling decisions, this document provides an objective, side-by-side comparison of the leading Git identity tools based on repository evidence available in **September 2026**. The GitSetu column describes the current **publication-ready v1.1.0 release candidate**; public availability is controlled by the release metadata.
+Managing multiple directory-scoped Git identities securely across work, open-source, and personal contexts is a foundational engineering problem. This document provides a side-by-side editorial snapshot based on repository evidence available in **September 2026**; verify external figures before relying on them. The GitSetu column describes the current **publication-ready v1.1.0 release candidate**; public availability is controlled by the release metadata.
 
 ---
 
@@ -47,7 +47,7 @@ Managing multiple directory-scoped Git identities securely across work, open-sou
 | **Backup & Distribution** | | | | | | | |
 | Encrypted state export & restore | **✓** (authenticated v2 vault) | ~ (Unencrypted) | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Zero runtime dependencies | **✓** (Bash 3.2+) | ✗ (Go) | ✗ (Go) | ✓ (Shell) | ✗ (Go) | ✗ (Node) | **✓** |
-| Distribution channels | 8 channels | 4 channels | Go install | Git clone | Go install | npm | N/A |
+| Distribution channels | 0 public; candidate/preparation templates only | 4 channels | Go install | Git clone | Go install | npm | N/A |
 
 *(✓ = fully supported, ~ = partial support or manual intervention required, ✗ = unsupported)*
 
@@ -81,9 +81,9 @@ An objective look at features and capabilities where alternative tools offer dis
 
 ## Where GitSetu Excels
 
-1. **Zero Runtime Dependencies:** Built strictly on POSIX Bash 3.2+ with core utilities. Requires no Go compiler, no Node.js runtime, and no external package managers.
-2. **End-to-End SSH Automation:** Generates Ed25519 keys, automatically manages `ssh-agent` loading with socket liveness checks, offers explicitly consented corporate firewall Port 443 fallback for restricted networks, and handles one-click GitHub public key upload via `gh`.
-3. **Fail-Closed Pre-Commit Guard with Hook Chaining:** Enforces email and identity correctness system-wide via a global `core.hooksPath` pre-commit guard, while transparently passing through execution to project hooks (Husky, Lefthook, pre-commit framework).
-4. **Authenticated State Vaults:** Versioned authenticated vaults allow developers to export and restore managed identity configuration across workstations, with tamper detection and transactional restore.
-5. **Robust Cross-Platform Engine:** Rigorously tested across macOS, Linux, WSL, and Git Bash on Windows with automated CRLF self-healing, Windows path normalization (`C:/`), and Windows Credential Manager integration.
-6. **Self-Healing Diagnostics (`gitsetu doctor --repair`):** Detects and automatically restores missing Git managed blocks, SSH Include directives, and agent keys with a single command.
+1. **Shell-core portability:** The installed Bash core has no language-runtime dependency; repository tests, packaging, and release preparation use pinned tooling such as Node.js and PowerShell.
+2. **End-to-End SSH Automation:** Generates Ed25519 keys, manages `ssh-agent` loading with socket liveness checks, offers explicitly consented corporate firewall Port 443 fallback for restricted networks, and can use `gh` for an explicit public-key upload.
+3. **Opt-in identity guard:** `gitsetu guard --install` provides a client-side guard for repositories classified as managed. It is not an absolute boundary: local `core.hooksPath`, `--no-verify`, direct writes, and history rewrites can bypass it.
+4. **Authenticated State Vaults:** Versioned authenticated vaults export supported managed state and referenced keys, with tamper detection and transactional restore. Native OS keychain/GCM entries are not exported.
+5. **Cross-platform code paths:** The implementation includes macOS, Linux, WSL, and Git Bash/Windows path handling, but current CI evidence does not constitute a tested WSL or Nix-system qualification.
+6. **Self-Healing Diagnostics (`gitsetu doctor --repair`):** Detects and repairs recognized GitSetu-managed blocks and related state; review the effective configuration after any repair.

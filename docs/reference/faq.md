@@ -10,7 +10,7 @@
 Manually typing `git config --local` commands inside every newly cloned repository introduces operational friction and human error. GitSetu reduces that repetition by routing managed directories through `includeIf`; review the effective identity before committing.
 
 **Do I need Go, Python, or Node.js to execute GitSetu?**
-No. GitSetu is plain Bash 3.2-compatible source and uses standard Git/OpenSSH tools. Optional native credential stores and OpenSSL are detected explicitly; unavailable optional features fail clearly.
+No for the Bash CLI itself. GitSetu's runtime uses Bash 3.2-compatible source and standard Git/OpenSSH tools. Node.js is used by the repository's tests, packaging, and release-preparation scripts; those are development/build tool requirements, not a runtime dependency of the installed shell CLI. Optional native credential stores and OpenSSL are detected explicitly; unavailable optional features fail clearly.
 
 **Will GitSetu corrupt my pre-existing global Git aliases?**
 GitSetu writes only its own generated profile files and marked managed blocks. Unrelated custom aliases, core settings, and SSH host blocks are left outside those managed regions; review the staged changes if you keep important manual configuration nearby.
@@ -26,7 +26,7 @@ GitSetu is designed to minimize destructive changes. It edits only its own marke
 3. **Pre-Modification Backups:** Before touching any configuration file, GitSetu automatically creates a timestamped backup in `~/.config/gitsetu/backups/` (`.gitconfig.<TIMESTAMP>.bak` and `config.<TIMESTAMP>.bak`).
 
 **Do I have to start fresh from scratch if I already have manual profiles?**
-No. `gitsetu setup --auto` can inspect existing Git and SSH configuration and pre-populate a proposal for review. This is discovery, not a migration path for GitSetu's old registry format. You can keep manual configuration outside GitSetu's managed blocks or explicitly adopt the proposed profiles.
+`gitsetu setup --auto` is an apply mode: it discovers a blueprint and writes it directly. It is non-blocking in non-TTY use, but a TTY setup may still ask about guard installation or an explicit FIDO2 fallback. Use interactive `gitsetu setup` when review is required. This is discovery, not a migration path for GitSetu's old registry format. You can keep manual configuration outside GitSetu's managed blocks or explicitly adopt the proposed profiles.
 
 **What happens if both a manual `includeIf` and a GitSetu profile target the same folder?**
 Git processes conditional includes in configuration order. GitSetu emits and tests deterministic parent/child rules so the intended most-specific managed profile wins; manual rules outside the managed block remain Git's responsibility. Check the effective values with `git config --show-origin` if both systems match the same path.
@@ -42,7 +42,7 @@ Run `gitsetu teardown`. It removes only recognized managed blocks and files, pre
 GitSetu prefers native OS credential stores. On a minimal system without a native store, an explicitly selected zero-dependency backend can use a warned-about plaintext `~/.config/gitsetu/.tokens` file with strict permissions; it is not encrypted and does not protect against same-user malware.
 
 **Does GitSetu track telemetry or phone home?**
-No. GitSetu contains no telemetry or background daemon. Network access is limited to explicit operations such as first-use discovery/SSH verification and optional authenticated GitHub CLI actions. Local validation and dry-run do not intentionally contact the network.
+No. GitSetu contains no telemetry or background daemon. Network access is limited to explicit operations such as first-use discovery/SSH verification and optional authenticated GitHub CLI actions. The current dry-run guards suppress the known remote probes and credential writes, but an offline guarantee still depends on the commands and environment selected by the operator.
 
 ---
 
@@ -70,7 +70,7 @@ and `gitsetu.exe`) so you can run `gitsetu` directly from **PowerShell**,
 Git Bash. Public package-manager shims remain withheld until release.
 1. **CLI Execution**: Run `gitsetu` commands from any Windows shell — PowerShell, CMD, Git Bash, or WSL.
 2. **Native Windows Experience**: Because GitSetu compiles canonical Windows paths (`C:/path`) and case-insensitive `gitdir/i:` rules into `~/.gitconfig` and OpenSSH `~/.ssh/config`, the automatic identity switching and SSH key routing work natively everywhere across Windows—including **PowerShell**, **Command Prompt (CMD)**, **Windows Terminal**, **VS Code**, and GUI Git clients.
-3. **Git Credential Manager (GCM)**: GitSetu automatically integrates with Microsoft's native Git Credential Manager on Windows.
+3. **Git Credential Manager (GCM)**: On Windows, GitSetu's broker can use GCM with a namespaced synthetic target. It does not replace or automatically install a user's existing Git credential-helper policy; review the effective helper configuration.
 4. **Isolated Testing**: Want to test without touching your machine? Run `.\sandbox\launch_sandbox.ps1` (or `launch_sandbox.bat`) to test GitSetu safely inside a disposable Windows Sandbox VM.
 
 **How does credential brokering work inside headless WSL or minimal Linux containers?**

@@ -4,13 +4,13 @@
 
 While directory-scoped configuration routing acts as an incredibly reliable dynamic baseline, multi-state configuration drift remains a real vulnerability. 
 
-If a developer runs manual one-off override commands inside a local project folder (e.g., `git config user.email "personal@example.com"`), Git's native precedence engine prioritizes local repository flags over global profile rules. To prevent these localized state overrides from leaking unauthorized identities into public commit history, GitSetu deploys an uncompromising final boundary: the **Identity Guard Engine**.
+If a developer runs manual one-off override commands inside a local project folder (e.g., `git config user.email "personal@example.com"`), Git's native precedence engine prioritizes local repository flags over global profile rules. GitSetu offers an opt-in client-side guard for repositories classified as managed; it reduces this risk but is not an uncompromising final boundary.
 
 ---
 
 ## Guard Flow
 
-During installation or `gitsetu guard --install`, GitSetu writes a generated pre-commit wrapper into its managed hooks directory and points Git's `core.hooksPath` at it. For a managed repository, an unresolved or mismatched effective identity aborts the commit. For an unmanaged repository, the identity check fails open by policy and the repository's own hook continues. Malformed managed state fails closed.
+During `gitsetu guard --install`, GitSetu writes a generated pre-commit wrapper into its managed hooks directory and points Git's `core.hooksPath` at it. For a managed repository, an unresolved or mismatched effective name/email aborts the commit. For an unmanaged repository, the identity check fails open by policy and the repository's own hook continues. Malformed managed state fails closed.
 
 ```
 [ Developer executes: git commit -m "feat: core module" ]
@@ -22,7 +22,7 @@ During installation or `gitsetu guard --install`, GitSetu writes a generated pre
   [ Rapid lookup of expected profile state for path ]
                            │
                            ▼
-  [ Compares expected profile email vs actual email ]
+  [ Compares expected profile name/email vs effective author/committer ]
                            │
              ┌─────────────┴─────────────┐
              ▼                           ▼
@@ -50,7 +50,7 @@ Action Required: Run 'gitsetu doctor' or strip local config overrides.
 
 Deploying global `core.hooksPath` directives frequently breaks localized team development tooling. 
 
-GitSetu's wrapper invokes the repository's prior/project hook after a successful managed identity check and forwards its arguments and standard input. Hook behavior, permissions, and failures remain the repository's responsibility.
+A repository-local `core.hooksPath`, `git commit --no-verify`, direct hook/configuration changes, a compromised same-user process, and later history rewrites can bypass this global guard. The wrapper invokes the repository's prior/project hook after a successful managed identity check and forwards its arguments and standard input. Hook behavior, permissions, and failures remain the repository's responsibility.
 
 ---
 

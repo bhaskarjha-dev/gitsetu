@@ -1,6 +1,6 @@
 # Credential Broker Engine
 
-GitSetu provides a per-profile credential helper for HTTPS Personal Access Tokens (PATs). It prevents a token stored for one profile from being selected merely because another profile uses the same host name.
+GitSetu provides a per-profile credential helper for HTTPS Personal Access Tokens (PATs). The lower-level keychain API namespaces records by profile, host, and optional path; the normal CLI currently resolves the active profile and host but does not parse Git's `path=` field.
 
 ## Why native stores need namespacing
 
@@ -11,7 +11,7 @@ protocol=https
 host=github.com
 ```
 
-A native keychain queried only by `github.com` may return a personal token when a company repository expects a different one. GitSetu therefore includes the active profile, host, and credential path in its own record key before querying the native store.
+A native keychain queried only by `github.com` may return a personal token when a company repository expects a different one. GitSetu's lower-level API can include an optional credential path in its record key, but the normal `gitsetu credential` command currently leaves that path empty unless `GITSETU_CREDENTIAL_PATH` is supplied. Use the lower-level API or an explicit path when repository-level separation is required.
 
 ## Managed Git configuration
 
@@ -22,7 +22,7 @@ A managed profile can contain a scoped helper entry equivalent to:
     helper = gitsetu credential
 ```
 
-The helper reads Git's credential protocol from standard input, resolves the active profile from the working directory, and returns a matching record. It never scans or prints unrelated native keychain entries.
+The helper reads Git's credential protocol from standard input, resolves the active profile from the working directory, and returns a matching record. It never scans or prints unrelated native keychain entries. GitSetu installs this helper only when no distinct user/system credential-helper policy is already configured; an existing helper remains authoritative.
 
 Native backends are preferred:
 
@@ -39,7 +39,7 @@ printf 'protocol=https\nhost=github.com\nusername=dev\npassword=PAT_TOKEN\n\n' \
   | gitsetu credential store
 ```
 
-The `get` and `erase` actions use the same profile/host/path namespace. Records are versioned and fields are encoded so delimiters, whitespace, and Unicode values cannot be confused with record structure.
+The `get` and `erase` actions use the same profile/host/path namespace at the keychain API boundary. The CLI path is empty unless explicitly supplied as described above. Records are versioned and fields are encoded so delimiters, whitespace, and Unicode values cannot be confused with record structure.
 
 ## Explicit zero-dependency fallback
 

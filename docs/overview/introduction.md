@@ -14,7 +14,7 @@ Modern developer environments are highly fragmented. Context-switching between d
 | :--- | :--- | :--- |
 | 🔴 **Corporate Identity Leaks** | Committing private proprietary code using a personal email address or public alias. | **Directory-Scoped `includeIf` routing:** Applies the selected profile when Git evaluates a managed path. |
 | 🔴 **Silent Authentication Collisions** | Single SSH keys loaded globally against overlapping multi-tenant remote hosts (e.g., `github.com`). | **Profile-scoped key generation:** Bootstraps separate `ed25519` keypairs for each managed profile. |
-| 🔴 **Cross-Profile PAT Pollution** | HTTPS pull/push streams blindly pulling cached global tokens from OS credentials, returning `HTTP 403 Forbidden`. | **Namespaced credential broker:** Resolves records by profile, host, and path through the selected native store. |
+| 🔴 **Cross-Profile PAT Pollution** | HTTPS pull/push streams blindly pulling cached global tokens from OS credentials, returning `HTTP 403 Forbidden`. | **Profile/host credential broker:** The lower-level API supports an optional path; the normal CLI currently does not parse Git's `path=` field. |
 | 🔴 **Untracked Historical Config Drift** | Manual one-off edits to global `.gitconfig` files drifting out of compliance over time. | **Managed blocks and explicit review:** GitSetu writes recognized managed regions and leaves unrelated configuration for review. |
 | 🔴 **Pre-Flight Failure Vulnerability** | Forgetting to execute environment prep scripts before pushing code to protected branches. | **Fail-Closed Identity Guard:** Checks managed identity state during pre-commit and blocks divergent commits. |
 
@@ -22,8 +22,8 @@ Modern developer environments are highly fragmented. Context-switching between d
 
 ## Architectural Distinctions
 
-### Indistinguishable from Magic: The Native Clone
-Competitor tools require developers to memorize custom SSH host aliases (e.g., `git clone git@github-work:org/repo.git`). GitSetu rejects this sub-optimal design pattern. 
+### Native clone URLs, with optional aliases
+GitSetu does not require a custom SSH alias for ordinary clones inside a mapped workspace. It can generate optional aliases such as `github-work` for explicit external workflows; review the effective OpenSSH configuration before using them.
 
 By generating conditional `core.sshCommand` and OpenSSH include rules, GitSetu lets Git and OpenSSH select the profile key for a managed directory. The operating systems and credential stores still enforce their own security controls.
 
@@ -37,6 +37,6 @@ Managed repositories fail closed when their expected identity is unresolved or d
 
 ## Getting Started
 
-Ready to eradicate repository configuration friction permanently?
+Ready to reduce repository configuration friction with a reviewable local workflow?
 - **[Install GitSetu](../getting-started/installation.md)** — Bootstrap directly in your terminal.
 - **[Quickstart Guide](../getting-started/quickstart.md)** — Provision your entire profile architecture from scratch in under 60 seconds.

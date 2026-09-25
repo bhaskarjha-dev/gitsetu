@@ -120,7 +120,7 @@ GitSetu is a **configuration compiler**, not a daemon. It generates rules once; 
 | **Context Runner** | `gitsetu run work -- git push` executes commands under a specific identity |
 | **Shell Prompt** | `gitsetu prompt` returns the active profile label for `$PS1` / Starship integration |
 | **Doctor** | `gitsetu doctor` runs diagnostic checks on your entire identity infrastructure |
-| **Verify** | `gitsetu verify` tests SSH connectivity and gitconfig integrity |
+| **Verify** | `gitsetu verify` checks key files, managed configuration, and effective identities; network checks are opt-in with `GITSETU_VERIFY_NETWORK=1` |
 | **Completions** | Tab completions for Bash and Zsh with dynamic profile suggestions |
 
 ### Cross-Platform
@@ -200,13 +200,13 @@ gitsetu setup
 
 Walks you through creating profiles one at a time. Generates SSH keys, creates `includeIf` rules, provisions directories.
 
-### Zero-Prompt Setup
+### Non-TTY Auto Setup
 
 ```bash
 gitsetu setup --auto
 ```
 
-Scans your machine for existing Git identities and sets everything up without prompts.
+Scans your machine for existing Git identities and applies the discovered blueprint without interactive input in non-TTY use. In a TTY, setup can still ask about guard installation or an explicit FIDO2 fallback; use interactive `gitsetu setup` when you need a review step.
 
 ### Add a Profile Non-Interactively
 
@@ -236,7 +236,7 @@ gitsetu guard --install
 gitsetu backup
 
 # Restore on a new machine (v2 vaults only)
-gitsetu restore /path/to/gitsetu_vault_YYYYMMDD_HHMMSS.tar.gz.enc
+gitsetu restore /path/to/gitsetu_vault_YYYYMMDD_HHMMSS.gitsetu-v2.vault
 
 # Clean removal of all GitSetu configs
 gitsetu teardown
@@ -288,13 +288,13 @@ See [full comparison →](docs/overview/comparisons.md)
 
 ## Testing
 
-GitSetu has automated unit, integration, tamper, concurrency, packaging, and platform tests. Run the complete local suite with `bash tests/run_all.sh`; the Windows Sandbox audit is an additional isolated environment and is not a substitute for the regression suite.
+GitSetu has automated unit, integration, tamper, concurrency, packaging, and platform tests. Run the complete local suite with `bash tests/run_all.sh`; the Windows Sandbox harness is an additional experimental environment and is not a release qualification gate until its legacy fixtures are reconciled.
 
 ```bash
 # Run unit & E2E tests
 bash tests/run_all.sh
 
-# Run comprehensive audit (auto-creates isolation)
+# Run comprehensive audit (auto-creates isolation; experimental, not a release gate)
 bash sandbox/comprehensive_audit.sh sandbox/results
 ```
 
@@ -322,8 +322,8 @@ cd gitsetu
 # Run tests
 bash tests/run_all.sh
 
-# Check shell quality
-shellcheck gitsetu lib/*.sh
+# Check shell quality for the files changed
+shellcheck gitsetu lib/*.sh tests/*.sh
 ```
 
 See also: [Code of Conduct](CODE_OF_CONDUCT.md) · [Security Policy](SECURITY.md)

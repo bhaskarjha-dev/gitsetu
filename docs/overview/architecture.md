@@ -56,10 +56,10 @@ All generated host configurations, identity file pointers, and verification flag
 
 ### 3. Identity Guard (Pre-Commit)
 
-GitSetu installs its generated pre-commit guard in the managed hooks directory and preserves a project hook when the identity check succeeds. For a repository selected by a managed profile, an unresolved or divergent effective identity fails closed. A repository outside all managed profiles is unmanaged: the identity check fails open by policy and ordinary project hooks continue. Malformed managed state is treated as indeterminate and fails closed.
+`gitsetu guard --install` installs an opt-in generated pre-commit guard in the managed hooks directory and preserves a project hook when the identity check succeeds. For a repository selected by a managed profile, an unresolved or divergent effective name/email fails closed. A repository outside all managed profiles is unmanaged: the identity check fails open by policy and ordinary project hooks continue. Malformed managed state is treated as indeterminate and fails closed. A local `core.hooksPath`, `--no-verify`, direct writes, and history rewrites can bypass this client-side boundary.
 
 ### 4. Namespaced Credential Brokering
-When authenticating over HTTPS, standard credential managers frequently mix Personal Access Tokens (PATs) for identical hostnames. 
+The lower-level credential API namespaces records by profile, host, and optional path. The normal `gitsetu credential` command currently resolves profile and host but leaves Git's `path=` field empty; use the lower-level API or an explicit `GITSETU_CREDENTIAL_PATH` for path-level separation.
 
 GitSetu injects itself as a scoped proxy credential helper. It evaluates the active directory context and requests a namespaced token from the selected backend, reducing cross-profile collisions; the operating system credential store and Git still control the final authentication exchange.
 
@@ -74,8 +74,8 @@ To reduce risk under parallel builds and automated environments, GitSetu uses bo
 - **Automatic workspace provisioning:** Missing profile directories are created only during an explicitly mutating operation; dry-run remains non-persistent.
 - **Longest-prefix routing:** Nested paths are resolved by canonical prefix matching, with platform-aware case behavior.
 - **Versioned persistence:** Re-running setup reloads the v2 registry and managed profile configs; old registry formats are rejected rather than migrated.
-- **Safe SSH Command Quoting:** Enforces escaped double-quoting around SSH key paths containing spaces in `core.sshCommand` and `GIT_SSH_COMMAND`.
-- **Windows Sandbox Test Harness:** Disposable, host-isolated validation environment (`sandbox/`) for multi-profile and empirical checks. A run with no terminal status is inconclusive rather than a product pass.
+- **Safe SSH Command Quoting:** Uses POSIX single-quote shell quoting for key paths in generated `core.sshCommand` and `GIT_SSH_COMMAND`; review the effective command on each platform.
+- **Windows Sandbox Test Harness:** Experimental, host-isolated validation environment (`sandbox/`) for multi-profile checks. It is not a release qualification gate while legacy fixtures are reconciled; a run with no terminal status is inconclusive.
 
 ---
 

@@ -13,7 +13,7 @@ GitSetu exists to reduce these operations to a reviewable, repeatable configurat
 ## Uncompromising Principles
 
 ### 1. Native URLs and Managed Routing
-Traditional dual-identity approaches force developers to use non-standard clone URLs containing specialized host aliases (`git clone git@github-work:org/repo.git`). We fundamentally reject this design pattern.
+GitSetu does not require specialized clone URLs for ordinary repositories inside mapped workspaces. It also generates optional aliases such as `github-work` for explicit external package-manager and cache workflows; those aliases are an escape hatch, not a requirement.
 
 GitSetu uses directory-scoped `includeIf` mapping to provide profile-specific `core.sshCommand` parameters when Git evaluates a managed path. Developers can use standard Git URLs; the operating system, Git, and OpenSSH still determine the final effective connection. The configuration compiler adds no daemon.
 
@@ -44,6 +44,6 @@ GitSetu aims to provide a lightweight developer experience, bounded concurrency 
 
 To maintain a focused reliability model, GitSetu explicitly rejects the following product additions:
 - **OAuth / Single Sign-On Orchestration:** GitSetu proxies Personal Access Tokens via native OS keychains, but intentionally avoids supervising web-based OAuth authentication loops.
-- **Git Binary Wrapping:** It acts exclusively via native hooks and credential helpers, avoiding command-line alias intercepts.
+- **Git Binary Wrapping:** It primarily acts through native Git/OpenSSH configuration, with optional `gitsetu run`, installer, npm, and GitHub CLI wrappers for explicit workflows rather than intercepting every shell command.
 - **General Workspace Dotfiles:** It strictly limits its operational domain to Git and OpenSSH identity structures.
 - **Persistent Daemonization:** It operates entirely as an ephemeral configuration compiler, leaving zero lingering background listener tasks.
