@@ -57,8 +57,7 @@ node "$NODE_ROOT/packaging/release-manifest.js" create \
 node "$NODE_ROOT/packaging/release-manifest.js" verify \
     --manifest "$RELATIONSHIP_MANIFEST" \
     --directory "$ASSETS" \
-    --phase core \
-    --skip-git true >/dev/null
+    --phase core >/dev/null
 
 CORE_MANIFEST="$TMP_ROOT/core-release-manifest.json"
 node "$NODE_ROOT/packaging/release-manifest.js" create \
