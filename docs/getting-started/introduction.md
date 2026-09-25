@@ -2,9 +2,9 @@
 
 **The bridge between your identities and your repositories.**
 
-GitSetu is a complete, zero-dependency pipeline that instantly generates your SSH keys, hardware signatures (FIDO2), and Git configs within a Zero-Trust architecture, then automatically switches them based on your directory. 
+GitSetu is a Bash-based configuration compiler that generates profile-scoped SSH keys, optional FIDO2 credentials, and managed Git configuration, then lets Git and OpenSSH evaluate those settings by directory.
 
-One setup. Automatic forever.
+One setup. Native runtime evaluation.
 
 ## Why GitSetu?
 
@@ -17,7 +17,7 @@ If you work across multiple organizations, freelance clients, or maintain person
 | 🔴 **Corporate firewall blocks SSH** | Port 22 blocked — PATs get mixed between accounts, 403 errors | Per-profile credential broker via OS keychain & Windows Credential Manager |
 | 🔴 **Forgot to switch identity** | Commit lands with the wrong email — can't rewrite public history | Pre-commit guard blocks the commit before it happens |
 | 🔴 **Manual directory setup** | Missing workspace directory causes routing or clone errors | Auto-creates workspace directories (`mkdir -p`) on registration |
-| 🔴 **Manual global config** | Edit `~/.gitconfig` before every context switch, then forget | One-time setup, automatic forever |
-| 🔴 **Tool rot & dependency hell** | Every solution requires Node, Python, or Go. They break when runtimes update. | Pure Bash 3.2. Zero dependencies. Native auto-updater. |
+| 🔴 **Manual global config** | Edit `~/.gitconfig` before every context switch, then forget | One-time setup with native evaluation afterward |
+| 🔴 **Tool rot & dependency hell** | Every solution requires a runtime that may be unavailable or change unexpectedly. | Pure Bash 3.2 core with explicit optional platform tools and a reviewed update path. |
 
-GitSetu provisions a complete Git identity infrastructure from scratch. No manual config editing, no memorizing SSH aliases, no dependencies.
+GitSetu provisions the managed portions of a Git identity setup and reduces routine manual configuration. Review generated changes, provider setup, and third-party configuration before relying on them.

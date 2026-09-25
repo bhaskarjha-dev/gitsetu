@@ -11,7 +11,7 @@ GitSetu is engineered to self-heal and fail-closed natively, but localized Git c
 Before executing manual log investigation, rely on GitSetu's built-in advanced diagnostic execution paths:
 
 ### `gitsetu status`
-Instantly surfaces context. Run this inside the broken target repository. It evaluates your current directory path against global `includeIf` matrices and explicitly states which identity Git currently *believes* it should execute under.
+Surfaces configuration context. Run this inside the affected repository. It evaluates your current directory path against managed `includeIf` rules and states which identity Git currently resolves.
 
 ### `gitsetu doctor`
 The ultimate configuration health scanner. It deeply verifies global `~/.gitconfig` syntax integrity, `~/.ssh/config` block placement, agent availability, and cross-checks local repository state overrides.
@@ -78,7 +78,7 @@ If you navigate into a configured directory and your terminal `$PS1` integration
 Git is highly pedantic regarding target path strings.
 1. **Trailing Slashes:** Ensure the mapped path ends in `/`. GitSetu handles this natively during `setup`.
 2. **Mount Point Normalization:** If you are operating inside WSL or virtualized Windows mounts (`/mnt/c/`), ensure you utilized the absolute Linux `/mnt/c/` path structure during `gitsetu setup`, not the abstract Windows path.
-3. **Safe Directory Checks:** If your target `.git` repository folder is owned by a different internal OS user (e.g. `root` inside Docker mounts), Git aborts `includeIf` logic instantly. Utilize Git's native safe directory bypass: `git config --global --add safe.directory /path/to/target/repository`.
+3. **Safe Directory Checks:** If your target `.git` repository folder is owned by a different internal OS user (e.g. `root` inside a container mount), Git may refuse to inspect it. Use `git config --global --add safe.directory /path/to/target/repository` only after verifying the path and ownership; prefer a command-scoped or container-specific trust decision where possible.
 
 ---
 
@@ -114,4 +114,4 @@ If your environment is irrecoverably corrupted by cross-platform manual file tam
 gitsetu teardown
 ```
 
-This operation meticulously cleans all GitSetu managed layout boundaries from `~/.gitconfig` and OpenSSH paths safely without modifying your localized aliases, allowing you to execute `gitsetu setup` seamlessly against a fresh baseline.
+This operation cleans the recognized GitSetu-managed boundaries in `~/.gitconfig` and OpenSSH paths without modifying unrelated user content, allowing a fresh `gitsetu setup` workflow after review.

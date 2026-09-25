@@ -17,7 +17,7 @@
 
 <br/>
 
-<img src="docs/assets/demo.jpg" alt="GitSetu — zero-prompt setup and instant status" width="700" />
+<img src="docs/assets/demo.jpg" alt="GitSetu — zero-prompt setup and identity status" width="700" />
 
 <br/>
 
@@ -49,7 +49,7 @@ GitSetu scans your machine, discovers your existing Git identities, and **in one
 
 ## Getting Started
 
-### 30-Second Quick Start
+### Quick Start
 
 ```bash
 # For the current publication-ready candidate, run from a reviewed checkout:
@@ -248,12 +248,12 @@ gitsetu teardown
 
 | | GitSetu | gitego | karn | gitch | Manual DIY |
 |---|:---:|:---:|:---:|:---:|:---:|
-| Zero dependencies | ✓ | | | | ✓ |
+| Zero runtime dependencies | ✓ | | | | ✓ |
 | Auto-discovery setup | ✓ | | | | |
 | SSH key generation | ✓ | ~ | ~ | ~ | |
 | Pre-commit guard | ✓ | ~ | ✓ | ✓ | |
 | Credential broker | ✓ | ✓ | ~ | ✓ | |
-| Encrypted backup | ✓ | | | | |
+| Authenticated v2 backup | ✓ | | | | |
 | Windows native support | ✓ | ~ | | | ~ |
 | Built-in doctor/verify | ✓ | | | | |
 | Shell prompt | ✓ | ✓ | ✓ | ✓ | |

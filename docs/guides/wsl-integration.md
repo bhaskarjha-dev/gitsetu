@@ -1,8 +1,8 @@
 # WSL Integration
 
-**Seamless identity and file-path harmonization across Windows Subsystem for Linux environments.**
+**Identity and file-path routing across Windows Subsystem for Linux environments.**
 
-Because GitSetu is compiled strictly utilizing pure, POSIX-compliant Bash 3.2, it achieves absolute native execution compatibility across all Windows Subsystem for Linux (WSL) environments (Ubuntu, Debian, Alpine, etc.). The tool requires zero Windows-specific `.exe` dependencies, operating entirely decoupled from standard host virtualization layers.
+Because GitSetu's core is written for POSIX Bash 3.2, it is designed to work across supported WSL distributions (Ubuntu, Debian, Alpine, and others). Platform-specific credential tools, path mounts, and OpenSSH behavior still require normal host review.
 
 ---
 
@@ -23,7 +23,7 @@ When generating isolated identity profiles inside WSL environments, developers f
 ### Path Evaluation Mechanics
 Always supply absolute Linux path strings targeting your target repositories (e.g., `~/projects/work` or `/mnt/c/Users/Name/work`).
 
-Because GitSetu compiles paths directly into Git's native `includeIf` conditional boundaries, Git interprets the Linux-structured paths seamlessly during runtime evaluation. Execution matches reliably whether target repositories exist on isolated WSL root drives or explicitly mounted back across to primary Windows `C:\` bounds.
+When profiles are configured with absolute Linux paths, Git evaluates the corresponding `includeIf` rules. Repositories on WSL root drives and mounted Windows paths should be tested separately because Git and OpenSSH resolve the two environments differently.
 
 ---
 

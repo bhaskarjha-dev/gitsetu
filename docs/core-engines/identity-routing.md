@@ -2,7 +2,7 @@
 
 **A deep dive into directory-scoped Git conditional mechanics and native credential switching.**
 
-At the core of GitSetu's magical context-switching capability lies a seamless fusion of standard Git configuration files with advanced conditional file inclusion rules.
+At the core of GitSetu's context-switching capability is a combination of standard Git configuration files with conditional file-inclusion rules.
 
 Unlike brittle wrapper utilities that alias the `git` binary or long-running supervisor daemons that monitor your file descriptors, GitSetu shifts runtime evaluation entirely to Git itself.
 
@@ -72,7 +72,7 @@ Because cross-platform filesystems handle casing, symlinks, and trailing paths d
 When registering a new profile (interactively in `gitsetu setup` or via `gitsetu add`), GitSetu automatically checks if the declared target directory exists on disk. If absent, it provisions the directory hierarchy via `mkdir -p` (while respecting `--dry-run` invariants), eliminating "directory does not exist" failures before cloning or committing.
 
 ### Longest-Prefix Match Routing
-When nested workspace directories exist (e.g., a general work directory `~/work/` and a nested client project `~/work/clients/acme/`), GitSetu's routing, prompt engine, and pre-commit guard employ a deterministic longest-prefix match algorithm. The most specific directory boundary wins: Git evaluates conditional rules sequentially, and GitSetu tools compute matching prefix lengths to ensure the deeper child profile takes absolute precedence over the parent. On Windows and macOS, path matching is case-insensitive, avoiding casing drift.
+When nested workspace directories exist (e.g., a general work directory `~/work/` and a nested client project `~/work/clients/acme/`), GitSetu's routing, prompt engine, and pre-commit guard use a deterministic longest-prefix match. The most specific directory boundary wins in the tested configuration; Git evaluates conditional rules sequentially. On Windows and macOS, path matching is case-insensitive, reducing casing drift.
 
 ### Multi-Profile Persistence & Re-hydration
 Running `gitsetu setup` multiple times reloads the current v2 registry and managed profile configs. Existing unrelated SSH keys and configuration remain outside GitSetu's managed roots, but the old colon-delimited registry is rejected; there is no migration reader. Review changes before applying them.

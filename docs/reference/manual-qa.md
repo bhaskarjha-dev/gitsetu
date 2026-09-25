@@ -179,7 +179,7 @@ cd /tmp && gitsetu prompt       # Should output nothing (no profile)
 time (for i in $(seq 100); do gitsetu prompt > /dev/null; done)
 ```
 
-- [ ] 100 invocations complete in under 1 second
+- [ ] Record the measured result; no fixed latency guarantee is implied
 
 ---
 
@@ -202,7 +202,7 @@ printf 'protocol=https\nhost=github.com\n\n' | gitsetu credential get
   - OR in file fallback: `cat ~/.config/gitsetu/.tokens`
 
 ```bash
-printf 'protocol=https\nhost=github.com\nusername=testuser\npassword=ghp_test123\n\n' | gitsetu credential erase
+printf 'protocol=https\nhost=github.com\nusername=testuser\npassword=dummy-token-not-a-secret\n\n' | gitsetu credential erase
 printf 'protocol=https\nhost=github.com\n\n' | gitsetu credential get
 ```
 

@@ -33,7 +33,7 @@ What type of SSH key do you want to generate?
 2. Connect your physical token directly into an available host USB interface.
 3. The terminal halts execution mid-flight. **Physically tap the capacitive contact** on your hardware key to confirm user presence.
 4. GitSetu compiles an isolated host pointer layout (`~/.ssh/id_ed25519_sk_<profile>`) containing reference hooks linking directly to your physical token.
-5. The generated public key payload streams directly out for integration, while configuration blocks automatically pivot to leverage your OpenSSH zero-trust bounds.
+5. The generated public key payload is available for provider registration, while the managed SSH configuration points OpenSSH to the hardware-backed identity.
 
 ---
 

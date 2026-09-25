@@ -1,6 +1,6 @@
 # System Architecture
 
-**A comprehensive deep dive into the internal mechanics, modular compilation patterns, and zero-trust execution flows of GitSetu.**
+**A comprehensive deep dive into the internal mechanics, modular compilation patterns, and managed execution flows of GitSetu.**
 
 GitSetu achieves robust multi-identity orchestration without relying on long-running daemons or binary runtimes. Operating purely as a **localized configuration compiler**, it statefully compiles native Git and OpenSSH structures, delegating continuous runtime evaluation directly to standard OS routing mechanisms.
 
@@ -31,7 +31,7 @@ When triggered, GitSetu reads your profile specifications, injects precisely for
 ## Subsystem Mechanics
 
 ### 1. Global Identity Routing (`~/.gitconfig`)
-GitSetu establishes a highly secure routing framework by deploying atomic, demarcated blocks labeled with custom signatures (e.g., `[gitsetu:managed:start]`).
+GitSetu establishes a managed routing framework using atomic, demarcated blocks labeled with markers such as `# [gitsetu:managed:start]`.
 
 Inside these managed bounds, GitSetu maps local folders to isolated target files using Git's built-in `includeIf` condition:
 ```ini
@@ -43,10 +43,10 @@ Inside these managed bounds, GitSetu maps local folders to isolated target files
 [includeIf "gitdir/i:C:/Users/username/work/"]
     path = ~/.config/gitsetu/profiles/work.gitconfig
 ```
-When your active terminal session traverses into any sub-path of your workspace, Git natively intercepts the operation, seamlessly applying your professional email and custom execution parameters inline. On Windows, the `gitdir/i:` keyword guarantees case-insensitive path evaluation across all shells.
+When your active terminal session traverses into a managed workspace, Git evaluates the applicable profile configuration. On Windows, `gitdir/i:` provides case-insensitive matching for managed paths.
 
 ### 2. OpenSSH `Include` Integration
-Mutating global `~/.ssh/config` files inline violates zero-trust principles and risks catastrophic corruption of existing host parameters. 
+Mutating global `~/.ssh/config` files inline creates avoidable risk to existing host parameters.
 
 GitSetu resolves this by leveraging OpenSSH 7.3+'s native `Include` directive. During initial setup, GitSetu prepends a single portable routing link to the absolute top of your configuration file:
 ```ini
@@ -75,7 +75,7 @@ To reduce risk under parallel builds and automated environments, GitSetu uses bo
 - **Longest-prefix routing:** Nested paths are resolved by canonical prefix matching, with platform-aware case behavior.
 - **Versioned persistence:** Re-running setup reloads the v2 registry and managed profile configs; old registry formats are rejected rather than migrated.
 - **Safe SSH Command Quoting:** Enforces escaped double-quoting around SSH key paths containing spaces in `core.sshCommand` and `GIT_SSH_COMMAND`.
-- **Windows Sandbox Test Harness:** Disposable, host-isolated validation environment (`sandbox/`) for multi-profile and empirical checks without modifying the host machine.
+- **Windows Sandbox Test Harness:** Disposable, host-isolated validation environment (`sandbox/`) for multi-profile and empirical checks. A run with no terminal status is inconclusive rather than a product pass.
 
 ---
 

@@ -17,7 +17,7 @@ gitsetu setup
 
 The wizard will automatically:
 1. Generate an ED25519 SSH keypair specific to this profile.
-2. Inject a Zero-Trust `Include` directive into your `~/.ssh/config`.
+2. Inject a managed `Include` directive into your `~/.ssh/config`.
 3. Create a managed block in your `~/.gitconfig` using the `includeIf` conditional.
 4. Automatically create the workspace directory (`mkdir -p`) if it does not already exist.
 

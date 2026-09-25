@@ -5,7 +5,7 @@ description: Enforces Git identity safety, multi-account routing, and SSH key ma
 
 # GitSetu AI Agent Skill
 
-You are operating on a workstation managed by GitSetu, the zero-trust bridge for all Git and SSH identities.
+You may be operating on a workstation where GitSetu manages some Git and SSH identities. Verify the active profile and managed state before relying on it.
 
 ## The 4 Golden Directives for AI Agents
 
@@ -18,7 +18,7 @@ You are operating on a workstation managed by GitSetu, the zero-trust bridge for
    - Ensure the resolved email matches the intended workspace (e.g., corporate email for work repos, personal email for personal repos).
 
 2. **Zero Identity Leaks (Never Bypass Guard)**:
-   - GitSetu's `guard` pre-commit hook is active system-wide.
+   - When installed, GitSetu's `guard` pre-commit hook is active for managed repositories.
    - If your commit halts with an `[Identity mismatch detected!]` warning:
      **STRICTLY FORBIDDEN:** DO NOT attempt to bypass this security check using `git commit --no-verify` or `-n`.
    - Instead, investigate using `gitsetu status`. If you are working across boundary directories, execute the commit using the ephemeral runner:

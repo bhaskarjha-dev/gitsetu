@@ -4,7 +4,7 @@
 
 Our mission is to make identity leakage structurally impossible. GitSetu currently holds an industry-leading position for zero-dependency identity orchestration, yet significant expansion opportunities exist within the enterprise, CI/CD, and deeper IDE integration layers.
 
-This research-driven roadmap synthesizes competitive analysis, developer pain-point research, and macro identity security trends to chart the complete path forward over the next 18 months.
+This research-driven roadmap synthesizes competitive analysis, developer pain-point research, and macro identity security trends to chart the complete path forward over the next 18 months. Items under Phases 1–4 are aspirational plans, not claims about the current v1.1.0 candidate.
 
 ---
 

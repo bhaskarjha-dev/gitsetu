@@ -6,16 +6,16 @@ GitSetu was engineered to solve a pervasive operational friction: managing multi
 
 Standard workflows require developers to constantly toggle configuration contexts between enterprise source trees, customer delivery repositories, and personal sandboxes. The operational tooling required to maintain these environments—hand-crafting SSH host blocks, writing manual conditional logic, and diagnosing platform virtualization issues—imposes immense operational overhead and massive risk surfaces.
 
-GitSetu exists to automate these operations out of existence permanently.
+GitSetu exists to reduce these operations to a reviewable, repeatable configuration workflow.
 
 ---
 
 ## Uncompromising Principles
 
-### 1. The Magical Clone (Absolute Frictionless UX)
+### 1. Native URLs and Managed Routing
 Traditional dual-identity approaches force developers to use non-standard clone URLs containing specialized host aliases (`git clone git@github-work:org/repo.git`). We fundamentally reject this design pattern.
 
-GitSetu leverages directory-scoped `includeIf` conditional mapping to inject custom `core.sshCommand` parameters mid-flight during repository cloning. Developers clone, fetch, and push standard URLs exactly as they normally would (`git clone git@github.com:org/repo.git`). GitSetu intercepts the local path evaluation and dynamically routes execution through the designated cryptographic keypair. The bridging layer is entirely invisible.
+GitSetu uses directory-scoped `includeIf` mapping to provide profile-specific `core.sshCommand` parameters when Git evaluates a managed path. Developers can use standard Git URLs; the operating system, Git, and OpenSSH still determine the final effective connection. The configuration compiler adds no daemon.
 
 ### 2. Minimal Runtime Dependencies
 A core environment bootstrapping script that requires downloading complex package managers or language runtimes is unnecessarily fragile.
@@ -36,13 +36,13 @@ GitSetu is primarily a configuration compiler, not a daemon. It can discover exi
 
 When developers attempt to build multi-identity solutions, they frequently rely on modern languages like Go or Rust. While these languages offer excellent execution speed, introducing a binary runtime dependency breaks the core utility of a lightweight shell setup script. 
 
-GitSetu is highly unique because it achieved compiled-binary-level developer experience, robust concurrency isolation, and multi-point diagnostics purely using zero-dependency POSIX shell mechanics.
+GitSetu aims to provide a lightweight developer experience, bounded concurrency controls, and multi-point diagnostics using zero-dependency POSIX shell mechanics.
 
 ---
 
 ## Strict Non-Goals
 
-To maintain absolute system reliability and maximum focus, GitSetu explicitly rejects the following product additions:
+To maintain a focused reliability model, GitSetu explicitly rejects the following product additions:
 - **OAuth / Single Sign-On Orchestration:** GitSetu proxies Personal Access Tokens via native OS keychains, but intentionally avoids supervising web-based OAuth authentication loops.
 - **Git Binary Wrapping:** It acts exclusively via native hooks and credential helpers, avoiding command-line alias intercepts.
 - **General Workspace Dotfiles:** It strictly limits its operational domain to Git and OpenSSH identity structures.

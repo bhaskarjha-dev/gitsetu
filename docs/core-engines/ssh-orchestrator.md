@@ -31,7 +31,7 @@ ssh-keygen -t ed25519-sk -O resident -C "profile-identifier" -f ~/.ssh/id_ed2551
 
 Historically, utilities modified `~/.ssh/config` files inline using search-and-replace scripts. This design pattern introduces catastrophic risk, frequently corrupting user configurations during unexpected exit events.
 
-GitSetu resolves this by leveraging OpenSSH 7.3+'s native **`Include` directive** to enforce a zero-trust network boundary.
+GitSetu resolves this by leveraging OpenSSH 7.3+'s native **`Include` directive** to keep GitSetu-managed routing separate from unrelated user host blocks.
 
 ### Stage 1: The Initial Hook Injection
 GitSetu inspects your global config once. It prepends a single line to the top of your file:
@@ -40,7 +40,7 @@ Include ~/.config/gitsetu/profiles/ssh_config
 ```
 
 ### Stage 2: Sandboxed Orchestration
-All customized host targets, host mapping blocks, and explicit key links are fully sandboxed inside GitSetu's localized state directory:
+All customized host targets, host mapping blocks, and explicit key links are stored inside GitSetu's managed state directory:
 
 ```ini
 # ~/.config/gitsetu/profiles/ssh_config (Fully Automated)
@@ -54,7 +54,7 @@ Host github.com-work
 The generated file is managed separately; unrelated host blocks remain outside GitSetu's include. Review OpenSSH's effective configuration because first-use host-key trust and Port 443 routing require explicit consent.
 
 ### Safe SSH Key Path Quoting
-When SSH key paths contain spaces (e.g. `C:/Users/First Last/.ssh/...` or `~/My Keys/id_ed25519`), OpenSSH CLI commands can suffer from argument splitting. GitSetu automatically wraps key paths in escaped double-quotes within `core.sshCommand = ssh -i "..."` and when exporting `GIT_SSH_COMMAND="ssh -i \"...\""` in `gitsetu run`, preventing command parsing errors across all platforms.
+When SSH key paths contain spaces (e.g. `C:/Users/First Last/.ssh/...` or `~/My Keys/id_ed25519`), OpenSSH CLI commands can suffer from argument splitting. GitSetu automatically wraps key paths in escaped double-quotes within `core.sshCommand = ssh -i "..."` and when exporting `GIT_SSH_COMMAND="ssh -i \"...\""` in `gitsetu run`, reducing command-parsing errors across supported platforms.
 
 ---
 
@@ -64,6 +64,6 @@ Loading multiple keys concurrently often saturates remote authentication boundar
 
 GitSetu's compiler natively intercepts and resolves these session blocks:
 - **`IdentitiesOnly = yes`:** Hardcoded into every generated target file to prevent OpenSSH from blindly presenting unmapped keys cached in the global agent socket.
-- **Keychain Injection:** Automates passphrase pre-loading on macOS (`UseKeychain yes`) and Linux agents to optimize daily workflows seamlessly.
+- **Keychain Injection:** Automates passphrase pre-loading on macOS (`UseKeychain yes`) and supported Linux agents.
 - **Windows NTFS Permission Tolerance:** Under POSIX systems, OpenSSH mandates strict `0600` permissions on private keys. Under Git Bash on Windows NTFS filesystems, POSIX permissions default to `644`. GitSetu's diagnostic and verification engines natively recognize this environment, tolerating `644` without producing false-positive permission warnings.
-- **Dual Routing Architecture (ADR-0001):** Combines directory-scoped `core.sshCommand` with `~/.ssh/config` host aliases (`github.com-<label>`), ensuring seamless compatibility both inside mapped workspaces and for external dependency package manager clones (`go get`, `npm`, `cargo`) outside mapped folders.
+- **Dual Routing Architecture (ADR-0001):** Combines directory-scoped `core.sshCommand` with `~/.ssh/config` host aliases (`github.com-<label>`), supporting mapped workspaces and explicitly configured external dependency clones (`go get`, `npm`, `cargo`).

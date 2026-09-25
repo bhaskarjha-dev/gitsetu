@@ -7,7 +7,7 @@
 ### General Operations
 
 **Why utilize global `includeIf` boundaries instead of simply running `git config --local` inside each repository?**
-Manually typing `git config --local` commands inside every newly cloned repository introduces massive operational friction and inevitable human error. Developers frequently forget to execute the command, resulting in personal credentials instantly leaking into corporate branch history upon their first commit. GitSetu orchestrates `includeIf` interceptors to ensure identities swap flawlessly *before* the commit phase activates.
+Manually typing `git config --local` commands inside every newly cloned repository introduces operational friction and human error. GitSetu reduces that repetition by routing managed directories through `includeIf`; review the effective identity before committing.
 
 **Do I need Go, Python, or Node.js to execute GitSetu?**
 No. GitSetu is plain Bash 3.2-compatible source and uses standard Git/OpenSSH tools. Optional native credential stores and OpenSSL are detected explicitly; unavailable optional features fail clearly.
@@ -21,7 +21,7 @@ GitSetu writes only its own generated profile files and marked managed blocks. U
 
 **I already have manual `includeIf` configurations and custom `~/.ssh/config` host aliases. Will GitSetu overwrite or delete them?**
 GitSetu is designed to minimize destructive changes. It edits only its own marked blocks and generated files, but a malformed marker or unsafe target causes it to stop rather than guess:
-1. **In `~/.gitconfig`:** GitSetu writes exclusively between `# [gitsetu:managed:start]` and `# [gitsetu:managed:end]` sentinel markers. Any pre-existing manual `includeIf` directives, `[user]` identities, `[alias]` definitions, or custom configurations outside those markers remain completely untouched.
+1. **In `~/.gitconfig`:** GitSetu writes between `# [gitsetu:managed:start]` and `# [gitsetu:managed:end]` sentinel markers. Manual `includeIf` directives, identities, aliases, and other settings outside those markers are left for Git and the user to manage; review the effective configuration.
 2. **In `~/.ssh/config`:** GitSetu writes one managed `Include` directive and keeps generated host aliases in its private file. Unrelated manual SSH host blocks remain outside the managed region; if the target is ambiguous or redirected, GitSetu refuses to edit it.
 3. **Pre-Modification Backups:** Before touching any configuration file, GitSetu automatically creates a timestamped backup in `~/.config/gitsetu/backups/` (`.gitconfig.<TIMESTAMP>.bak` and `config.<TIMESTAMP>.bak`).
 

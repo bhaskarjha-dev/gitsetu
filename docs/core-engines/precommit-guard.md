@@ -29,11 +29,11 @@ During installation or `gitsetu guard --install`, GitSetu writes a generated pre
        [ MATCHES ]                 [ DIVERGES ]
              │                           │
              ▼                           ▼
-     [ Commit Succeeds ]       [ INSTANT FATAL ABORT ]
+     [ Commit Succeeds ]       [ COMMIT BLOCKED ]
 ```
 
 ### The Terminal Experience
-When configuration divergence is intercepted, execution aborts instantly with high-visibility diagnostic output:
+When configuration divergence is intercepted, execution aborts the commit with high-visibility diagnostic output:
 
 ```text
 $ git commit -m "wip: core patch"

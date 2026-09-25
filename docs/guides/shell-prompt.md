@@ -71,11 +71,11 @@ style = "bold cyan"
 
 ## Output Behavior
 
-When traversing across folders, visual updates render instantly:
+When traversing across folders, the next shell prompt redraw reflects the active managed profile:
 
 ```text
 # Inside unmapped general directories
 ~ ❯ cd ~/work/api-gateway
-# Context updates instantly mid-flight
+# Context updates on the next prompt redraw
 [work] ~/work/api-gateway ❯ 
 ```

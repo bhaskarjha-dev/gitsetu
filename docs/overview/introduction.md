@@ -12,11 +12,11 @@ Modern developer environments are highly fragmented. Context-switching between d
 
 | The Operational Vulnerability | Typical Failure Mode | The GitSetu Automated Engine |
 | :--- | :--- | :--- |
-| 🔴 **Corporate Identity Leaks** | Committing private proprietary code using a personal email address or public alias. | **Directory-Scoped `includeIf` Interception:** Dynamically swaps active user configuration based on absolute working paths mid-flight. |
-| 🔴 **Silent Authentication Collisions** | Single SSH keys loaded globally against overlapping multi-tenant remote hosts (e.g., `github.com`). | **Dedicated Zero-Trust Key generation:** Bootstraps pure, isolated `ed25519` keypairs namespaced exactly to each workspace profile. |
-| 🔴 **Cross-Profile PAT Pollution** | HTTPS pull/push streams blindly pulling cached global tokens from OS credentials, returning `HTTP 403 Forbidden`. | **Native Namespaced Credential Broker:** Wraps authentication layers to securely proxy PATs directly via `security` / `secret-tool` keychains. |
-| 🔴 **Untracked Historical Config Drift** | Manual one-off edits to global `.gitconfig` files drifting out of compliance over time. | **Idempotent Managed Blocks Protocol:** Stateful compiler that surgically orchestrates local config structures without overwriting global blocks. |
-| 🔴 **Pre-Flight Failure Vulnerability** | Forgetting to execute environment prep scripts before pushing code to protected branches. | **Fail-Closed Identity Guard:** Enforces inline verification during pre-commit phases, aborting instantly if config integrity diverges. |
+| 🔴 **Corporate Identity Leaks** | Committing private proprietary code using a personal email address or public alias. | **Directory-Scoped `includeIf` routing:** Applies the selected profile when Git evaluates a managed path. |
+| 🔴 **Silent Authentication Collisions** | Single SSH keys loaded globally against overlapping multi-tenant remote hosts (e.g., `github.com`). | **Profile-scoped key generation:** Bootstraps separate `ed25519` keypairs for each managed profile. |
+| 🔴 **Cross-Profile PAT Pollution** | HTTPS pull/push streams blindly pulling cached global tokens from OS credentials, returning `HTTP 403 Forbidden`. | **Namespaced credential broker:** Resolves records by profile, host, and path through the selected native store. |
+| 🔴 **Untracked Historical Config Drift** | Manual one-off edits to global `.gitconfig` files drifting out of compliance over time. | **Managed blocks and explicit review:** GitSetu writes recognized managed regions and leaves unrelated configuration for review. |
+| 🔴 **Pre-Flight Failure Vulnerability** | Forgetting to execute environment prep scripts before pushing code to protected branches. | **Fail-Closed Identity Guard:** Checks managed identity state during pre-commit and blocks divergent commits. |
 
 ---
 

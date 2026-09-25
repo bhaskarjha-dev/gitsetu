@@ -142,7 +142,7 @@ gitsetu --version
 # Outputs the current candidate version and release channel (development until publication)
 ```
 
-### Instant 1-Second Setup
+### Automated Setup
 Bootstrap all detected identities without prompts:
 ```bash
 gitsetu setup --auto
