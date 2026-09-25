@@ -16,6 +16,8 @@ The v1.1.0 line is a verified, security-hardened, publication-ready release cand
 - Tightened numeric/path/input validation, canonical worktree routing, lock ownership, process cleanup, SSH command quoting, and FIDO2 failure handling.
 - Added explicit managed/unmanaged guard semantics, fail-closed managed identity checks, and honest diagnostics.
 - Hardened installer/updater provenance, package metadata, Windows argv/path handling, CI credential isolation, and generated-bundle checks.
+- Separated generated release provenance from tagged source metadata; the release workflow is now preparation-only until a separately reviewed publish-only gate exists.
+- Made setup dry-run avoid GitHub account lookups and PAT storage, with regression coverage for the offline boundary.
 - Added a fail-latching regression harness, isolated test environments, adversarial tamper/concurrency tests, and supported-platform matrix coverage.
 
 ### Security policy notes
