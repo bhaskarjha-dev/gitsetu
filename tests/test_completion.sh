@@ -78,7 +78,7 @@ test_completion_profile_actions_and_labels() {
     _gitsetu
     local label_words="${COMPREPLY[*]}"
     assert_contains "$label_words" "work" "profile remove completes v2 labels" || return 1
-    assert_contains "$label_words" "--force" "profile remove completes explicit force" || return 1
+    assert_not_contains "$label_words" "--force" "profile remove does not advertise unsupported force" || return 1
 }
 
 test_completion_legacy_registry_not_offered() {

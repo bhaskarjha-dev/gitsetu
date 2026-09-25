@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/test_audit_regressions.sh — Regression tests for zero-defect audit findings
 #
-# Each test validates a specific fix from the v1.1.1 audit.
+# Each test validates a specific fix from the v1.1.0 audit.
 # Tests are designed to FAIL without the corresponding code fix.
 
 set -euo pipefail

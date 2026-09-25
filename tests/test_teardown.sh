@@ -213,6 +213,32 @@ test_teardown_dos_prevention() {
     assert_contains "$output" "Skipping deep cleanup for '$HOME' to prevent filesystem traversal" "blocks HOME traversal" || return 1
 }
 
+test_teardown_dry_run_preserves_state_and_lock() {
+    setup
+    local git_before ssh_before registry_before
+    git_before=$(sha256sum "$HOME/.gitconfig" | awk '{print $1}')
+    ssh_before=$(sha256sum "$HOME/.ssh/config" | awk '{print $1}')
+    registry_before=$(sha256sum "$GITSETU_PROFILES_CONF" | awk '{print $1}')
+    rm -rf "$GITSETU_LOCK_DIR"
+    GITSETU_DRY_RUN=1
+    teardown_all >/dev/null 2>&1
+    assert_equals "$git_before" "$(sha256sum "$HOME/.gitconfig" | awk '{print $1}')" "dry-run preserves Git config" || return 1
+    assert_equals "$ssh_before" "$(sha256sum "$HOME/.ssh/config" | awk '{print $1}')" "dry-run preserves SSH config" || return 1
+    assert_equals "$registry_before" "$(sha256sum "$GITSETU_PROFILES_CONF" | awk '{print $1}')" "dry-run preserves registry" || return 1
+    assert_dir_not_exists "$GITSETU_LOCK_DIR" "dry-run leaves no runtime lock"
+}
+
+test_teardown_rejects_unbalanced_managed_markers() {
+    setup
+    printf '%s\n' "$GITSETU_MANAGED_START" "user.name=Unsafe" > "$HOME/.gitconfig"
+    local before
+    before=$(sha256sum "$HOME/.gitconfig" | awk '{print $1}')
+    local rc=0
+    teardown_gitconfig >/dev/null 2>&1 || rc=$?
+    assert_equals "1" "$rc" "unbalanced managed markers fail closed"
+    assert_equals "$before" "$(sha256sum "$HOME/.gitconfig" | awk '{print $1}')" "unbalanced marker file is unchanged"
+}
+
 # ------------------------------------------------------------------------------
 # Test Runner
 # ------------------------------------------------------------------------------
@@ -224,5 +250,7 @@ run_test "uninstall_guard removes hook and unsets core.hooksPath" test_teardown_
 run_test "teardown_all leaves generated SSH keys intact for safety" test_teardown_keeps_ssh_keys
 run_test "teardown_deep selectively strips matched local repo identities" test_teardown_deep_strips_local_configs
 run_test "teardown_deep prevents root/home filesystem DoS" test_teardown_dos_prevention
+run_test "teardown dry-run preserves state and lock" test_teardown_dry_run_preserves_state_and_lock
+run_test "teardown rejects unbalanced markers" test_teardown_rejects_unbalanced_managed_markers
 
 print_results "Teardown tests"

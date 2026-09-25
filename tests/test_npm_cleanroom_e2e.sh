@@ -37,7 +37,7 @@ fi
 if command -v cygpath >/dev/null 2>&1; then
     SANDBOX_ROOT=$(cygpath -m "$SANDBOX_ROOT")
 else
-    SANDBOX_ROOT=$(printf '%s' "$SANDBOX_ROOT" | tr '\\' '/')
+    SANDBOX_ROOT=${SANDBOX_ROOT//\\//}
 fi
 _npm_e2e_matching_pids() {
     ps -ef 2>/dev/null | awk -v root="$SANDBOX_ROOT" '

@@ -906,18 +906,31 @@ release_lock() {
     local disk_pid disk_token releasing_dir
     disk_pid=$(_gitsetu_lock_read_value "$target_lock" pid)
     disk_token=$(_gitsetu_lock_read_value "$target_lock" token)
-    if [[ -d "$target_lock" && ! -L "$target_lock" && "$disk_pid" == "$$" && -n "${GITSETU_LOCK_TOKEN:-}" && "$disk_token" == "$GITSETU_LOCK_TOKEN" ]]; then
-        releasing_dir="${target_lock}.rel.$$.$RANDOM"
-        if mv "$target_lock" "$releasing_dir" 2>/dev/null; then
-            # Re-verify the renamed directory before deleting it.  This avoids a
-            # path-replacement race turning release into deletion of a new owner.
-            local moved_pid moved_token
-            moved_pid=$(_gitsetu_lock_read_value "$releasing_dir" pid)
-            moved_token=$(_gitsetu_lock_read_value "$releasing_dir" token)
-            if [[ "$moved_pid" == "$$" && "$moved_token" == "$GITSETU_LOCK_TOKEN" ]]; then
-                rm -rf "$releasing_dir" 2>/dev/null || true
-            fi
+    if [[ ! -d "$target_lock" || -L "$target_lock" ]]; then
+        print_error "Refusing to release missing or redirected lock path: $target_lock"
+        return 1
+    fi
+    if [[ "$disk_pid" != "$$" || -z "${GITSETU_LOCK_TOKEN:-}" || "$disk_token" != "$GITSETU_LOCK_TOKEN" ]]; then
+        print_error "Lock ownership changed; refusing to release $target_lock."
+        return 1
+    fi
+
+    releasing_dir="${target_lock}.rel.$$.$RANDOM"
+    if mv "$target_lock" "$releasing_dir" 2>/dev/null; then
+        # Re-verify the renamed directory before deleting it.  This avoids a
+        # path-replacement race turning release into deletion of a new owner.
+        local moved_pid moved_token
+        moved_pid=$(_gitsetu_lock_read_value "$releasing_dir" pid)
+        moved_token=$(_gitsetu_lock_read_value "$releasing_dir" token)
+        if [[ "$moved_pid" == "$$" && "$moved_token" == "$GITSETU_LOCK_TOKEN" ]]; then
+            rm -rf "$releasing_dir" 2>/dev/null || true
+        else
+            print_error "Lock changed during release; moved directory was retained for recovery."
+            return 1
         fi
+    else
+        print_error "Failed to atomically move lock $target_lock for release."
+        return 1
     fi
 
     GITSETU_LOCK_DEPTH=0
@@ -1737,6 +1750,11 @@ cmd_profile() {
             fi
             if [[ "$idx" -eq 0 ]]; then
                 print_error "Cannot remove the global/default profile."
+                release_lock
+                exit 1
+            fi
+            if [[ $# -gt 0 ]]; then
+                print_error "profile remove does not accept flags: $*"
                 release_lock
                 exit 1
             fi

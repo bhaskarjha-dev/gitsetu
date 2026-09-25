@@ -1,7 +1,8 @@
 # sandbox/launch_sandbox.ps1 — Windows Sandbox Launcher for GitSetu Test Harness
 param(
     [string]$ResultsDir = "",
-    [switch]$NoPause
+    [switch]$NoPause,
+    [switch]$EnableNetworking
 )
 
 $ErrorActionPreference = "Stop"
@@ -39,13 +40,24 @@ if (-not (Test-Path "$gitHostDir\bin\bash.exe")) {
     Write-Host "Windows Sandbox maps this folder to provide zero-download offline Git/Bash."
 }
 
-# 3. Destination results directory
-if (-not $ResultsDir) {
-    $ResultsDir = Join-Path $rootDir "..\sandbox_results"
-}
-$resultsDir = [System.IO.Path]::GetFullPath($ResultsDir)
-if (-not (Test-Path $resultsDir)) {
-    New-Item -ItemType Directory -Path $resultsDir -Force | Out-Null
+# 3. Destination results directory. Every invocation receives a unique
+# run-scoped directory so a previous terminal status cannot be mistaken for a
+# new result.
+$resultsBase = if ($ResultsDir) { $ResultsDir } else { Join-Path $rootDir "..\sandbox_results" }
+$resultsBase = [System.IO.Path]::GetFullPath($resultsBase)
+$runId = (Get-Date -Format "yyyyMMdd_HHmmss") + "_" + [Guid]::NewGuid().ToString("N")
+$resultsDir = Join-Path $resultsBase $runId
+New-Item -ItemType Directory -Path $resultsDir -Force | Out-Null
+
+$sourceCommit = "unknown"
+$sourceDirty = "unknown"
+try {
+    $sourceCommit = (& git -C $rootDir rev-parse HEAD 2>$null | Out-String).Trim()
+    $sourceStatus = (& git -C $rootDir status --porcelain=v1 --untracked-files=all 2>$null | Out-String).Trim()
+    if ($sourceStatus) { $sourceDirty = "dirty" } else { $sourceDirty = "clean" }
+} catch {
+    $sourceCommit = "unavailable"
+    $sourceDirty = "unavailable"
 }
 
 # XML-escape all host paths before embedding them in the generated .wsb file.
@@ -58,10 +70,11 @@ $resultsDirXml = [System.Security.SecurityElement]::Escape($resultsDir)
 # silently reuse an older mapped source tree or results directory.
 $wsbGenerated = Join-Path $env:TEMP ("gitsetu_test_" + [Guid]::NewGuid().ToString("N") + ".wsb")
 
+$networkingMode = if ($EnableNetworking) { "Default" } else { "Disable" }
 $wsbContent = @"
 <Configuration>
   <VGpu>Disable</VGpu>
-  <Networking>Default</Networking>
+  <Networking>$networkingMode</Networking>
   <MappedFolders>
     <MappedFolder>
       <HostFolder>$rootDirXml</HostFolder>
@@ -86,10 +99,18 @@ $wsbContent = @"
 "@
 
 Set-Content -Path $wsbGenerated -Value $wsbContent -Encoding UTF8
+$wsbHash = (Get-FileHash -LiteralPath $wsbGenerated -Algorithm SHA256).Hash.ToLowerInvariant()
+@(
+    "run_id=$runId"
+    "source_commit=$sourceCommit"
+    "source_dirty=$sourceDirty"
+    "networking=$networkingMode"
+    "wsb_sha256=$wsbHash"
+) | Set-Content -LiteralPath (Join-Path $resultsDir "run-metadata.txt") -Encoding UTF8
 
 Write-Host "Launching Windows Sandbox with:"
 Write-Host "  Source:  $rootDir"
-Write-Host "  Results: $resultsDir"
+Write-Host "  Results: $resultsDir (run-scoped)"
 Write-Host "  Config:  $wsbGenerated"
 Write-Host ""
 

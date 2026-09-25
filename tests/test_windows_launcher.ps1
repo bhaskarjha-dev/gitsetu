@@ -43,6 +43,42 @@ try {
         throw "GITSETU_BASH was not ignored: $versionOutput"
     }
 
+    # Exercise the native launcher's actual command dispatch, not only its
+    # version and argument self-test. Status is read-only and should succeed in
+    # the isolated test HOME; malformed/unknown commands must fail explicitly.
+    $env:GITSETU_TEST_MODE = "1"
+    $previousAction = $ErrorActionPreference
+    $oldHome = $env:HOME
+    $oldUserProfile = $env:USERPROFILE
+    $oldXdg = $env:XDG_CONFIG_HOME
+    $oldGitConfig = $env:GIT_CONFIG_GLOBAL
+    $env:HOME = $temp
+    $env:USERPROFILE = $temp
+    $env:XDG_CONFIG_HOME = (Join-Path $temp ".config")
+    $env:GIT_CONFIG_NOSYSTEM = "1"
+    $env:GIT_CONFIG_GLOBAL = (Join-Path $temp ".gitconfig")
+    $ErrorActionPreference = "Continue"
+    try {
+        $helpExit = 0
+        $helpOutput = (& (Join-Path $one "gitsetu.exe") --help 2>&1 | Out-String)
+        $helpExit = $LASTEXITCODE
+        if ($helpExit -ne 0 -or $helpOutput -notmatch "USAGE") { throw "native launcher --help failed: $helpOutput" }
+        $statusExit = 0
+        $statusOutput = (& (Join-Path $one "gitsetu.exe") status 2>&1 | Out-String)
+        $statusExit = $LASTEXITCODE
+        if ($statusExit -ne 0 -or $statusOutput -notmatch "Current Directory") { throw "native launcher status failed: $statusOutput" }
+        $unknownExit = 0
+        $unknownOutput = (& (Join-Path $one "gitsetu.exe") definitely-not-a-command 2>&1 | Out-String)
+        $unknownExit = $LASTEXITCODE
+        if ($unknownExit -eq 0 -or $unknownOutput -notmatch "Unknown command") { throw "native launcher accepted an unknown command" }
+    } finally {
+        $ErrorActionPreference = $previousAction
+        if ($null -eq $oldHome) { Remove-Item Env:HOME -ErrorAction SilentlyContinue } else { $env:HOME = $oldHome }
+        if ($null -eq $oldUserProfile) { Remove-Item Env:USERPROFILE -ErrorAction SilentlyContinue } else { $env:USERPROFILE = $oldUserProfile }
+        if ($null -eq $oldXdg) { Remove-Item Env:XDG_CONFIG_HOME -ErrorAction SilentlyContinue } else { $env:XDG_CONFIG_HOME = $oldXdg }
+        if ($null -eq $oldGitConfig) { Remove-Item Env:GIT_CONFIG_GLOBAL -ErrorAction SilentlyContinue } else { $env:GIT_CONFIG_GLOBAL = $oldGitConfig }
+    }
+
     # A hash-valid but hostile ZIP must be rejected before extraction.
     $badZip = Join-Path $temp "bad.zip"
     $stream = [IO.File]::Open($badZip, [IO.FileMode]::CreateNew)

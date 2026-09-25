@@ -100,8 +100,8 @@ $auditResult = $LASTEXITCODE
 
 # 7. Test Windows Native PowerShell Installer & Uninstaller
 Write-Host "`n[7/8] Testing Windows Native PowerShell Installer & Uninstaller Pipeline..." -ForegroundColor Yellow
-$env:GITSETU_REPO_URL = "$targetDir"
-& powershell.exe -ExecutionPolicy Bypass -File "$targetDir\install.ps1"
+$sandboxInstallDir = Join-Path $env:LOCALAPPDATA "gitsetu"
+& powershell.exe -ExecutionPolicy Bypass -File "$targetDir\install.ps1" -LocalDevelopment -TestInstallDir $sandboxInstallDir
 $psInstallResult = $LASTEXITCODE
 
 $psShimTest = 1
@@ -235,6 +235,9 @@ if ($overallSuccess) {
 } elseif ($environmentBlocked -and $coreSandboxSuccess) {
     Write-Host "  Core checks passed; native launcher execution was blocked by the Windows Application Control policy." -ForegroundColor Yellow
     if ($resultsHost) { Set-Content -Path "$resultsHost\status.txt" -Value "COMPLETED_ENVIRONMENT_BLOCK" }
+} elseif ($auditResult -eq 2) {
+    Write-Host "  Sandbox audit was inconclusive; no release qualification is implied." -ForegroundColor Yellow
+    if ($resultsHost) { Set-Content -Path "$resultsHost\status.txt" -Value "COMPLETED_INCONCLUSIVE" }
 } else {
     Write-Host "  Verification completed with warnings. Check logs above.       " -ForegroundColor Yellow
     if ($resultsHost) { Set-Content -Path "$resultsHost\status.txt" -Value "COMPLETED_FAILURE" }

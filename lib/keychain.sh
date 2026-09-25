@@ -83,7 +83,7 @@ _keychain_hex_decode() {
         printf -v char '\\%s' "$octal"
         decoded="${decoded}${char}"
     done
-    KEYCHAIN_HEX_DECODED=$(printf '%b' "$decoded")
+    printf -v KEYCHAIN_HEX_DECODED '%b' "$decoded"
 }
 
 _keychain_print_error() {
@@ -188,9 +188,12 @@ _keychain_record_matches() {
     local credential_path="$4"
 
     _keychain_parse_record "$line" || return 2
-    [[ "$KEYCHAIN_RECORD_PROFILE" == "$profile" &&
-       "$KEYCHAIN_RECORD_HOST" == "$host" &&
-       "$KEYCHAIN_RECORD_PATH" == "$credential_path" ]]
+    if [[ "$KEYCHAIN_RECORD_PROFILE" == "$profile" &&
+          "$KEYCHAIN_RECORD_HOST" == "$host" &&
+          "$KEYCHAIN_RECORD_PATH" == "$credential_path" ]]; then
+        return 0
+    fi
+    return 1
 }
 
 # ------------------------------------------------------------------------------
@@ -265,15 +268,23 @@ _keychain_macos_store() {
 }
 
 _keychain_macos_get() {
-    local service="$1"
+    local service="$1" status=0
     command -v security >/dev/null 2>&1 || return 2
-    security find-generic-password -a gitsetu -s "$service" -w 2>/dev/null
+    security find-generic-password -a gitsetu -s "$service" -w 2>/dev/null || status=$?
+    if [[ "$status" -eq 44 ]]; then
+        return 1
+    fi
+    return "$status"
 }
 
 _keychain_macos_erase() {
-    local service="$1"
+    local service="$1" status=0
     command -v security >/dev/null 2>&1 || return 2
-    security find-generic-password -a gitsetu -s "$service" >/dev/null 2>&1 || return 0
+    security find-generic-password -a gitsetu -s "$service" >/dev/null 2>&1 || status=$?
+    if [[ "$status" -eq 44 ]]; then
+        return 0
+    fi
+    [[ "$status" -eq 0 ]] || return "$status"
     security delete-generic-password -a gitsetu -s "$service" >/dev/null 2>&1
 }
 
@@ -371,8 +382,7 @@ _keychain_gcm_erase() {
     _keychain_gcm_target "$profile" "$host" "$credential_path" || return 1
     printf 'protocol=https\nhost=%s\nusername=%s\n\n' \
         "$KEYCHAIN_GCM_HOST" "$KEYCHAIN_GCM_USERNAME" |
-        GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never "${KEYCHAIN_GCM_COMMAND[@]}" erase >/dev/null 2>&1 || true
-    return 0
+        GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never "${KEYCHAIN_GCM_COMMAND[@]}" erase >/dev/null 2>&1
 }
 
 # The OS name is supplied by the caller-selected platform detector.
@@ -691,8 +701,11 @@ _keychain_plaintext_store() {
         while IFS= read -r line || [[ -n "$line" ]]; do
             [[ "$line" == "$GITSETU_CREDENTIAL_STORE_HEADER" ]] && continue
             [[ -z "$line" ]] && continue
-            _keychain_record_matches "$line" "$profile" "$host" "$credential_path"
-            match_status=$?
+            if _keychain_record_matches "$line" "$profile" "$host" "$credential_path"; then
+                match_status=0
+            else
+                match_status=$?
+            fi
             if [[ "$match_status" -eq 0 ]]; then
                 [[ "$wrote_match" -eq 0 ]] || {
                     _keychain_print_error "Duplicate exact credential records found; refusing ambiguous overwrite."
@@ -730,8 +743,11 @@ _keychain_plaintext_get() {
     _keychain_validate_plaintext_store "$KEYCHAIN_TOKENS_FILE" || return 2
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ "$line" == "$GITSETU_CREDENTIAL_STORE_HEADER" || -z "$line" ]] && continue
-        _keychain_record_matches "$line" "$profile" "$host" "$credential_path"
-        match_status=$?
+        if _keychain_record_matches "$line" "$profile" "$host" "$credential_path"; then
+            match_status=0
+        else
+            match_status=$?
+        fi
         if [[ "$match_status" -eq 0 ]]; then
             [[ "$matches" -eq 0 ]] || {
                 _keychain_print_error "Duplicate exact credential records found; refusing ambiguous lookup."
@@ -762,8 +778,11 @@ _keychain_plaintext_erase() {
     printf '%s\n' "$GITSETU_CREDENTIAL_STORE_HEADER" > "$KEYCHAIN_TOKENS_TMP"
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ "$line" == "$GITSETU_CREDENTIAL_STORE_HEADER" || -z "$line" ]] && continue
-        _keychain_record_matches "$line" "$profile" "$host" "$credential_path"
-        match_status=$?
+        if _keychain_record_matches "$line" "$profile" "$host" "$credential_path"; then
+            match_status=0
+        else
+            match_status=$?
+        fi
         if [[ "$match_status" -eq 0 ]]; then
             [[ "$matches" -eq 0 ]] || {
                 _keychain_print_error "Duplicate exact credential records found; refusing ambiguous erase."
@@ -839,8 +858,11 @@ keychain_get() {
                 return "$native_status"
             fi
             [[ -n "$record" ]] || return 1
-            _keychain_record_matches "$record" "$profile" "$host" "$credential_path"
-            match_status=$?
+            if _keychain_record_matches "$record" "$profile" "$host" "$credential_path"; then
+                match_status=0
+            else
+                match_status=$?
+            fi
             if [[ "$match_status" -ne 0 ]]; then
                 _keychain_print_error "Native backend returned a malformed or mismatched credential record."
                 return 2

@@ -123,19 +123,15 @@ _gitsetu() {
                 COMPREPLY=( $(compgen -W "add edit remove" -- "$cur") )
             else
                 case "$subcommand" in
-                    add)
+                    add|edit)
                         # shellcheck disable=SC2207
                         COMPREPLY=( $(compgen -W "--name= --email= --dir= --provider= --key= --fido2 --sign --no-sign" -- "$cur") )
                         ;;
-                    edit|remove)
-                        local profile_words="--force"
+                    remove)
                         local labels
                         labels=$(_gitsetu_completion_labels) || labels=""
-                        if [[ -n "$labels" ]]; then
-                            profile_words="$profile_words $labels"
-                        fi
                         # shellcheck disable=SC2207
-                        COMPREPLY=( $(compgen -W "$profile_words" -- "$cur") )
+                        COMPREPLY=( $(compgen -W "$labels" -- "$cur") )
                         ;;
                     *)
                         # shellcheck disable=SC2207

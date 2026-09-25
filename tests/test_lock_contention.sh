@@ -12,6 +12,12 @@ setup_test_home
 source_gitsetu_libs
 detect_os
 
+reset_lock_fixture() {
+    GITSETU_LOCK_DEPTH=0
+    unset GITSETU_LOCK_PATH GITSETU_LOCK_TOKEN GITSETU_LOCK_PROCESS_START
+    rm -rf "$GITSETU_LOCK_DIR"
+}
+
 # ------------------------------------------------------------------------------
 # Test 1: acquire_lock succeeds and creates atomic lock directory with PID
 # ------------------------------------------------------------------------------
@@ -107,6 +113,92 @@ test_lock_timeout_contention() {
 }
 
 # ------------------------------------------------------------------------------
+# Adversarial ownership and replacement cases
+# ------------------------------------------------------------------------------
+test_lock_symlink_is_refused() {
+    reset_lock_fixture
+    if [[ "${OSTYPE:-}" == "msys"* || "${OSTYPE:-}" == "cygwin"* || "${OSTYPE:-}" == "mingw"* ]]; then
+        skip_test "lock symlink refusal" "MSYS/Cygwin directory-link semantics require native Windows coverage"
+        return 0
+    fi
+    local outside="$TEST_HOME/lock-outside"
+    rm -rf "$outside"
+    mkdir -p "$outside"
+    if ! ln -s "$outside" "$GITSETU_LOCK_DIR" 2>/dev/null; then
+        skip_test "lock symlink refusal" "symlink creation is unavailable on this host"
+        return 0
+    fi
+
+    local rc=0
+    acquire_lock >/dev/null 2>&1 || rc=$?
+    assert_equals "1" "$rc" "a symlink at the lock path is refused"
+    assert_dir_exists "$outside" "symlink target is not removed"
+    assert_file_not_exists "$outside/pid" "symlink target is not populated"
+    rm -f "$GITSETU_LOCK_DIR"
+}
+
+test_release_rejects_wrong_path() {
+    reset_lock_fixture
+    acquire_lock || return 1
+    local other="$TEST_HOME/other.lock"
+    local rc=0
+    release_lock "$other" >/dev/null 2>&1 || rc=$?
+    assert_equals "1" "$rc" "release refuses a path other than the owned lock"
+    assert_dir_exists "$GITSETU_LOCK_DIR" "wrong-path release preserves the owned lock"
+    release_lock >/dev/null 2>&1 || return 1
+}
+
+test_release_rejects_replaced_token() {
+    reset_lock_fixture
+    acquire_lock || return 1
+    local owned_token="$GITSETU_LOCK_TOKEN"
+    printf 'attacker-token\n' > "$GITSETU_LOCK_DIR/token"
+    local rc=0
+    release_lock >/dev/null 2>&1 || rc=$?
+    assert_equals "1" "$rc" "release rejects a replaced ownership token"
+    assert_dir_exists "$GITSETU_LOCK_DIR" "replaced-token lock is not deleted"
+    printf '%s\n' "$owned_token" > "$GITSETU_LOCK_DIR/token"
+    release_lock >/dev/null 2>&1 || return 1
+}
+
+test_live_owner_with_old_timestamp_is_not_reaped() {
+    reset_lock_fixture
+    mkdir -p "$GITSETU_LOCK_DIR"
+    printf '%s\n' "$$" > "$GITSETU_LOCK_DIR/pid"
+    printf '%s\n' "fixture-live-token" > "$GITSETU_LOCK_DIR/token"
+    printf '%s\n' "$(_gitsetu_lock_process_start "$$" 2>/dev/null || printf '')" > "$GITSETU_LOCK_DIR/process_start"
+    printf '0\n' > "$GITSETU_LOCK_DIR/timestamp"
+    GITSETU_LOCK_TIMEOUT=1
+    local rc=0
+    acquire_lock >/dev/null 2>&1 || rc=$?
+    unset GITSETU_LOCK_TIMEOUT
+    assert_equals "1" "$rc" "a live owner is not reaped because its timestamp is old"
+    assert_file_contains "$GITSETU_LOCK_DIR/token" "fixture-live-token" "live owner token remains"
+    rm -rf "$GITSETU_LOCK_DIR"
+}
+
+test_process_start_mismatch_is_reaped() {
+    reset_lock_fixture
+    mkdir -p "$GITSETU_LOCK_DIR"
+    printf '%s\n' "$$" > "$GITSETU_LOCK_DIR/pid"
+    printf '%s\n' "old-process-token" > "$GITSETU_LOCK_DIR/token"
+    printf '0\n' > "$GITSETU_LOCK_DIR/process_start"
+    printf '0\n' > "$GITSETU_LOCK_DIR/timestamp"
+    GITSETU_LOCK_TIMEOUT=2
+    acquire_lock >/dev/null 2>&1 || {
+        unset GITSETU_LOCK_TIMEOUT
+        return 1
+    }
+    unset GITSETU_LOCK_TIMEOUT
+    assert_dir_exists "$GITSETU_LOCK_DIR" "a new owner acquires a process-start-mismatched lock"
+    if [[ "$(cat "$GITSETU_LOCK_DIR/token")" == "old-process-token" ]]; then
+        printf '    FAIL: new owner retained the replaced lock token\n'
+        return 1
+    fi
+    release_lock >/dev/null 2>&1 || return 1
+}
+
+# ------------------------------------------------------------------------------
 # Run all tests
 # ------------------------------------------------------------------------------
 printf '\n%btest_lock_contention.sh%b\n' "$T_BOLD" "$T_RESET"
@@ -114,4 +206,9 @@ run_test "basic acquire_lock and release_lock lifecycle" test_acquire_and_releas
 run_test "re-entrant locking increments and decrements depth" test_lock_reentrancy
 run_test "stale lock recovery from dead PID" test_stale_lock_recovery
 run_test "lock contention timeout when held by live PID" test_lock_timeout_contention
+run_test "lock symlink is refused" test_lock_symlink_is_refused
+run_test "release rejects wrong path" test_release_rejects_wrong_path
+run_test "release rejects replaced token" test_release_rejects_replaced_token
+run_test "live owner survives old timestamp" test_live_owner_with_old_timestamp_is_not_reaped
+run_test "process-start mismatch is reaped" test_process_start_mismatch_is_reaped
 print_results "Lock Contention tests"

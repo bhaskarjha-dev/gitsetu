@@ -99,7 +99,7 @@ test_auto_runner_adopts_existing_blueprint() {
 # ------------------------------------------------------------------------------
 printf '\n%btest_ephemeral_runner.sh%b\n' "$T_BOLD" "$T_RESET"
 run_test "auto_setup_runner fails without discoverable email" test_auto_runner_fails_without_email
-run_test "auto_setup_runner succeeds with GITSETU_DEFAULT_EMAIL" test_auto_runner_succeeds_with_env_email
+run_test "auto_setup_runner succeeds with discovered Git email" test_auto_runner_succeeds_with_env_email
 run_test "CLI gitsetu setup --auto executes zero-prompt pipeline" test_cli_setup_auto_execution
 run_test "auto_setup_runner adopts existing blueprint profiles" test_auto_runner_adopts_existing_blueprint
 print_results "Ephemeral Runner tests"

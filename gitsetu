@@ -748,6 +748,10 @@ ${BOLD}USAGE${RESET}
     gitsetu init [--auto] [--dry-run]   Alias for setup
     gitsetu add <label> <name> <email> <dir>
                                      Add a profile (non-interactive)
+    gitsetu profile <add|edit|remove> <label> [flags]
+                                     Manage strict v2 profiles
+    gitsetu credential <get|store|erase>
+                                     Git credential-helper protocol
     gitsetu remove <label>           Remove a profile
     gitsetu status                   Show current identity configuration
     gitsetu verify                   Test SSH keys and git config
@@ -1352,15 +1356,50 @@ cmd_credential() {
     esac
 
     local host="" protocol="" username="" password="" line
+    local seen_protocol=0 seen_host=0 seen_username=0 seen_password=0 seen_path=0
+    local terminated=0 malformed=0
     while IFS= read -r line || [[ -n "$line" ]]; do
-        [[ -z "$line" ]] && break
+        if [[ -n "$line" && "$line" == *$'\r'* ]]; then
+            print_error "Malformed credential protocol: CR is not a valid line ending."
+            return 1
+        fi
+        if [[ -z "$line" ]]; then
+            if [[ "$terminated" -eq 1 ]]; then
+                continue
+            fi
+            terminated=1
+            continue
+        fi
+        if [[ "$terminated" -eq 1 ]]; then
+            malformed=1
+            break
+        fi
         case "$line" in
-            host=*) host="${line#*=}" ;;
-            protocol=*) protocol="${line#*=}" ;;
-            username=*) username="${line#*=}" ;;
-            password=*) password="${line#*=}" ;;
+            host=*)
+                [[ "$seen_host" -eq 0 ]] || { malformed=1; break; }
+                host="${line#*=}"; seen_host=1 ;;
+            protocol=*)
+                [[ "$seen_protocol" -eq 0 ]] || { malformed=1; break; }
+                protocol="${line#*=}"; seen_protocol=1 ;;
+            username=*)
+                [[ "$seen_username" -eq 0 ]] || { malformed=1; break; }
+                username="${line#*=}"; seen_username=1 ;;
+            password=*)
+                [[ "$seen_password" -eq 0 ]] || { malformed=1; break; }
+                password="${line#*=}"; seen_password=1 ;;
+            path=*)
+                # Git's path= attribute is intentionally ignored by the current
+                # CLI contract; still reject duplicate attributes below.
+                [[ "$seen_path" -eq 0 ]] || { malformed=1; break; }
+                seen_path=1 ;;
+            *)
+                malformed=1; break ;;
         esac
     done
+    if [[ "$malformed" -eq 1 || "$terminated" -eq 0 ]]; then
+        print_error "Malformed credential protocol input."
+        return 1
+    fi
 
     if [[ "$protocol" != "https" || -z "$host" ]]; then
         return 0
@@ -1428,6 +1467,8 @@ show_brief_usage() {
         "$BOLD" "$RESET" "$GITSETU_VERSION"
     printf >&2 'Usage: gitsetu setup [--auto] [--dry-run]    Start the setup wizard\n'
     printf >&2 '       gitsetu status               Show current identity\n'
+    printf >&2 '       gitsetu profile <action>     Manage v2 profiles\n'
+    printf >&2 '       gitsetu credential <action>  Git credential helper protocol\n'
     printf >&2 '       gitsetu verify               Test SSH and git config\n'
     printf >&2 '       gitsetu doctor [--repair]    Diagnose or repair configuration\n'
     printf >&2 '       gitsetu prompt               Print active profile (for PS1)\n'

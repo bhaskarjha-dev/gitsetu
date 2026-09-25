@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2329  # Mocked confirmation is invoked indirectly by install_guard.
 # tests/test_guard.sh — Tests for lib/guard.sh
 set -euo pipefail
 
@@ -180,6 +181,35 @@ test_guard_prompt_default_yes() {
     assert_equals "0" "$result" "confirm defaults to yes on empty input" || return 1
 }
 
+test_guard_preserves_existing_hooks_path() {
+    GITSETU_DRY_RUN=0
+    local prior="$HOME/custom-hooks"
+    mkdir -p "$prior"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$prior/pre-commit"
+    chmod 700 "$prior/pre-commit"
+    git config --global core.hooksPath "$prior"
+    confirm() { return 0; }
+    install_guard >/dev/null 2>&1 || return 1
+    assert_equals "$(normalize_path "$GITSETU_HOOKS_DIR")" "$(normalize_path "$(git config --global core.hooksPath)")" "guard installs over a prior hooks path after consent" || return 1
+    uninstall_guard >/dev/null 2>&1 || return 1
+    assert_equals "$(normalize_path "$prior")" "$(normalize_path "$(git config --global core.hooksPath)")" "uninstall restores the exact prior hooks path" || return 1
+}
+
+test_guard_fails_closed_for_corrupt_managed_registry() {
+    GITSETU_DRY_RUN=0
+    seed_v2_work_profile "$HOME/work" "Test" "work@example.com"
+    install_guard >/dev/null 2>&1
+    printf '%s\n' "# gitsetu-registry-v2" "malformed" > "$GITSETU_PROFILES_CONF"
+    setup_repo "$HOME/work"
+    touch "$HOME/work/bad.txt"
+    git -C "$HOME/work" add bad.txt
+    local output
+    output=$(GIT_AUTHOR_NAME="Test" GIT_AUTHOR_EMAIL="wrong@example.com" \
+        GIT_COMMITTER_NAME="Test" GIT_COMMITTER_EMAIL="wrong@example.com" \
+        git -C "$HOME/work" commit -m "bad" 2>&1 || true)
+    assert_contains "$output" "BLOCKING COMMIT" "corrupt managed state fails closed" || return 1
+}
+
 printf '\n%btest_guard.sh%b\n' "$T_BOLD" "$T_RESET"
 run_test "install_guard links hook" test_install_guard
 run_test "guard blocks mismatched email" test_guard_blocks_mismatch
@@ -190,4 +220,6 @@ run_test "guard reads identity from v2 profile config" test_guard_reads_v2_profi
 run_test "guard prompt bypassed in test mode" test_guard_prompt_bypassed_in_test_mode
 run_test "guard prompt skipped if already installed" test_guard_prompt_skipped_if_already_installed
 run_test "guard prompt defaults to yes" test_guard_prompt_default_yes
+run_test "guard preserves prior core.hooksPath" test_guard_preserves_existing_hooks_path
+run_test "corrupt managed registry fails closed" test_guard_fails_closed_for_corrupt_managed_registry
 print_results "Guard tests"

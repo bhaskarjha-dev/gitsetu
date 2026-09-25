@@ -29,7 +29,7 @@ docs:
 	@node scripts/check-docs.mjs
 
 lint:
-	@shellcheck gitsetu install.sh uninstall.sh scripts/*.sh lib/*.sh packaging/gh-extension/gh-gitsetu packaging/gh-extension/gh-setu tests/*.sh
+	@shellcheck gitsetu install.sh uninstall.sh scripts/*.sh lib/*.sh sandbox/*.sh packaging/gh-extension/gh-gitsetu packaging/gh-extension/gh-setu tests/*.sh
 	@node --check bin/gitsetu.js
 	@node --check packaging/release.js
 	@node --check packaging/release-manifest.js

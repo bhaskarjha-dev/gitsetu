@@ -54,13 +54,15 @@ test_cli_help_flag() {
     assert_exit_code 0 bash "$GITSETU_EXE" --help || return 1
 }
 
-test_cli_array_loop_crash_prevention() {
-    # Test that list doesn't crash when profiles.conf is completely empty (0 profiles)
+test_cli_status_empty_registry_is_safe() {
+    # An empty registry is an informational status, not a ghost list command.
     mkdir -p "$HOME/.config/gitsetu"
-    touch "$HOME/.config/gitsetu/profiles.conf"
-    local output
-    output=$(bash "$GITSETU_EXE" list 2>&1 || true)
-    assert_not_contains "$output" "bad array subscript" "survives 0 profile state without array subscript crash" || return 1
+    : > "$HOME/.config/gitsetu/profiles.conf"
+    local output rc=0
+    output=$(bash "$GITSETU_EXE" status 2>&1) || rc=$?
+    assert_equals "1" "$rc" "empty registry status fails closed"
+    assert_not_contains "$output" "bad array subscript" "empty registry status avoids array subscript errors"
+    assert_contains "$output" "registry header is missing" "empty registry status explains the invalid format"
 }
 
 test_cli_v2_profile_parsing() {
@@ -188,7 +190,7 @@ run_test "add with missing args caught" test_cli_add_missing_args
 run_test "add with invalid label caught" test_cli_add_invalid_label
 run_test "remove with missing args caught" test_cli_remove_invalid_arg
 run_test "--help prints menu and exits 0" test_cli_help_flag
-run_test "empty registry array loop safety" test_cli_array_loop_crash_prevention
+run_test "empty registry status is safe" test_cli_status_empty_registry_is_safe
 run_test "strict v2 profiles.conf parsing" test_cli_v2_profile_parsing
 run_test "legacy seven-field registry rejected" test_cli_legacy_registry_rejected
 run_test "run uses the strict external v2 key field" test_cli_run_uses_strict_external_key_field

@@ -30,6 +30,8 @@ fi
 # of whichever config root each phase is exercising.
 export GITSETU_TEST_RUNTIME_DIR="$HOME/.gitsetu-audit-runtime"
 export GITSETU_LOCK_DIR="$GITSETU_TEST_RUNTIME_DIR/profiles.lock"
+export GITSETU_TEST=1
+export GITSETU_TEST_VAULT_MODE=1
 
 BOLD='\033[1m'
 GREEN='\033[0;32m'
@@ -377,8 +379,11 @@ fi
 # 8.3 Verify Command
 ver_code=0
 "$GITSETU" verify >/dev/null 2>&1 || ver_code=$?
-# In sandbox without internet, SSH connections to git@github.com time out cleanly. Verify should report without crashing.
-record_result "Verify" "Verification Health Run" "gitsetu verify" "Runs diagnostics without crash" "PASS" "Completed with return code $ver_code"
+if [[ "$ver_code" -eq 0 ]]; then
+    record_result "Verify" "Verification Health Run" "gitsetu verify" "Required offline verification succeeds" "PASS" "Exit code 0"
+else
+    record_result "Verify" "Verification Health Run" "gitsetu verify" "Required offline verification succeeds" "FAIL" "Exit code $ver_code"
+fi
 
 # ==============================================================================
 # PHASE 9: Credential Broker
@@ -386,22 +391,28 @@ record_result "Verify" "Verification Health Run" "gitsetu verify" "Runs diagnost
 echo -e "\n${BOLD}${CYAN}[PHASE 9] Credential Management${RESET}"
 
 cd "$P_DIR/personal_repo"
-printf "protocol=https\nhost=github.com\nusername=sandbox_user\npassword=pat_token_secret_123\n\n" | "$GITSETU" credential store
-cred_out=$(printf "protocol=https\nhost=github.com\n\n" | "$GITSETU" credential get 2>&1 || true)
+export GITSETU_CREDENTIAL_BACKEND=file
+AUDIT_DUMMY_TOKEN="sandbox-audit-placeholder-token"
+cred_store_code=0
+printf "protocol=https\nhost=github.com\nusername=sandbox_user\npassword=%s\n\n" "$AUDIT_DUMMY_TOKEN" | "$GITSETU" credential store >/dev/null 2>&1 || cred_store_code=$?
+cred_out=$(printf "protocol=https\nhost=github.com\n\n" | "$GITSETU" credential get 2>/dev/null || true)
+cred_match=0
+[[ "$cred_store_code" -eq 0 && "$cred_out" == *"password=$AUDIT_DUMMY_TOKEN"* ]] && cred_match=1
 
-if [[ "$cred_out" == *"password=pat_token_secret_123"* ]]; then
-    record_result "Credential" "Credential Store & Get" "credential store / get" "Token stored and retrieved" "PASS" "Token round-trip verified"
+if [[ "$cred_match" -eq 1 ]]; then
+    record_result "Credential" "Credential Store & Get" "credential store / get" "Token stored and retrieved" "PASS" "Explicit file-backend round-trip verified; secret redacted"
 else
-    record_result "Credential" "Credential Store & Get" "credential store / get" "Token stored and retrieved" "FAIL" "Failed to retrieve stored credential: $cred_out"
+    record_result "Credential" "Credential Store & Get" "credential store / get" "Token stored and retrieved" "FAIL" "Explicit file-backend round-trip failed; secret redacted"
 fi
 
-printf "protocol=https\nhost=github.com\n\n" | "$GITSETU" credential erase
-cred_after=$(printf "protocol=https\nhost=github.com\n\n" | "$GITSETU" credential get 2>&1 || true)
-if [[ "$cred_after" != *"password=pat_token_secret_123"* ]]; then
-    record_result "Credential" "Credential Erase" "credential erase" "Token erased" "PASS" "Token successfully erased"
+printf "protocol=https\nhost=github.com\n\n" | "$GITSETU" credential erase >/dev/null 2>&1 || true
+cred_after=$(printf "protocol=https\nhost=github.com\n\n" | "$GITSETU" credential get 2>/dev/null || true)
+if [[ "$cred_after" != *"password=$AUDIT_DUMMY_TOKEN"* ]]; then
+    record_result "Credential" "Credential Erase" "credential erase" "Token erased" "PASS" "Token successfully erased; secret redacted"
 else
-    record_result "Credential" "Credential Erase" "credential erase" "Token erased" "FAIL" "Token was not erased"
+    record_result "Credential" "Credential Erase" "credential erase" "Token erased" "FAIL" "Token remained after erase; secret redacted"
 fi
+unset GITSETU_CREDENTIAL_BACKEND AUDIT_DUMMY_TOKEN
 
 # ==============================================================================
 # PHASE 10: Profile Modification & Headless Removal
@@ -797,10 +808,10 @@ if command -v powershell.exe >/dev/null 2>&1; then
 
     # 20.1 Install via install.ps1
     ps_inst_err=0
-    LOCALAPPDATA="$win_ps_sandbox_appdata" GITSETU_REPO_URL="$win_script_dir" GITSETU_TEST="true" \
-        powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$win_script_dir/install.ps1" >/dev/null 2>&1 || ps_inst_err=$?
+    LOCALAPPDATA="$win_ps_sandbox_appdata" GITSETU_TEST_MODE=1 \
+        powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$win_script_dir/install.ps1" -LocalDevelopment -TestInstallDir "$ps_sandbox_appdata/gitsetu" >/dev/null 2>&1 || ps_inst_err=$?
 
-    if [[ "$ps_inst_err" -eq 0 && -d "$ps_sandbox_appdata/gitsetu/share" && -f "$ps_sandbox_appdata/gitsetu/bin/gitsetu.cmd" && -f "$ps_sandbox_appdata/gitsetu/bin/gitsetu.ps1" ]]; then
+    if [[ "$ps_inst_err" -eq 0 && -d "$ps_sandbox_appdata/gitsetu/releases" && -f "$ps_sandbox_appdata/gitsetu/bin/gitsetu.cmd" && -f "$ps_sandbox_appdata/gitsetu/bin/gitsetu.ps1" && -f "$ps_sandbox_appdata/gitsetu/current.txt" ]]; then
         record_result "Installer: Windows PowerShell" "install.ps1 File Provisioning" "install.ps1" "Clones to %LOCALAPPDATA%/gitsetu and provisions shims" "PASS" "Share repo and shims created"
     else
         record_result "Installer: Windows PowerShell" "install.ps1 File Provisioning" "install.ps1" "Clones to %LOCALAPPDATA%/gitsetu and provisions shims" "FAIL" "Failed to provision files (exit code: $ps_inst_err)"
@@ -824,7 +835,7 @@ if command -v powershell.exe >/dev/null 2>&1; then
 
     # 20.4 PowerShell Uninstaller (uninstall.ps1)
     ps_uninst_err=0
-    LOCALAPPDATA="$win_ps_sandbox_appdata" GITSETU_TEST="true" CI="true" \
+    LOCALAPPDATA="$win_ps_sandbox_appdata" GITSETU_TEST_MODE=1 CI="true" \
         powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$win_script_dir/uninstall.ps1" -Force >/dev/null 2>&1 || ps_uninst_err=$?
 
     if [[ "$ps_uninst_err" -eq 0 && ! -d "$ps_sandbox_appdata/gitsetu" ]]; then
@@ -847,7 +858,7 @@ git config --global --add safe.directory "$SCRIPT_DIR" >/dev/null 2>&1 || true
 
 # 21.1 Install via install.sh
 posix_inst_err=0
-HOME="$posix_sandbox_home" GITSETU_REPO_URL="$SCRIPT_DIR" bash "$SCRIPT_DIR/install.sh" >/dev/null 2>&1 || posix_inst_err=$?
+HOME="$posix_sandbox_home" GITSETU_TEST=1 GITSETU_TEST_MODE=1 bash "$SCRIPT_DIR/install.sh" --local-development >/dev/null 2>&1 || posix_inst_err=$?
 
 if [[ "$posix_inst_err" -eq 0 && -d "$posix_sandbox_home/.local/share/gitsetu" && -x "$posix_sandbox_home/.local/bin/gitsetu" ]]; then
     record_result "Installer: POSIX Shell" "install.sh Pipeline" "install.sh" "Installs to ~/.local/share/gitsetu and links binary" "PASS" "Local share and bin created"
@@ -1105,39 +1116,14 @@ else
     record_result "Backup & Restore" "SSH Keys Survive Restore" "SSH key file check" "Key files exist after restore" "WARN" "SSH keys not found (may not have been in backup scope)"
 fi
 
-# 25.5 Safety backup on restore over existing state
-safety_files=$(ls "$rt_sandbox/"gitsetu_vault_pre_restore_*.tar.gz.enc 2>/dev/null | wc -l)
-safety_files=$(echo "$safety_files" | tr -d ' ')
-if [[ "$safety_files" -gt 0 ]]; then
-    record_result "Backup & Restore" "Safety Backup Auto-Created" "restore over existing state" "Pre-restore safety vault created" "PASS" "Found $safety_files safety backup(s)"
-else
-    record_result "Backup & Restore" "Safety Backup Auto-Created" "restore over existing state" "Pre-restore safety vault created" "WARN" "No safety backup detected (may have been clean restore)"
-fi
+# 25.5 Current v2 restore must not create legacy user-visible sidecars.
+# The authenticated malicious-vault corpus is maintained in
+# tests/test_vault_adversarial.sh; this legacy audit does not duplicate it.
+record_result "Backup & Restore" "Legacy Sidecar Check" "restore over existing state" "No obsolete restore sidecar is created" "WARN" "Detailed adversarial coverage is delegated to tests/test_vault_adversarial.sh"
 
-# 25.6 Path traversal rejection
-pt_dir=$(mktemp -d "${TMPDIR:-/tmp}/gitsetu_pt_audit.XXXXXX")
-mkdir -p "$pt_dir/dotdot"
-echo "malicious_content" > "$pt_dir/dotdot/evil_file"
-# Create archive with ../ path traversal
-(cd "$pt_dir" && tar -czf "$pt_dir/evil.tar.gz" --transform='s|dotdot|../../etc|' dotdot/evil_file 2>/dev/null) || \
-(cd "$pt_dir" && tar -czf "$pt_dir/evil.tar.gz" dotdot/evil_file 2>/dev/null) || true
-if [[ -f "$pt_dir/evil.tar.gz" ]]; then
-    printf 'ptpass\n' | openssl enc -aes-256-cbc -salt -pbkdf2 -in "$pt_dir/evil.tar.gz" -out "$pt_dir/evil.tar.gz.enc" -pass stdin 2>/dev/null || true
-    if [[ -f "$pt_dir/evil.tar.gz.enc" ]]; then
-        export GITSETU_TEST_VAULT_PASS="ptpass"
-        pt_out=$("$GITSETU" restore "$pt_dir/evil.tar.gz.enc" 2>&1 || true)
-        if echo "$pt_out" | grep -qi "security\|violation\|prohibited\|traversal"; then
-            record_result "Security" "Path Traversal Rejection" "restore malicious archive" "Archive with ../ rejected" "PASS" "Blocked: path traversal detected"
-        else
-            record_result "Security" "Path Traversal Rejection" "restore malicious archive" "Archive with ../ rejected" "WARN" "Could not verify traversal blocking (tar --transform may not be available)"
-        fi
-    else
-        record_result "Security" "Path Traversal Rejection" "openssl encrypt" "Test archive encrypted" "WARN" "Skipped: encryption failed"
-    fi
-else
-    record_result "Security" "Path Traversal Rejection" "tar create" "Test archive created" "WARN" "Skipped: tar failed"
-fi
-rm -rf "$pt_dir"
+# 25.6 Authenticated malicious-vault coverage is maintained as a hermetic
+# checked-in suite rather than synthesized with legacy CBC/OpenSSL fixtures.
+record_result "Security" "Authenticated Vault Adversarial Corpus" "tests/test_vault_adversarial.sh" "Valid v2 envelopes reject malicious payloads" "WARN" "Run the dedicated hermetic vault suite for release evidence"
 
 # 25.7 Wrong password fails gracefully
 export GITSETU_TEST_VAULT_PASS="WRONG_PASSWORD_123"
@@ -1433,7 +1419,7 @@ upd_nongit=$(mktemp -d "${TMPDIR:-/tmp}/gitsetu_upd_audit.XXXXXX")
 UPD_OLD_HOME="$HOME"
 export HOME="$upd_nongit"
 upd_err_code=0
-upd_err_out=$("$GITSETU" update 2>&1 || upd_err_code=$?)
+upd_err_out=$("$GITSETU" update 2>&1) || upd_err_code=$?
 if [[ "$upd_err_code" -ne 0 ]] || echo "$upd_err_out" | grep -qi "not.*git\|error\|fail"; then
     record_result "Update" "Non-Git Repo Rejection" "gitsetu update outside git" "Fails with helpful error" "PASS" "Rejected gracefully"
 else
@@ -1450,8 +1436,12 @@ git init >/dev/null 2>&1 || true
 git add -A >/dev/null 2>&1 || true
 git commit -m "init" >/dev/null 2>&1 || true
 upd_up_code=0
-GITSETU_DIR="$upd_repo" "$upd_repo/gitsetu" update 2>/dev/null || upd_up_code=$?
-record_result "Update" "Already Up-To-Date" "gitsetu update in up-to-date repo" "Reports success or up-to-date" "PASS" "Exit code: $upd_up_code"
+upd_up_out=$(GITSETU_DIR="$upd_repo" "$upd_repo/gitsetu" update --development 2>&1) || upd_up_code=$?
+if [[ "$upd_up_code" -ne 0 ]]; then
+    record_result "Update" "Development Mode Rejects Wrong Branch" "gitsetu update --development" "Rejects a checkout outside the pinned development branch" "PASS" "Exit code $upd_up_code: $upd_up_out"
+else
+    record_result "Update" "Development Mode Rejects Wrong Branch" "gitsetu update --development" "Rejects a checkout outside the pinned development branch" "FAIL" "Unexpected success: $upd_up_out"
+fi
 cd "$SCRIPT_DIR"
 rm -rf "$upd_repo"
 
@@ -1611,9 +1601,13 @@ fi
 
 # 31.8 Doctor on fresh state reports clean
 "$GITSETU" add doc-test "Doctor Test" "doc@test.com" "$edge_sandbox/doctest" 2>/dev/null || true
-doc_out=$("$GITSETU" doctor 2>&1 || true)
-doc_code=$?
-record_result "Edge Cases" "Doctor Fresh Setup" "gitsetu doctor" "Runs without crash" "PASS" "Exit code: $doc_code"
+doc_code=0
+doc_out=$("$GITSETU" doctor 2>&1) || doc_code=$?
+if [[ "$doc_code" -eq 0 ]]; then
+    record_result "Edge Cases" "Doctor Fresh Setup" "gitsetu doctor" "Runs without crash" "PASS" "Exit code 0"
+else
+    record_result "Edge Cases" "Doctor Fresh Setup" "gitsetu doctor" "Runs without crash" "FAIL" "Exit code: $doc_code; output: $doc_out"
+fi
 
 # Cleanup Phase 31
 "$GITSETU" teardown --force >/dev/null 2>&1 || true
@@ -1657,9 +1651,11 @@ cat > "$SUMMARY_FILE" <<EOF
 - **Passed:** $PASSED_TESTS
 - **Warnings:** $WARNED_TESTS
 - **Failed:** $FAILED_TESTS
-- **Overall Quality Verdict:** $(if [[ $FAILED_TESTS -eq 0 ]]; then echo "🟢 **PRODUCTION-READY (Zero Regressions)**"; else echo "🔴 **DEFICIENCIES FOUND**"; fi)
+- **Overall Quality Verdict:** **LEGACY AUDIT ONLY — NOT A RELEASE QUALIFICATION RESULT**; inspect the recorded result rows and statuses.
 
 ## 2. Key Observations & Accomplishments
+
+> The narrative below is retained for historical comparison and is not generated proof of current behavior. Current release decisions must use the checked-in regression suites and a named clean source commit.
 
 1. **Multi-Identity Zero-Trust Isolation:**
    - Successfully created and switched across 4 distinct profiles (\`personal\`, \`corporate\`, \`client-acme\`, and \`spaces-proj\`).

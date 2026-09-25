@@ -16,8 +16,10 @@ Run from PowerShell:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\sandbox\launch_sandbox.ps1
-# Optional: write results to a disposable, unique directory.
+# Optional: write results beneath a disposable run-scoped directory.
 powershell -ExecutionPolicy Bypass -File .\sandbox\launch_sandbox.ps1 -ResultsDir C:\Temp\gitsetu-sandbox-results
+# Optional: explicitly allow networking for a separately approved live test.
+powershell -ExecutionPolicy Bypass -File .\sandbox\launch_sandbox.ps1 -EnableNetworking
 ```
 
 Or double-click `launch_sandbox.bat` from Windows Explorer / Command Prompt:
@@ -30,9 +32,9 @@ The results directory contains `status.txt`:
 
 - `COMPLETED_SUCCESS`: the harness reported its checks as successful; because the harness is legacy/experimental, this is not by itself a product release qualification.
 - `COMPLETED_ENVIRONMENT_BLOCK`: all non-launcher checks passed, but Windows Application Control blocked execution of the generated unsigned native launcher; this is not a product pass.
+- `COMPLETED_INCONCLUSIVE`: the legacy audit or bootstrap could not establish a trustworthy terminal result; this is not a product pass or failure.
 - `COMPLETED_FAILURE`: one or more checks failed.
 - No terminal status (for example, the host closes the VM during a run): treat
   the result as **inconclusive**, never as a pass or product failure.
 
-Each launcher invocation creates a unique `.wsb` configuration, so repeated or
-parallel disposable runs cannot silently reuse an older Sandbox session.
+Each launcher invocation creates a unique `.wsb` configuration and a run-scoped results directory. The launcher records the source commit, clean/dirty state, networking policy, and WSB SHA-256 in `run-metadata.txt`. Networking is disabled by default; pass `-EnableNetworking` only for an explicitly approved live-network run.
