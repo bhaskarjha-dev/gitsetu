@@ -10,7 +10,9 @@ make the same claim.
    isolate HOME, Git configuration, XDG roots, runtime locks, and command
    shims. They cover validators, v2 registry state, vault transactions,
    credentials, routing, SSH policy, guard behavior, teardown, and failure
-   paths.
+   paths. Credential tests also cover setup-PAT fallback, exact tuple
+   isolation, native adapter failures, DACL evidence, and concurrent
+   plaintext mutation serialization.
 2. **CLI contract tests** — `test_cli_contract.sh` exercises every top-level
    dispatch branch, aliases, arity, negative arguments, and exit codes.
 3. **Integration tests** — installer, npm clean-room, concurrency, CRLF,

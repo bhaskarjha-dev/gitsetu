@@ -639,6 +639,20 @@ test_keychain_ntfs_acl_evidence_fails_closed() {
     return "$failed"
 }
 
+test_keychain_ntfs_parser_accepts_path_prefixed_system_ace() {
+    _keychain_setup
+    KEYCHAIN_NTFS_CURRENT_USER="test-user"
+    KEYCHAIN_NTFS_CURRENT_ACCOUNT="test-user"
+    KEYCHAIN_NTFS_CURRENT_SID="S-1-5-21-1-2-3-1001"
+    KEYCHAIN_NTFS_CURRENT_COMPUTER="TESTHOST"
+    local acl_output
+    acl_output='C:\Users\test-user\.config\gitsetu NT AUTHORITY\SYSTEM:(I)(OI)(CI)(F)
+  TESTHOST\test-user:(F)
+  BUILTIN\Administrators:(F)
+Successfully processed 1 files; Failed processing 0 files'
+    _keychain_ntfs_acl_is_restrictive "$acl_output"
+}
+
 # ==============================================================================
 # Run
 # ==============================================================================
@@ -660,4 +674,5 @@ run_test "legacy plaintext record is rejected" test_keychain_rejects_legacy_plai
 run_test "symlinked config directory is rejected" test_keychain_rejects_symlinked_config_directory
 run_test "symlinked token file is rejected" test_keychain_rejects_symlinked_token_file
 run_test "NTFS DACL evidence fails closed" test_keychain_ntfs_acl_evidence_fails_closed
+run_test "path-prefixed SYSTEM ACE is parsed" test_keychain_ntfs_parser_accepts_path_prefixed_system_ace
 print_results "Keychain tests"

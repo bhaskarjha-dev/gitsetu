@@ -16,11 +16,64 @@ _CROSS_A_XDG="$_CROSS_ROOT/xdg-a"
 _CROSS_B_HOME="$_CROSS_ROOT/home-b"
 _CROSS_B_XDG="$_CROSS_ROOT/xdg-b"
 _CROSS_ARTIFACTS="$_CROSS_ROOT/artifacts"
+_CROSS_TEST_BIN="$_CROSS_ROOT/test-bin"
 _CROSS_VAULT="$_CROSS_ARTIFACTS/home-a.gitsetu-v2.vault"
 _CROSS_VAULT_PASSWORD='fixture-only-cross-home-password'
 _CROSS_SOURCE_PRIVATE='disposable-private-A'
 _CROSS_SOURCE_PUBLIC='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICROSSFIXTURE source@example.invalid'
 _CROSS_SOURCE_TOKEN='fixture-token-A-not-a-secret'
+
+# Keep credential setup hermetic on Git Bash without bypassing the production
+# NTFS path.  The real keychain parser still receives and must accept a
+# restrictive DACL containing only Administrators, SYSTEM, and the current
+# account.  Only the external ACL/ownership/reparse probes are fixture shims.
+_cross_install_credential_test_shims() {
+    mkdir -p "$_CROSS_TEST_BIN" || return 1
+    cat > "$_CROSS_TEST_BIN/stat" <<'EOF'
+#!/usr/bin/env sh
+format=""
+path=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -c|-f) format="$2"; shift 2 ;;
+        -*) shift ;;
+        *) path="$1"; shift ;;
+    esac
+done
+case "$format" in
+    %U|%Su) id -un ;;
+    %u) id -u ;;
+    *)
+        case "$path" in
+            */.tokens|*/.tokens.tmp.*) printf '600\n' ;;
+            *) printf '700\n' ;;
+        esac
+        ;;
+esac
+EOF
+    cat > "$_CROSS_TEST_BIN/icacls.exe" <<'EOF'
+#!/usr/bin/env sh
+printf '%s BUILTIN\\Administrators:(F)\n' "$1"
+printf '  NT AUTHORITY\\SYSTEM:(F)\n'
+printf '  %s:(F)\n' "$(id -un)"
+EOF
+    cat > "$_CROSS_TEST_BIN/fsutil.exe" <<'EOF'
+#!/usr/bin/env sh
+exit 1
+EOF
+    chmod 700 "$_CROSS_TEST_BIN/stat" "$_CROSS_TEST_BIN/icacls.exe" \
+        "$_CROSS_TEST_BIN/fsutil.exe" || return 1
+
+    local path_bin="$_CROSS_TEST_BIN"
+    if command -v cygpath >/dev/null 2>&1; then
+        path_bin=$(cygpath -u "$_CROSS_TEST_BIN" 2>/dev/null) || return 1
+    fi
+    case ":$PATH:" in
+        *":$path_bin:"*) ;;
+        *) export PATH="$path_bin:$PATH" ;;
+    esac
+    [[ $(command -v icacls.exe 2>/dev/null) == "$path_bin/icacls.exe" ]]
+}
 
 _cross_activate_home() {
     local role="${1:-}"
@@ -75,6 +128,7 @@ _cross_activate_home() {
     GITSETU_VAULT_ACTIVE_TRANSACTION=""
 
     source_gitsetu_libs
+    _cross_install_credential_test_shims || return 1
 }
 
 _cross_reset_home_state() {
@@ -324,6 +378,66 @@ test_cross_home_restore_maps_paths_and_preserves_user_config() {
     _cross_assert_no_sidecars "successful cross-home restore"
 }
 
+test_cross_home_post_commit_cleanup_failure_preserves_commit() {
+    local status=0 output_file="$TEST_HOME/post-commit-cleanup.out"
+    local output="" txn="" candidate found=0
+
+    _cross_seed_target_home || return 1
+    if (
+        # Fail only the final private transaction removal.  The function remains
+        # active for every ordinary temporary-file cleanup inside the restore.
+        # shellcheck disable=SC2329  # invoked indirectly by cmd_restore
+        rm() {
+            local argument
+            for argument in "$@"; do
+                case "$argument" in
+                    */.gitsetu-restore.*) return 1 ;;
+                esac
+            done
+            command rm "$@"
+        }
+        cmd_restore "$_CROSS_VAULT"
+    ) >"$output_file" 2>&1; then
+        status=0
+    else
+        status=$?
+    fi
+    assert_equals "1" "$status" "post-commit cleanup failure is reported" || return 1
+    output=$(cat "$output_file" 2>/dev/null) || return 1
+    assert_contains "$output" "Authenticated v2 vault restored successfully" \
+        "cleanup failure still reports the committed restore" || return 1
+    assert_contains "$output" "post-commit cleanup failed" \
+        "cleanup failure is explicit" || return 1
+    assert_contains "$output" "committed restore state was not rolled back" \
+        "cleanup failure cannot be misreported as a rollback" || return 1
+
+    load_profiles "$GITSETU_PROFILES_CONF" || return 1
+    assert_equals "2" "$PROFILE_COUNT" "committed source registry remains active after cleanup failure" || return 1
+    assert_file_contains "$HOME/.ssh/id_ed25519_global" "$_CROSS_SOURCE_PRIVATE" \
+        "committed private key remains installed after cleanup failure" || return 1
+    assert_file_not_exists "$GITSETU_PROFILES_DIR/target.gitconfig" \
+        "cleanup failure does not roll back the committed profile set" || return 1
+    assert_file_not_contains "$GITSETU_CONFIG_DIR/.tokens" "target-token-before-restore" \
+        "cleanup failure does not roll back committed token state" || return 1
+
+    for candidate in "$(dirname "$GITSETU_CONFIG_DIR")"/.gitsetu-restore.*; do
+        if [[ -d "$candidate" && ! -L "$candidate" ]]; then
+            txn="$candidate"
+            found=$((found + 1))
+        fi
+    done
+    assert_equals "1" "$found" "failed post-commit cleanup retains one transaction directory" || return 1
+    assert_contains "$output" "$txn" "cleanup failure reports the retained transaction path" || return 1
+    assert_file_contains "$txn/RECOVERY_REQUIRED" "state=active" \
+        "cleanup failure is not mislabeled as an incomplete rollback" || return 1
+    assert_file_not_contains "$txn/RECOVERY_REQUIRED" "state=rollback-incomplete" \
+        "committed restore never enters the rollback recovery state" || return 1
+    _cross_assert_no_sidecars "post-commit cleanup failure" || return 1
+
+    rm -f "$output_file"
+    rm -rf "$txn"
+}
+
 test_cross_home_failed_commit_rolls_back_without_marker() {
     local status=0 output=""
     local before_registry before_profile before_key before_hook before_token
@@ -444,6 +558,8 @@ run_test "backup output collisions are non-destructive" \
     test_cross_home_backup_refuses_output_collisions
 run_test "HOME A backup restores into HOME B with different XDG" \
     test_cross_home_restore_maps_paths_and_preserves_user_config
+run_test "post-commit cleanup failure preserves committed state" \
+    test_cross_home_post_commit_cleanup_failure_preserves_commit
 run_test "post-commit failure rolls back state without a marker" \
     test_cross_home_failed_commit_rolls_back_without_marker
 run_test "incomplete rollback retains a private recovery marker" \

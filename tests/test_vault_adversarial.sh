@@ -13,6 +13,7 @@ _TEST_SKIP_ENV_SNAPSHOT=1
 source_gitsetu_libs
 
 _ADV_PASSWORD='fixture-only-vault-password'
+_ADV_LAST_RESTORE_OUTPUT=""
 export GITSETU_TEST_VAULT_MODE=1
 export GITSETU_TEST_VAULT_PASS="$_ADV_PASSWORD"
 
@@ -100,6 +101,61 @@ EOF
         "$keys_root/0" "$keys_root/0.pub" "$archive_root/manifest" || return 1
 }
 
+# Build a valid two-profile payload whose final private/public destination set
+# can be made ambiguous in the authenticated payload itself.  The caller
+# controls the second private destination relative to the source ~/.ssh root.
+_adv_build_collision_payload_tree() {
+    local tree_root="${1%/}"
+    local second_key_relative="${2:-}"
+    local archive_root="$tree_root/gitsetu-v2"
+    local state_root="$archive_root/state"
+    local profiles_root="$state_root/profiles"
+    local hooks_root="$state_root/hooks"
+    local keys_root="$archive_root/keys"
+    local first_key="$_ADV_SOURCE_HOME/.ssh/id_primary"
+    local second_key="$_ADV_SOURCE_HOME/.ssh/$second_key_relative"
+
+    [[ -n "$second_key_relative" && "$second_key_relative" != */* ]] || return 1
+    mkdir -p "$profiles_root" "$hooks_root" "$keys_root" || return 1
+    cat > "$state_root/profiles.conf" <<EOF || return 1
+$(test_v2_registry_header)
+$(test_v2_registry_line global '' github.com 0 "$first_key" fixture-user)
+$(test_v2_registry_line collision "$_ADV_SOURCE_HOME/work" github.com 0 "$second_key" fixture-user)
+EOF
+    cat > "$profiles_root/global.gitconfig" <<'EOF' || return 1
+[user]
+    name = Adversarial Global
+    email = global@example.invalid
+EOF
+    cat > "$profiles_root/collision.gitconfig" <<'EOF' || return 1
+[user]
+    name = Adversarial Collision
+    email = collision@example.invalid
+EOF
+    printf '%s\n' 'disposable duplicate-destination private fixture' > "$keys_root/0" || return 1
+    printf '%s\n' 'disposable duplicate-destination private fixture' > "$keys_root/1" || return 1
+    printf '%s\n' 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFIXTURE collision@example.invalid' \
+        > "$keys_root/0.pub" || return 1
+    printf '%s\n' 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFIXTURE collision@example.invalid' \
+        > "$keys_root/1.pub" || return 1
+    cat > "$archive_root/manifest" <<EOF || return 1
+format=2
+profiles=2
+source_home=$_ADV_SOURCE_HOME
+profile.0.config=state/profiles/global.gitconfig
+profile.0.key=keys/0
+profile.0.public=keys/0.pub
+profile.1.config=state/profiles/collision.gitconfig
+profile.1.key=keys/1
+profile.1.public=keys/1.pub
+EOF
+    chmod 700 "$tree_root" "$archive_root" "$state_root" "$profiles_root" \
+        "$hooks_root" "$keys_root" || return 1
+    chmod 600 "$state_root/profiles.conf" "$profiles_root/global.gitconfig" \
+        "$profiles_root/collision.gitconfig" "$keys_root/0" "$keys_root/1" \
+        "$keys_root/0.pub" "$keys_root/1.pub" "$archive_root/manifest" || return 1
+}
+
 _adv_tar_tree() {
     local tree_root="${1%/}"
     local archive="$2"
@@ -110,7 +166,54 @@ _adv_tar_tree_with_transform() {
     local tree_root="${1%/}"
     local archive="$2"
     local transform="$3"
-    (cd "$tree_root" && tar -czf "$archive" --transform="$transform" gitsetu-v2)
+    local tar_help=""
+
+    # GNU tar is preferred. BSD/macOS tar has no --transform, so use a small
+    # Python tarfile builder for the same authenticated fixture instead of
+    # silently skipping the malicious archive on a supported runner.
+    tar_help=$(tar --help 2>&1 || true)
+    if printf '%s\n' "$tar_help" | grep -q -- '--transform'; then
+        (cd "$tree_root" && tar -czf "$archive" --transform="$transform" gitsetu-v2)
+        return $?
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        return 2
+    fi
+    python3 - "$tree_root" "$archive" "$transform" <<'PY'
+import os
+import re
+import stat
+import sys
+import tarfile
+
+root, archive, transform = sys.argv[1:]
+match = re.match(r"^s\|(.+)\|(.+)\|$", transform)
+if not match:
+    raise SystemExit(2)
+pattern, replacement = match.groups()
+pattern = pattern.replace("$", r"\Z")
+with tarfile.open(archive, "w:gz") as output:
+    for directory, dirs, files in os.walk(root):
+        dirs.sort()
+        files.sort()
+        for name in ["."] if directory == root else []:
+            relative = "."
+            arcname = re.sub(pattern, replacement, relative)
+            info = output.gettarinfo(directory, arcname=arcname)
+            output.addfile(info)
+        for name in dirs + files:
+            path = os.path.join(directory, name)
+            relative = os.path.relpath(path, root).replace(os.sep, "/")
+            arcname = re.sub(pattern, replacement, relative)
+            info = output.gettarinfo(path, arcname=arcname)
+            if stat.S_ISREG(info.mode):
+                with open(path, "rb") as stream:
+                    output.addfile(info, stream)
+            elif stat.S_ISDIR(info.mode):
+                output.addfile(info)
+            else:
+                raise SystemExit(2)
+PY
 }
 
 _adv_compute_tag_hex() {
@@ -267,6 +370,7 @@ _adv_expect_restore_rejected() {
         return 1
     }
     output=$(cmd_restore "$vault" 2>&1) || status=$?
+    _ADV_LAST_RESTORE_OUTPUT="$output"
     if [[ "$status" -ne 1 ]]; then
         printf '    FAIL: %s should be rejected with status 1 (got %s)\n' "$context" "$status"
         printf '      Restore output: %s\n' "$output"
@@ -358,16 +462,28 @@ test_vault_adversarial_rejects_traversal_and_absolute_members() {
 
     rm -rf "$traversal_tree" "$absolute_tree"
     _adv_build_payload_tree "$traversal_tree" || return 1
+    local transform_status=0
     _adv_tar_tree_with_transform "$traversal_tree" "$traversal_archive" \
-        's|^gitsetu-v2/state/profiles.conf$|gitsetu-v2/../../escape.conf|' || return 1
+        's|^gitsetu-v2/state/profiles.conf$|gitsetu-v2/../../escape.conf|' || transform_status=$?
+    if [[ "$transform_status" -eq 2 ]]; then
+        skip_test "authenticated traversal/absolute archive fixtures" "no portable tar transform or python3 builder is available"
+        return 0
+    fi
+    [[ "$transform_status" -eq 0 ]] || return 1
     listing=$(tar -tzf "$traversal_archive" 2>/dev/null) || return 1
     assert_contains "$listing" "gitsetu-v2/../../escape.conf" \
         "traversal fixture really stores ../ members" || return 1
     _adv_expect_restore_rejected "authenticated traversal archive" "$traversal_archive" || return 1
 
     _adv_build_payload_tree "$absolute_tree" || return 1
+    transform_status=0
     _adv_tar_tree_with_transform "$absolute_tree" "$absolute_archive" \
-        's|^gitsetu-v2|/gitsetu-v2|' || return 1
+        's|^gitsetu-v2|/gitsetu-v2|' || transform_status=$?
+    if [[ "$transform_status" -eq 2 ]]; then
+        skip_test "authenticated absolute archive fixture" "no portable tar transform or python3 builder is available"
+        return 0
+    fi
+    [[ "$transform_status" -eq 0 ]] || return 1
     listing=$(tar --absolute-names -tzf "$absolute_archive" 2>/dev/null) || return 1
     assert_contains "$listing" "/gitsetu-v2/state/profiles.conf" \
         "absolute-path fixture really stores rooted members" || return 1
@@ -382,6 +498,34 @@ test_vault_adversarial_rejects_duplicate_members() {
     _adv_build_payload_tree "$tree" || return 1
     (cd "$tree" && tar -czf "$archive" gitsetu-v2 gitsetu-v2/state/profiles.conf) 2>/dev/null || return 1
     _adv_expect_restore_rejected "authenticated duplicate-member archive" "$archive"
+}
+
+test_vault_adversarial_rejects_duplicate_restore_destinations() {
+    local same_tree="$_ADV_WORK/duplicate-destination-tree"
+    local same_archive="$_ADV_WORK/duplicate-destination.tar.gz"
+    local cross_tree="$_ADV_WORK/cross-kind-destination-tree"
+    local cross_archive="$_ADV_WORK/cross-kind-destination.tar.gz"
+
+    # Equal private/public payloads do not make duplicate writes deterministic:
+    # every destination is required to be unique even when the bytes agree.
+    rm -rf "$same_tree"
+    _adv_build_collision_payload_tree "$same_tree" id_primary || return 1
+    _adv_tar_tree "$same_tree" "$same_archive" || return 1
+    _adv_expect_restore_rejected \
+        "authenticated duplicate private/public destinations" "$same_archive" || return 1
+    assert_contains "$_ADV_LAST_RESTORE_OUTPUT" "duplicate key restore destination" \
+        "identical key mappings are rejected specifically as duplicate destinations" || return 1
+
+    # A private destination can equal another mapping's derived public path.
+    # This cross-kind collision is not discoverable by comparing only private
+    # destinations, but would otherwise overwrite one key kind with the other.
+    rm -rf "$cross_tree"
+    _adv_build_collision_payload_tree "$cross_tree" id_primary.pub || return 1
+    _adv_tar_tree "$cross_tree" "$cross_archive" || return 1
+    _adv_expect_restore_rejected \
+        "authenticated private/public destination collision" "$cross_archive" || return 1
+    assert_contains "$_ADV_LAST_RESTORE_OUTPUT" "duplicate key restore destination" \
+        "cross-kind key mappings are rejected specifically as duplicate destinations"
 }
 
 test_vault_adversarial_rejects_symlink_member() {
@@ -636,6 +780,8 @@ run_test "traversal and absolute archive paths are rejected" \
     test_vault_adversarial_rejects_traversal_and_absolute_members
 run_test "duplicate archive members are rejected" \
     test_vault_adversarial_rejects_duplicate_members
+run_test "duplicate private and public destinations are rejected" \
+    test_vault_adversarial_rejects_duplicate_restore_destinations
 run_test "symlink archive members are rejected" \
     test_vault_adversarial_rejects_symlink_member
 run_test "hardlink archive members are rejected" \

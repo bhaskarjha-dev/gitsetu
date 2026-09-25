@@ -610,7 +610,21 @@ _keychain_ntfs_acl_is_restrictive() {
         if [[ "$first_line" -eq 1 ]]; then
             case "$principal" in
                 /*|[A-Za-z]:*|\\*)
-                    principal="${principal##*[[:space:]]}"
+                    # icacls prefixes only the first ACE with the inspected
+                    # path. Preserve the two-word NT AUTHORITY principal;
+                    # a generic last-space strip would turn it into
+                    # AUTHORITY\\SYSTEM and reject valid real-world output.
+                    case "$principal" in
+                        *' NT AUTHORITY\'*)
+                            principal="NT AUTHORITY\\${principal##*\\}"
+                            ;;
+                        *' BUILTIN\'*)
+                            principal="BUILTIN\\${principal##*\\}"
+                            ;;
+                        *)
+                            principal="${principal##*[[:space:]]}"
+                            ;;
+                    esac
                     ;;
             esac
         fi

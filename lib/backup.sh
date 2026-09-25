@@ -1326,14 +1326,15 @@ _vault_validate_key_destination() {
 
 _vault_validate_restore_keys() {
     local archive_root="$1"
-    local i source target prior private_rel public_rel
+    local i mapping source target destination destination_key prior
+    local private_rel public_rel
+    local -a restore_destination_keys=()
     _VAULT_RESTORE_KEY_SOURCES=()
     _VAULT_RESTORE_PUB_SOURCES=()
     _VAULT_RESTORE_KEY_TARGETS=()
 
     for (( i=0; i<_VAULT_MANIFEST_COUNT; i++ )); do
         target="${PROFILE_KEYS[$i]}"
-        _vault_validate_key_destination "$target" || return 1
         _VAULT_RESTORE_KEY_TARGETS+=("$target")
         private_rel="${_VAULT_MANIFEST_KEYS[$i]}"
         public_rel="${_VAULT_MANIFEST_PUBLICS[$i]}"
@@ -1349,16 +1350,27 @@ _vault_validate_restore_keys() {
             _VAULT_RESTORE_PUB_SOURCES+=("")
         fi
 
-        for (( prior=0; prior<i; prior++ )); do
-            if [[ "${_VAULT_RESTORE_KEY_TARGETS[$prior]}" == "$target" ]]; then
-                if [[ -n "$private_rel" && -n "${_VAULT_RESTORE_KEY_SOURCES[$prior]}" ]]; then
-                    cmp -s "$source" "${_VAULT_RESTORE_KEY_SOURCES[$prior]}" || return 1
-                fi
-                if [[ -n "$public_rel" && -n "${_VAULT_RESTORE_PUB_SOURCES[$prior]}" ]]; then
-                    cmp -s "$archive_root/$public_rel" "${_VAULT_RESTORE_PUB_SOURCES[$prior]}" || return 1
-                fi
+        # Every profile contributes a private and a public destination.  Compare
+        # their portable identities before any transaction is created: content
+        # equality cannot make overlapping writes safe, and a private path may
+        # also collide with another profile's automatically derived ".pub" path.
+        for mapping in private public; do
+            if [[ "$mapping" == "private" ]]; then
+                destination="$target"
+            else
+                destination="$target.pub"
             fi
+            _vault_validate_key_destination "$destination" || return 1
+            destination_key=$(_vault_manifest_path_key "$destination") || return 1
+            for (( prior=0; prior<${#restore_destination_keys[@]}; prior++ )); do
+                if [[ "${restore_destination_keys[$prior]}" == "$destination_key" ]]; then
+                    print_error "Vault contains a duplicate key restore destination: $destination"
+                    return 1
+                fi
+            done
+            restore_destination_keys+=("$destination_key")
         done
+
         if [[ -e "$target" || -L "$target" ]]; then
             [[ -f "$target" && ! -L "$target" ]] || return 1
         fi
@@ -1913,6 +1925,39 @@ _vault_restore_discard_staging() {
     fi
 }
 
+_vault_finalize_committed_restore() {
+    local txn="${1:-}" temp_dir="${2:-}" acquired="${3:-0}"
+    local cleanup_failed=0
+
+    # From this point onward the live state is committed.  Clear the rollback
+    # target before cleanup so a cleanup error can never be mistaken for a
+    # pre-commit failure and trigger restoration of stale snapshots.
+    GITSETU_VAULT_ACTIVE_TRANSACTION=""
+
+    if ! rm -rf "$txn" 2>/dev/null || [[ -e "$txn" || -L "$txn" ]]; then
+        print_error "Could not remove private restore transaction data: $txn"
+        cleanup_failed=1
+    fi
+    if [[ "$acquired" -eq 1 ]] && ! release_lock; then
+        print_error "Could not release the state lock after committed restore."
+        cleanup_failed=1
+    fi
+    _VAULT_ROOT_KEY=""
+    _VAULT_ACTIVE_TEMP=""
+    if ! rm -rf "$temp_dir" 2>/dev/null || [[ -e "$temp_dir" || -L "$temp_dir" ]]; then
+        print_error "Could not remove private restore staging data: $temp_dir"
+        cleanup_failed=1
+    fi
+
+    if [[ "$cleanup_failed" -ne 0 ]]; then
+        print_error "Authenticated v2 vault restored successfully, but post-commit cleanup failed."
+        print_error "The committed restore state was not rolled back."
+        return 1
+    fi
+    print_success "Authenticated v2 vault restored successfully."
+    return 0
+}
+
 _vault_restore_abort_transaction() {
     local txn="${1:-}" temp_dir="${2:-}" acquired="${3:-0}"
     local rollback_ok=0
@@ -2039,7 +2084,7 @@ cmd_restore() {
     fi
     if ! _vault_validate_restore_keys "$archive_root"; then
         _vault_restore_discard_staging "$temp_dir" 0
-        print_error "Vault key destinations are unsafe, non-regular, or inconsistent."
+        print_error "Vault key destinations are unsafe, duplicate, non-regular, or inconsistent."
         return 1
     fi
 
@@ -2132,12 +2177,5 @@ cmd_restore() {
         return 1
     fi
 
-    rm -rf "$transaction_dir" 2>/dev/null || true
-    GITSETU_VAULT_ACTIVE_TRANSACTION=""
-    if [[ "$acquired" -eq 1 ]] && ! release_lock; then
-        print_warning "Restore completed, but the state lock could not be released cleanly."
-    fi
-    print_success "Authenticated v2 vault restored successfully."
-    _vault_restore_discard_staging "$temp_dir" 0
-    return 0
+    _vault_finalize_committed_restore "$transaction_dir" "$temp_dir" "$acquired"
 }
