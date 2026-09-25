@@ -13,6 +13,9 @@ const failures = [];
 const currentDocs = [
   'README.md',
   'SECURITY.md',
+  'CONTRIBUTING.md',
+  'CODE_OF_CONDUCT.md',
+  '.github/PULL_REQUEST_TEMPLATE.md',
   'packaging/README.md',
   'CHANGELOG.md',
   'docs/getting-started/installation.md',
