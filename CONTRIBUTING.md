@@ -8,10 +8,10 @@ If you are proposing codebase updates, new diagnostic scanners, or platform inte
 
 ---
 
-## 1. Absolute Zero-Dependency Tolerance
-GitSetu's core workflow must remain usable offline on supported systems. Networked operations, such as provider verification or updates, must be explicit and separately reviewed.
-- **No Interpreted Binaries:** Do not introduce integrations that require Go runtimes, Python interpreters, Node.js packages, or Rust compilers to resolve correctly.
-- **Minimal Toolchains:** Rely strictly on `bash`, `git`, `ssh-keygen`, and core standard UNIX binaries (`grep`, `sed`, `awk`).
+## 1. Zero-Dependency Core, Explicit Toolchain Boundaries
+The GitSetu shell core must remain usable offline on supported systems. Networked operations, such as provider verification or updates, must be explicit and separately reviewed.
+- **No new CLI runtime dependency:** Do not introduce a language runtime or package dependency into the Bash CLI itself. Packaging, tests, and release preparation may use pinned Node.js, PowerShell, Git for Windows, or other platform tools.
+- **Minimal shell toolchain:** The runtime relies on `bash`, `git`, `ssh-keygen`, and core standard UNIX binaries (`grep`, `sed`, `awk`).
 
 ## 2. Bash 3.2 Compatibility Constraints
 Because GitSetu must remain fully executable natively on legacy macOS endpoints, the entire codebase strictly targets **Bash 3.2**.
@@ -36,7 +36,7 @@ Do not introduce integrations, analytics tracking, environment scanners, or cras
 2. Ensure your execution branch successfully passes local diagnostic boundaries (`gitsetu doctor` and verification testing paths).
 3. **Testing Standards:** Run all automated regression tests before submitting PRs (`make test` or `bash tests/run_all.sh`). Every required suite must pass; any skipped capability must be reported explicitly and justified rather than counted as green.
 4. **Documentation Consistency:** Run `npm run docs` (or `make docs`) and update user-facing documentation whenever commands, release state, security boundaries, or supported platforms change.
-5. **Windows Testing Guidance:** Any changes affecting Windows paths, credentials, or shells should be verified directly in Git Bash and in an isolated environment using the Windows Sandbox Test Harness (`sandbox/launch_sandbox.ps1` or `sandbox/launch_sandbox.bat`). Treat a Sandbox run with no terminal status as inconclusive.
-6. **Code Style & Linting:** Run `make lint` to verify all shell scripts pass ShellCheck without warnings.
+5. **Windows Testing Guidance:** Any changes affecting Windows paths, credentials, or shells should be verified directly in Git Bash and, when the experimental harness is current for the change, in an isolated Windows Sandbox run. Treat a Sandbox run with no terminal status as inconclusive; the harness is not a release qualification gate while its legacy fixtures are being reconciled.
+6. **Code Style & Linting:** Run `make lint` for the files enumerated by the Makefile. It does not currently lint every `lib/*.sh` or Sandbox script, so run ShellCheck explicitly for any additional shell files you change.
 7. If introducing logic updates impacting standard core modules, explicitly test compilation output against cross-platform environments (e.g., native macOS Terminal vs Git Bash vs WSL).
 8. Outline your proposed updates clearly within the PR description block, specifically detailing your testing environments, test results, and confirmation of Bash 3.2 adherence.
