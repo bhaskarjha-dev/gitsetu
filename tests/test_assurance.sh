@@ -241,9 +241,25 @@ test_runner_rejects_legacy_bundle_selector() {
     assert_contains "$output" "not a supported test-runner selector" "runner explains the explicit bundle alternative"
 }
 
+test_runner_lists_suites_without_running_them() {
+    local output=""
+    local rc=0
+    if output=$(bash "$SCRIPT_DIR/run_all.sh" --list-suites 2>&1); then
+        rc=0
+    else
+        rc=$?
+    fi
+
+    assert_equals "0" "$rc" "suite listing exits successfully"
+    assert_contains "$output" "test_cli.sh" "listing includes the shell command suite"
+    assert_contains "$output" "test_windows_launcher.ps1" "listing includes the Windows launcher suite"
+    assert_not_contains "$output" "=== Running" "listing does not execute suites"
+}
+
 printf '\n%btest_assurance.sh%b\n' "$T_BOLD" "$T_RESET"
 run_test "failure latch survives subshells and pipelines" test_failure_latch_survives_shell_boundaries
 run_test "test-home stack restores real environment" test_environment_stack_restores_real_state
 run_test "explicit skip semantics" test_explicit_skip_is_not_a_pass
 run_test "legacy bundle selector is rejected" test_runner_rejects_legacy_bundle_selector
+run_test "suite listing is side-effect free" test_runner_lists_suites_without_running_them
 print_results "Test assurance tests"

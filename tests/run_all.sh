@@ -24,6 +24,7 @@ bundle_path=""
 include_powershell=0
 include_live_windows=0
 require_powershell=0
+list_suites=0
 timeout_seconds="${GITSETU_TEST_TIMEOUT:-300}"
 suite_patterns=()
 
@@ -38,6 +39,7 @@ Options:
   --include-powershell     Run the checked-in PowerShell suites when possible
   --include-live-windows  Also run the live Scoop installer suite (opt-in)
   --require-powershell    Treat unavailable PowerShell as a failure
+  --list-suites           List discovered shell and PowerShell suites without running them
   --timeout SECONDS        Per-suite timeout (default: 300)
   -h, --help               Show this help
 
@@ -82,6 +84,10 @@ while [[ $# -gt 0 ]]; do
             require_powershell=1
             shift
             ;;
+        --list-suites)
+            list_suites=1
+            shift
+            ;;
         --timeout)
             [[ $# -ge 2 ]] || fail_usage "--timeout requires seconds"
             timeout_seconds="$2"
@@ -121,6 +127,22 @@ fi
 
 if [[ ! "$timeout_seconds" =~ ^[1-9][0-9]*$ ]]; then
     fail_usage "--timeout must be a positive integer"
+fi
+
+if [[ "$list_suites" -eq 1 ]]; then
+    for suite in "$TEST_DIR"/test_*.sh; do
+        [[ -f "$suite" ]] || continue
+        [[ "$suite" == "$BUNDLE_CONTRACT" ]] && continue
+        printf '%s\n' "$suite"
+    done
+    for suite in \
+        "$TEST_DIR/test_gh_extension_e2e.ps1" \
+        "$TEST_DIR/test_powershell_installer_e2e.ps1" \
+        "$TEST_DIR/test_windows_launcher.ps1" \
+        "$TEST_DIR/test_scoop_e2e.ps1"; do
+        [[ -f "$suite" ]] && printf '%s\n' "$suite"
+    done
+    exit 0
 fi
 
 if [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]] || [[ "${OSTYPE:-}" == "win"* ]]; then
