@@ -41,6 +41,25 @@ On Windows, use Git Bash for the shell suites. A live Scoop run is opt-in:
 bash tests/run_all.sh --include-live-windows --require-powershell
 ```
 
+## Current command coverage map
+
+The central contract suite covers dispatch and arity for every current
+top-level action; the suites below add stateful behavior for each surface:
+
+| Surface | Main coverage |
+| --- | --- |
+| `setup` / `init` | `test_cli_contract.sh`, `test_auto_discovery.sh`, `test_ephemeral_runner.sh`, `test_setup_load_and_dirs.sh` |
+| `add` / `profile add/edit/remove` / `remove` | `test_cli_contract.sh`, `test_onboarding.sh`, `test_concurrency.sh`, `test_guard.sh` |
+| `status` / `prompt` / `run` | `test_status.sh`, `test_prompt.sh`, `test_integration.sh`, `test_cli_contract.sh` |
+| `verify` / `doctor` | `test_verify.sh`, `test_doctor.sh`, `test_doctor_repair.sh`, `test_cli_contract.sh` |
+| `guard` | `test_guard.sh`, `test_owned_v2.sh`, `test_cli_contract.sh` |
+| `backup` / `restore` | `test_backup.sh`, `test_vault_adversarial.sh`, `test_vault_cross_home.sh`, `test_bundle_path.sh` |
+| `teardown` | `test_teardown.sh`, `test_crlf.sh`, `test_cli_contract.sh` |
+| `update` | `test_update.sh`, `test_crlf.sh` |
+| `credential` | `test_credential.sh`, `test_credential_path_contract.sh`, `test_native_keychain_adapters.sh` |
+| aliases / distribution | `test_gh_extension.sh`, `test_npm_wrapper.sh`, `test_windows_launcher.ps1`, `test_windows_cli_dispatch.ps1`, `test_bundle_path.sh` |
+
+
 ## What remains environment-dependent
 
 Real macOS Keychain, Linux Secret Service, Windows GCM/DPAPI, FIDO2 hardware,
