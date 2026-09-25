@@ -24,8 +24,9 @@ for file in \
     printf 'fixture:%s\n' "$file" > "$ASSETS/$file"
 done
 
-SOURCE_COMMIT="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-TAG_COMMIT="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+REAL_HEAD_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
+SOURCE_COMMIT="$REAL_HEAD_COMMIT"
+TAG_COMMIT="$REAL_HEAD_COMMIT"
 MANIFEST="$TMP_ROOT/release-manifest.json"
 node "$NODE_ROOT/packaging/release-manifest.js" create \
     --directory "$ASSETS" \
@@ -33,26 +34,22 @@ node "$NODE_ROOT/packaging/release-manifest.js" create \
     --tag v1.1.0 \
     --source-commit "$SOURCE_COMMIT" \
     --tag-commit "$TAG_COMMIT" \
-    --created-at 2026-09-25T00:00:00Z \
-    --skip-git true >/dev/null
+    --created-at 2026-09-25T00:00:00Z >/dev/null
 node "$NODE_ROOT/packaging/release-manifest.js" verify \
     --manifest "$MANIFEST" \
     --directory "$ASSETS" \
     --tag v1.1.0 \
     --source-commit "$SOURCE_COMMIT" \
-    --tag-commit "$TAG_COMMIT" \
-    --skip-git true >/dev/null
+    --tag-commit "$TAG_COMMIT" >/dev/null
 
 RELATIONSHIP_MANIFEST="$TMP_ROOT/relationship-release-manifest.json"
 if REAL_SOURCE_COMMIT="$(git -C "$ROOT" rev-parse HEAD^ 2>/dev/null)"; then
-    REAL_TAG_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
-    RELATIONSHIP_ARGS=(--skip-git false)
+    REAL_TAG_COMMIT="$REAL_HEAD_COMMIT"
 else
     # Shallow CI checkouts have no parent object; retain a same-commit fixture
     # there while full clones exercise the distinct source/tag relationship.
-    REAL_SOURCE_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
-    REAL_TAG_COMMIT="$REAL_SOURCE_COMMIT"
-    RELATIONSHIP_ARGS=(--skip-git true)
+    REAL_SOURCE_COMMIT="$REAL_HEAD_COMMIT"
+    REAL_TAG_COMMIT="$REAL_HEAD_COMMIT"
 fi
 node "$NODE_ROOT/packaging/release-manifest.js" create \
     --directory "$ASSETS" \
@@ -61,13 +58,11 @@ node "$NODE_ROOT/packaging/release-manifest.js" create \
     --source-commit "$REAL_SOURCE_COMMIT" \
     --tag-commit "$REAL_TAG_COMMIT" \
     --phase core \
-    --created-at 2026-09-25T00:00:00Z \
-    "${RELATIONSHIP_ARGS[@]}" >/dev/null
+    --created-at 2026-09-25T00:00:00Z >/dev/null
 node "$NODE_ROOT/packaging/release-manifest.js" verify \
     --manifest "$RELATIONSHIP_MANIFEST" \
     --directory "$ASSETS" \
-    --phase core \
-    "${RELATIONSHIP_ARGS[@]}" >/dev/null
+    --phase core >/dev/null
 
 CORE_MANIFEST="$TMP_ROOT/core-release-manifest.json"
 node "$NODE_ROOT/packaging/release-manifest.js" create \
@@ -77,19 +72,16 @@ node "$NODE_ROOT/packaging/release-manifest.js" create \
     --source-commit "$SOURCE_COMMIT" \
     --tag-commit "$TAG_COMMIT" \
     --phase core \
-    --created-at 2026-09-25T00:00:00Z \
-    --skip-git true >/dev/null
+    --created-at 2026-09-25T00:00:00Z >/dev/null
 node "$NODE_ROOT/packaging/release-manifest.js" verify \
     --manifest "$CORE_MANIFEST" \
     --directory "$ASSETS" \
     --phase core \
-    --tag v1.1.0 \
-    --skip-git true >/dev/null
+    --tag v1.1.0 >/dev/null
 if node "$NODE_ROOT/packaging/release-manifest.js" verify \
     --manifest "$CORE_MANIFEST" \
     --directory "$ASSETS" \
-    --phase all \
-    --skip-git true >/dev/null 2>&1; then
+    --phase all >/dev/null 2>&1; then
     printf 'core manifest was accepted as a complete manifest\n' >&2
     exit 1
 fi
@@ -97,8 +89,7 @@ fi
 printf 'tamper' >> "$ASSETS/gitsetu-standalone"
 if node "$NODE_ROOT/packaging/release-manifest.js" verify \
     --manifest "$MANIFEST" \
-    --directory "$ASSETS" \
-    --skip-git true >/dev/null 2>&1; then
+    --directory "$ASSETS" >/dev/null 2>&1; then
     printf 'manifest verification accepted tampered bytes\n' >&2
     exit 1
 fi

@@ -119,11 +119,10 @@ function sourceVersion() {
   return JSON.parse(fs.readFileSync(path.join(ROOT, 'packaging', 'release.json'), 'utf8')).version;
 }
 
-function validateCommitRelationship(sourceCommit, tagCommit, skipGit) {
+function validateCommitRelationship(sourceCommit, tagCommit) {
   requireSha(sourceCommit, 'source commit');
   requireSha(tagCommit, 'tag commit');
   if (sourceCommit === tagCommit) return;
-  if (skipGit) return;
   try {
     git(['merge-base', '--is-ancestor', sourceCommit, tagCommit]);
   } catch {
@@ -160,9 +159,8 @@ function create(options) {
   const phase = options.phase || 'all';
   const names = selectedArtifactNames(phase);
   const sourceCommit = requireSha(requiredOption(options, 'source-commit'), 'source commit');
-  const skipGit = options['skip-git'] === 'true';
-  const tagCommit = requireSha(options['tag-commit'] || (skipGit ? sourceCommit : resolveTag(tag)), 'tag commit');
-  validateCommitRelationship(sourceCommit, tagCommit, skipGit);
+  const tagCommit = requireSha(options['tag-commit'] || resolveTag(tag), 'tag commit');
+  validateCommitRelationship(sourceCommit, tagCommit);
   const createdAt = requireIso(options['created-at'] || new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'), 'created-at');
   const manifest = {
     schemaVersion: 1,
@@ -202,7 +200,7 @@ function verify(options) {
   requireIso(manifest.createdAt, 'manifest created-at');
   if (manifest.workflowRun !== null && (typeof manifest.workflowRun !== 'string' || manifest.workflowRun.length === 0)) fail('invalid workflow run');
   if (manifest.certificateIdentity !== null && (typeof manifest.certificateIdentity !== 'string' || manifest.certificateIdentity.length === 0)) fail('invalid certificate identity');
-  validateCommitRelationship(manifest.sourceCommit, manifest.tagCommit, options['skip-git'] === 'true');
+  validateCommitRelationship(manifest.sourceCommit, manifest.tagCommit);
   if (!manifest.artifacts || typeof manifest.artifacts !== 'object' || Array.isArray(manifest.artifacts)) fail('manifest artifacts are missing');
   const manifestNames = Object.keys(manifest.artifacts);
   for (const unknown of manifestNames) if (!ARTIFACT_NAMES.includes(unknown)) fail(`manifest contains unknown artifact: ${unknown}`);
