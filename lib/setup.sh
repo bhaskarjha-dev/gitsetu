@@ -1332,6 +1332,11 @@ execute_blueprint() {
         for (( i=0; i<PROFILE_COUNT; i++ )); do
             if [[ -n "${PROFILE_PATS[$i]:-}" ]] && [[ -n "${PROFILE_USERS[$i]:-}" ]]; then
                 local provider="${PROFILE_PROVIDERS[$i]:-github.com}"
+                if [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
+                    print_info "[DRY RUN] Would store PAT for ${PROFILE_USERS[i]}@${provider}"
+                    PROFILE_PATS[i]=""
+                    continue
+                fi
                 if ! keychain_store "${PROFILE_LABELS[i]}" "$provider" "${PROFILE_USERS[i]}" "${PROFILE_PATS[i]}"; then
                     PROFILE_PATS[i]=""
                     _setup_blueprint_abort "Failed to store PAT for ${PROFILE_USERS[i]}@${provider}."

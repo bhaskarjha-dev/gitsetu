@@ -427,25 +427,22 @@ test_try_gh_dry_run_skips_upload() {
     echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... work@corp.com" > "$dummy_pub"
 
     local output rc=0
+    local gh_called="$TEST_HOME/gh-called"
+    : > "$gh_called"
     output=$(
         gh() {
-            if [[ "$*" == *"api user"* ]]; then
-                echo "octocat"
-                return 0
-            fi
-            if [[ "$*" == *"ssh-key add"* ]]; then
-                echo "ERROR: gh ssh-key add should not be called in dry run"
-                return 1
-            fi
-            return 0
+            printf 'called:%s\n' "$*" >> "$gh_called"
+            echo "ERROR: gh should not be called in dry run"
+            return 1
         }
         GITSETU_TEST_GH_MOCK=1 try_gh_key_upload "work" "$dummy_pub" 2>&1
     ) || rc=$?
     unset GITSETU_DRY_RUN
 
     assert_equals "0" "$rc" "dry run returns 0" || return 1
-    assert_contains "$output" "[DRY RUN] Would upload 'work' key to GitHub (@octocat)" "emits dry run action" || return 1
-    assert_not_contains "$output" "ERROR: gh ssh-key add should not be called" "does not invoke gh ssh-key add" || return 1
+    assert_contains "$output" "[DRY RUN] Would upload 'work' key to GitHub (account lookup and upload skipped)" "emits dry run action" || return 1
+    assert_not_contains "$output" "ERROR: gh should not be called in dry run" "does not invoke gh" || return 1
+    assert_not_contains "$(cat "$gh_called")" "called:" "does not query GitHub during dry run" || return 1
 }
 
 # ------------------------------------------------------------------------------

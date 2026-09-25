@@ -746,7 +746,13 @@ try_gh_key_upload() {
         return 1
     fi
 
-    # b) Get login username
+    # b) Dry-run boundary: do not contact GitHub or disclose an account login.
+    if [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
+        print_info "[DRY RUN] Would upload '$label' key to GitHub (account lookup and upload skipped)"
+        return 0
+    fi
+
+    # c) Get login username
     local login
     login=$(gh api user -q .login 2>/dev/null || true)
     login="${login%$'\r'}"
@@ -754,13 +760,7 @@ try_gh_key_upload() {
         return 1
     fi
 
-    # Dry run check: suppress mutation
-    if [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
-        print_info "[DRY RUN] Would upload '$label' key to GitHub (@$login)"
-        return 0
-    fi
-
-    # c) If non-TTY or GITSETU_TEST is set, do NOT prompt interactively — skip or return 1 (unless mock is testing it)
+    # d) If non-TTY or GITSETU_TEST is set, do NOT prompt interactively — skip or return 1 (unless mock is testing it)
     if [[ -n "${GITSETU_TEST:-}" ]]; then
         local is_mock=0
         if [[ -n "${GITSETU_TEST_GH:-}" || -n "${GITSETU_TEST_GH_MOCK:-}" ]]; then
@@ -777,10 +777,10 @@ try_gh_key_upload() {
         return 1
     fi
 
-    # d) Display: GitHub CLI: logged in as @$login
+    # e) Display: GitHub CLI: logged in as @$login
     printf >&2 '  GitHub CLI: logged in as @%s\n' "$login"
 
-    # e) Confirm: confirm "Upload '$label' key to GitHub (@$login)?" "y"
+    # f) Confirm: confirm "Upload '$label' key to GitHub (@$login)?" "y"
     # If user declines, return 1
     if [[ -n "${GITSETU_TEST:-}" ]]; then
         if [[ "${GITSETU_TEST_DECLINE:-0}" -eq 1 ]]; then
@@ -792,7 +792,7 @@ try_gh_key_upload() {
         fi
     fi
 
-    # f) Run upload
+    # g) Run upload
     local hostname_str
     hostname_str=$(hostname 2>/dev/null || echo "workstation")
     hostname_str="${hostname_str%$'\r'}"
@@ -800,13 +800,13 @@ try_gh_key_upload() {
     local exit_code=0
     upload_out=$(gh ssh-key add "$pubkey_path" --title "GitSetu ($label - $hostname_str)" 2>&1) || exit_code=$?
 
-    # g) If exit_code == 0:
+    # h) If exit_code == 0:
     if [[ "$exit_code" -eq 0 ]]; then
         print_success "Key successfully added to GitHub!"
         return 0
     fi
 
-    # h) If output matches "already in use" or "key is already in use":
+    # i) If output matches "already in use" or "key is already in use":
     local lower_out
     lower_out=$(printf '%s' "$upload_out" | tr '[:upper:]' '[:lower:]')
     if [[ "$lower_out" == *"already in use"* ]]; then
@@ -814,7 +814,7 @@ try_gh_key_upload() {
         return 0
     fi
 
-    # i) Any other error:
+    # j) Any other error:
     print_warning "Failed to upload key via GitHub CLI: $upload_out"
     return 1
 }
