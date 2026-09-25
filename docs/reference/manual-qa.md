@@ -40,8 +40,9 @@ bash install.sh
 - [ ] Installer completes without errors
 - [ ] `~/.local/share/gitsetu/` directory exists
 - [ ] `gitsetu` command is available: `gitsetu --help`
-- [ ] The hyphenated executable alias works: `git-setu --help` (it is an
-      executable name, not a Git subcommand)
+- [ ] The hyphenated executable works: `git-setu --help`; a Git installation
+      may also resolve it through Git's external-command lookup as
+      `git setu --help`
 
 ### Windows (PowerShell)
 From a reviewed checkout or verified release artifact:
