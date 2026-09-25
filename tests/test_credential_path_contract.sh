@@ -2,9 +2,9 @@
 # tests/test_credential_path_contract.sh — Hermetic Git credential protocol and
 # exact v2 credential-record contracts.
 #
-# The normal CLI intentionally ignores Git's path= attribute at present.  The
-# tests below make that behavior explicit while also checking the lower-level
-# exact tuple contract and fail-closed record parsing.  All persistence is in a
+# The normal CLI uses Git's path= attribute as an exact credential-tuple
+# component, with an explicit environment override for controlled wrappers.
+# The tests also check fail-closed record parsing. All persistence is in a
 # disposable HOME; no native store or network is used.
 
 set -euo pipefail
@@ -231,44 +231,38 @@ _get_silently() {
     keychain_get "$@" 2>/dev/null
 }
 
-# The current CLI is documented to ignore path= and to use the empty path
-# unless GITSETU_CREDENTIAL_PATH is explicitly supplied.  Exercise all three
-# commonly confused values: empty, repository root, and a repository path.
-# This is an intentional compatibility behavior of the current CLI, not a
-# claim that Git's repository path is parsed into the key tuple.
-# Each CLI subprocess gets a single matching record so this case isolates the
-# parser's path policy from the separate multi-record errexit regression below.
-test_cli_path_is_ignored_but_env_path_is_exact() {
+# The CLI uses Git's path= attribute as the exact path component. Exercise
+# empty, repository-root, and repository-specific values, then verify that an
+# explicit environment override remains available for wrappers and tests.
+test_cli_path_is_exact_but_env_path_can_override() {
     _setup_contract_home || return 1
     _seed_cli_profile || return 1
 
     local output status
     _store_silently "work" "github.com" "empty-user" "empty-pass" "" || return 1
-    local input=$'protocol=https\nhost=github.com\npath=\n\n'
-    _run_cli "$input" __default__ credential get
-    _assert_cli_status 0 "path= is a safe ignored CLI attribute" || return 1
+    _store_silently "work" "github.com" "root-user" "root-pass" "/" || return 1
+    _store_silently "work" "github.com" "repo-user" "repo-pass" "/org/repo" || return 1
+
+    _run_cli $'protocol=https\nhost=github.com\npath=\n\n' __default__ credential get
+    _assert_cli_status 0 "empty path is accepted" || return 1
     _assert_cli_stdout $'username=empty-user\npassword=empty-pass' \
-        "path= resolves the documented empty-path tuple" || return 1
+        "empty path selects the empty-path tuple" || return 1
 
     _run_cli $'protocol=https\nhost=github.com\npath=/\n\n' __default__ credential get
-    _assert_cli_status 0 "root path input is accepted as an ignored attribute" || return 1
-    _assert_cli_stdout $'username=empty-user\npassword=empty-pass' \
-        "path=/ does not accidentally select the root tuple" || return 1
+    _assert_cli_status 0 "root path is accepted" || return 1
+    _assert_cli_stdout $'username=root-user\npassword=root-pass' \
+        "root path selects the root tuple" || return 1
 
     _run_cli $'protocol=https\nhost=github.com\npath=/org/repo\n\n' __default__ credential get
-    _assert_cli_status 0 "repository path input is accepted as an ignored attribute" || return 1
-    _assert_cli_stdout $'username=empty-user\npassword=empty-pass' \
-        "path=/org/repo does not select a repository tuple" || return 1
+    _assert_cli_status 0 "repository path is accepted" || return 1
+    _assert_cli_stdout $'username=repo-user\npassword=repo-pass' \
+        "repository path selects the repository tuple" || return 1
 
-    rm -f "$GITSETU_CONFIG_DIR/.tokens"
-    _store_silently "work" "github.com" "root-user" "root-pass" "/" || return 1
     _run_cli $'protocol=https\nhost=github.com\npath=/org/repo\n\n' "/" credential get
     _assert_cli_status 0 "explicit environment root path is usable" || return 1
     _assert_cli_stdout $'username=root-user\npassword=root-pass' \
-        "environment path wins over the ignored path= attribute" || return 1
+        "environment path overrides the protocol path when explicitly set" || return 1
 
-    rm -f "$GITSETU_CONFIG_DIR/.tokens"
-    _store_silently "work" "github.com" "repo-user" "repo-pass" "/org/repo" || return 1
     _run_cli $'protocol=https\nhost=github.com\npath=/\n\n' "/org/repo" credential get
     _assert_cli_status 0 "explicit environment repository path is usable" || return 1
     _assert_cli_stdout $'username=repo-user\npassword=repo-pass' \
@@ -539,7 +533,7 @@ EOF
 }
 
 printf '\n%btest_credential_path_contract.sh%b\n' "$T_BOLD" "$T_RESET"
-run_test "CLI path= behavior and exact environment path" test_cli_path_is_ignored_but_env_path_is_exact
+run_test "CLI path= exactness and environment override" test_cli_path_is_exact_but_env_path_can_override
 run_test "CLI tolerates nonmatching records before exact match" test_cli_multiple_records_do_not_abort_on_nonmatch
 run_test "CLI duplicate credential fields fail closed" test_cli_duplicate_fields_fail_closed
 run_test "CLI unsupported and malformed input" test_cli_unsupported_and_malformed_input

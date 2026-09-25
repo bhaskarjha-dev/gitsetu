@@ -49,11 +49,10 @@ force flag.
 ### `gitsetu credential <get|store|erase>`
 
 Implements the Git credential-helper protocol. It handles HTTPS requests and
-resolves the active profile from the current directory. The lower-level
-keychain API keys records by profile, host, and optional path, but the normal
-CLI currently parses `protocol`, `host`, `username`, and `password` and does
-not parse Git's `path=` field; its path is empty unless
-`GITSETU_CREDENTIAL_PATH` is supplied. Requests outside a mapped profile, or
+resolves the active profile from the current directory. The broker keys records
+by the exact `(profile, host, path)` tuple, including Git's `path=` attribute
+when present. `GITSETU_CREDENTIAL_PATH` can explicitly override the protocol
+path for wrappers and controlled tests. Requests outside a mapped profile, or
 for another protocol, produce no credential.
 
 The default backend is native-only: macOS Keychain, Linux Secret Service, or

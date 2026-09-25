@@ -45,7 +45,7 @@ If you rely on Personal Access Tokens (PATs) instead of SSH keys, you must secur
    ```bash
    printf "protocol=https\nhost=github.com\nusername=YOUR_USERNAME\npassword=YOUR_PAT\n" | gitsetu credential store
    ```
-   The normal broker resolves the active profile and host from the current directory; Git's `path=` field is not currently parsed by the CLI. Use the lower-level API or an explicit `GITSETU_CREDENTIAL_PATH` when path-level separation is required.
+   The normal broker resolves the active profile, host, and Git `path=` value from the current directory. Use an explicit `GITSETU_CREDENTIAL_PATH` only when a wrapper or controlled test must override the protocol path.
 2. On Windows, GitSetu's broker can use GCM with a namespaced synthetic target; it does not automatically replace an existing `credential.helper` policy. On macOS and Linux, native keychains are preferred; a user may explicitly select the zero-dependency file backend, which stores a warned-about plaintext `~/.config/gitsetu/.tokens` file with `chmod 600` and does not provide encryption.
 
 ---

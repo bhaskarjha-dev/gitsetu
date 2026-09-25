@@ -231,9 +231,10 @@ printf 'protocol=https\nhost=github.com\n\n' | gitsetu credential get
 - [ ] With no explicit backend, the native store is used: macOS Keychain,
       Linux Secret Service, or Windows Git Credential Manager
 - [ ] The native store is not silently replaced by a plaintext file
-- [ ] The normal CLI does not parse Git's `path=` field; verify that the
-      active profile/host lookup uses the empty path unless
-      `GITSETU_CREDENTIAL_PATH` is explicitly supplied
+- [ ] Git's `path=` field is part of the exact credential tuple; verify empty,
+      `/`, and a repository path do not cross-match
+- [ ] `GITSETU_CREDENTIAL_PATH` explicitly overrides the protocol path for a
+      wrapper or controlled test
 
 To test the deliberately selected zero-dependency backend, opt in on the
 GitSetu command (the environment assignment must be on the right side of the

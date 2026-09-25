@@ -18,6 +18,7 @@ The v1.1.0 line is a verified, security-hardened, publication-ready release cand
 - Hardened installer/updater provenance, package metadata, Windows argv/path handling, CI credential isolation, and generated-bundle checks.
 - Separated generated release provenance from tagged source metadata; the release workflow is now preparation-only until a separately reviewed publish-only gate exists.
 - Made setup dry-run avoid GitHub account lookups and PAT storage, with regression coverage for the offline boundary.
+- Made the HTTPS credential broker honor Git's exact `path=` tuple component, with strict protocol parsing and an explicit environment override for controlled wrappers.
 - Added a fail-latching regression harness, isolated test environments, adversarial tamper/concurrency tests, and supported-platform matrix coverage.
 
 ### Security policy notes
