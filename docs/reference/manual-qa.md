@@ -8,7 +8,11 @@ A step-by-step integration test checklist for verifying that every GitSetu featu
 > release manifest, signed artifacts, provenance, and a separately reviewed
 > publish-only workflow as described in `packaging/README.md`.
 
-> **Prerequisites:** A machine with `bash`, `git`, and `ssh-keygen`. Two GitHub/GitLab accounts are ideal but not required — you can verify most features with one account.
+> **Prerequisites:** A machine with `bash`, `git`, and `ssh-keygen`. On
+> Windows, install Git for Windows so the native PowerShell installer and the
+> `gitsetu`/`git-setu` shims can find trusted `git.exe` and `bash.exe`. Two
+> GitHub/GitLab accounts are ideal but not required — you can verify most
+> features with one account.
 
 ---
 
@@ -36,7 +40,8 @@ bash install.sh
 - [ ] Installer completes without errors
 - [ ] `~/.local/share/gitsetu/` directory exists
 - [ ] `gitsetu` command is available: `gitsetu --help`
-- [ ] `git setu` alias works: `git setu --help`
+- [ ] The hyphenated executable alias works: `git-setu --help` (it is an
+      executable name, not a Git subcommand)
 
 ### Windows (PowerShell)
 From a reviewed checkout or verified release artifact:
@@ -45,10 +50,30 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
 - [ ] Installer completes without errors
-- [ ] `%LOCALAPPDATA%\gitsetu\share` directory exists
-- [ ] `gitsetu.cmd` and `gitsetu.ps1` exist in `%LOCALAPPDATA%\gitsetu\bin`
-- [ ] `gitsetu --version` reports the reviewed development/release channel in PowerShell, CMD, and Windows Terminal
-- [ ] `git setu --version` alias works identically
+- [ ] `%LOCALAPPDATA%\gitsetu\` is the installation root, with `bin\` and
+      `releases\`
+- [ ] `%LOCALAPPDATA%\gitsetu\bin\gitsetu.cmd` and `gitsetu.ps1` exist
+- [ ] `%LOCALAPPDATA%\gitsetu\bin\git-setu.cmd` and `git-setu.ps1` exist
+- [ ] `%LOCALAPPDATA%\gitsetu\current.txt` points to the current versioned
+      release directory
+- [ ] `gitsetu --version` prints exactly `gitsetu v1.1.0` (it does not print
+      a release channel)
+- [ ] `git-setu --version` prints the same line in PowerShell, CMD, and
+      Windows Terminal
+
+> **Windows layout:** `%LOCALAPPDATA%\gitsetu` contains the installed
+> executables and versioned releases; it is not GitSetu's managed state
+> directory. The native launcher invokes Git for Windows and, by default,
+> managed state is under `%USERPROFILE%\.config\gitsetu` (or an explicit
+> `XDG_CONFIG_HOME`). For QA, keep these locations distinct:
+>
+> ```powershell
+> $GitSetuInstall = Join-Path $env:LOCALAPPDATA 'gitsetu'
+> $GitSetuState   = Join-Path $env:USERPROFILE '.config\gitsetu'
+> ```
+>
+> Use Git Bash for the Bash examples below; do not interpret PowerShell `~`
+> paths as the native installation layout.
 
 ---
 
@@ -96,12 +121,16 @@ gitsetu add freelance "Your Name" freelance@example.com ~/freelance
 
 ```bash
 cd ~/work && mkdir -p test-repo && cd test-repo && git init
-gitsetu status
+gitsetu status >status.stdout 2>status.stderr
 ```
 
-- [ ] All profiles listed with label, email, directory
-- [ ] Active profile shows ✓ checkmark
-- [ ] Correct profile is active for current directory
+- [ ] The report is written to stderr; `status.stdout` is empty
+- [ ] Current directory, Git name/email, guard policy, and hook-path state
+      are shown
+- [ ] Configured profiles show label, email, provider, and path
+- [ ] The active profile shows a checkmark when the current canonical
+      directory matches; unmanaged repositories are explicitly fail-open
+- [ ] No SSH alias inventory is claimed by `status`
 
 ---
 
@@ -165,9 +194,9 @@ git commit -m "test"
 > Verifies: `gitsetu prompt` output and speed
 
 ```bash
-cd ~/work && gitsetu prompt    # Should output "[work]" or similar
-cd ~/personal && gitsetu prompt # Should output "[personal]"
-cd /tmp && gitsetu prompt       # Should output nothing (no profile)
+cd ~/work && gitsetu prompt    # Should output: work
+cd ~/personal && gitsetu prompt # Should output: personal
+cd /tmp && gitsetu prompt       # Should output nothing (no mapped profile)
 ```
 
 - [ ] Output matches active profile for current directory
@@ -188,26 +217,54 @@ time (for i in $(seq 100); do gitsetu prompt > /dev/null; done)
 > Verifies: `gitsetu credential` store/get/erase cycle
 
 ```bash
-# During setup, provide a GitHub username and PAT when prompted
-# Or manually test with dummy credentials:
+# During setup, provide a GitHub username and PAT when prompted.
+# Or test the native backend with a disposable value:
 
 printf 'protocol=https\nhost=github.com\nusername=testuser\npassword=dummy-token-not-a-secret\n\n' | gitsetu credential store
-
 printf 'protocol=https\nhost=github.com\n\n' | gitsetu credential get
 ```
 
 - [ ] `credential store` exits cleanly (no hang, no error)
-- [ ] `credential get` returns `username=testuser` and `password=dummy-token-not-a-secret`
-- [ ] Credentials stored in OS keychain (macOS: check Keychain Access; Linux: `secret-tool search service gitsetu`)
-  - OR in file fallback: `cat ~/.config/gitsetu/.tokens`
+- [ ] `credential get` returns `username=testuser` and
+      `password=dummy-token-not-a-secret`
+- [ ] With no explicit backend, the native store is used: macOS Keychain,
+      Linux Secret Service, or Windows Git Credential Manager
+- [ ] The native store is not silently replaced by a plaintext file
+- [ ] The normal CLI does not parse Git's `path=` field; verify that the
+      active profile/host lookup uses the empty path unless
+      `GITSETU_CREDENTIAL_PATH` is explicitly supplied
+
+To test the deliberately selected zero-dependency backend, opt in on the
+GitSetu command (the environment assignment must be on the right side of the
+pipe):
 
 ```bash
-printf 'protocol=https\nhost=github.com\nusername=testuser\npassword=dummy-token-not-a-secret\n\n' | gitsetu credential erase
-printf 'protocol=https\nhost=github.com\n\n' | gitsetu credential get
+printf 'protocol=https\nhost=github.com\nusername=testuser\npassword=dummy-token-not-a-secret\n\n' \
+  | GITSETU_CREDENTIAL_BACKEND=file gitsetu credential store
+cat "${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu/.tokens"
 ```
 
-- [ ] `credential erase` exits cleanly
-- [ ] `credential get` returns empty (credentials removed)
+- [ ] The file backend warns that the store is plaintext
+- [ ] Its directory is `0700`, its file is `0600`, and it is not described as
+      encrypted or OS-keychain storage
+
+After the file-backend check, clean up both the native test record and the
+matching file-backend record:
+
+```bash
+printf 'protocol=https\nhost=github.com\nusername=testuser\npassword=dummy-token-not-a-secret\n\n' \
+  | gitsetu credential erase
+```
+
+```bash
+printf 'protocol=https\nhost=github.com\nusername=testuser\npassword=dummy-token-not-a-secret\n\n' \
+  | GITSETU_CREDENTIAL_BACKEND=file gitsetu credential erase
+printf 'protocol=https\nhost=github.com\n\n' \
+  | GITSETU_CREDENTIAL_BACKEND=file gitsetu credential get
+```
+
+- [ ] `credential erase` exits cleanly for the selected backend
+- [ ] `credential get` returns empty after the matching erase
 
 ---
 
@@ -231,27 +288,47 @@ gitsetu <TAB><TAB>
 > Verifies: `gitsetu backup` / `gitsetu restore` lifecycle
 
 ```bash
-gitsetu backup ~/test-vault.enc
-# Enter encryption password when prompted
+gitsetu backup
+# With no output argument, the v2 vault is created in the current directory:
+# gitsetu_vault_YYYYMMDD_HHMMSS.gitsetu-v2.vault
+# Enter a password of at least 12 characters when prompted.
 ```
 
-- [ ] Vault file created: `ls -la ~/test-vault.enc`
-- [ ] File is encrypted (not readable): `file ~/test-vault.enc`
+- [ ] Exactly one new `gitsetu_vault_*.gitsetu-v2.vault` file is created in
+      the current directory, and an existing path is not overwritten
+- [ ] The file is an authenticated v2 vault, not the old CBC format
+- [ ] The vault contains the v2 registry, profile configs, managed SSH state,
+      registered key pairs, and any present hook/file-backend token state
 
-```bash
-# Simulate restore on "new machine" by wiping config
-mv ~/.config/gitsetu ~/.config/gitsetu-bak
-gitsetu restore ~/test-vault.enc
-# Enter same password
+To exercise the same lifecycle in Windows PowerShell, keep the installation
+and state roots separate:
+
+```powershell
+$vault = Get-ChildItem -File -Filter 'gitsetu_vault_*.gitsetu-v2.vault' |
+    Select-Object -First 1
+$vault.FullName
+$GitSetuState = Join-Path $env:USERPROFILE '.config\gitsetu'
 ```
 
-- [ ] Restore completes without errors
-- [ ] Profiles restored: `gitsetu status`
-- [ ] Registry matches original: `diff ~/.config/gitsetu/profiles.conf ~/.config/gitsetu-bak/profiles.conf`
+```bash
+# Git Bash restore simulation
+mv "$HOME/.config/gitsetu" "$HOME/.config/gitsetu-bak"
+gitsetu restore "$HOME"/gitsetu_vault_*.gitsetu-v2.vault
+# Enter the same password
+```
+
+- [ ] Restore completes without errors and validates before replacing live
+      state
+- [ ] Profiles are restored: `gitsetu status`
+- [ ] The registry matches the saved v2 registry (use `diff` in Bash or
+      `Compare-Object` in PowerShell)
+- [ ] A failed transaction is rolled back; if rollback is incomplete, only a
+      private `.gitsetu-restore.*` directory with `RECOVERY_REQUIRED` remains
+- [ ] No `gitsetu_vault_pre_restore_*.enc` or `.password` sidecar is created
 
 ```bash
-# Cleanup
-rm -rf ~/.config/gitsetu-bak ~/test-vault.enc
+# Cleanup after the test
+rm -rf "$HOME/.config/gitsetu-bak" "$HOME"/gitsetu_vault_*.gitsetu-v2.vault
 ```
 
 ---
@@ -292,11 +369,17 @@ gitsetu setup
 > Verifies: `gitsetu doctor` diagnostic tool
 
 ```bash
-gitsetu doctor
+gitsetu doctor >doctor.stdout 2>doctor.stderr
 ```
 
-- [ ] All checks pass on a healthy setup
-- [ ] Output goes to stderr (not stdout): `gitsetu doctor > /dev/null` (should still see output)
+- [ ] All required offline checks pass on a healthy setup and the exit status
+      is 0
+- [ ] Output goes to stderr; stdout is empty
+- [ ] A missing/invalid v2 registry, managed marker, SSH include/config, key,
+      or effective identity produces a nonzero status
+- [ ] The SSH-agent section is informational and no network request occurs
+- [ ] `gitsetu doctor --repair --dry-run` previews repairs without taking the
+      mutation lock or changing files
 
 ---
 
@@ -305,12 +388,17 @@ gitsetu doctor
 > Verifies: `gitsetu verify` infrastructure check
 
 ```bash
-gitsetu verify
+gitsetu verify >verify.stdout 2>verify.stderr
 ```
 
-- [ ] SSH key existence and permissions verified
-- [ ] Git config verified
-- [ ] All checks report OK
+- [ ] stdout is empty and the report is on stderr
+- [ ] Strict v2 registry, global/profile config, expected email, and effective
+      author/committer identities are checked
+- [ ] Private/public SSH key existence, ownership, permissions, and fingerprint
+      correspondence are checked
+- [ ] No hook-installation, SSH-agent, or network check is implied by default
+- [ ] Required failures return nonzero; network verification is only run when
+      explicitly requested with `GITSETU_VERIFY_NETWORK=1`
 
 ---
 
@@ -339,7 +427,22 @@ bash uninstall.sh
 
 - [ ] `~/.local/share/gitsetu/` removed
 - [ ] `gitsetu` symlink removed
-- [ ] `git setu` no longer works
+- [ ] `git-setu` no longer works
+
+On Windows, uninstall the native installation separately and keep its layout
+in mind:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
+$GitSetuInstall = Join-Path $env:LOCALAPPDATA 'gitsetu'
+Test-Path $GitSetuInstall
+```
+
+- [ ] The versioned Windows installation and both `gitsetu`/`git-setu` shims
+      are removed or reported as retained according to the uninstaller prompt
+- [ ] Managed state under `%USERPROFILE%\.config\gitsetu` is not confused with
+      the `%LOCALAPPDATA%` installation directory; run `gitsetu teardown` first
+      when intentionally removing managed configuration
 
 ---
 
@@ -354,13 +457,19 @@ bash uninstall.sh
 
 ### Linux
 - [ ] `detect_os` returns `linux`
-- [ ] Credential broker uses `secret-tool` or file fallback
+- [ ] Credential broker uses Secret Service by default; the plaintext file
+      backend is used only when explicitly selected
 - [ ] SSH key generation works
 
 ### Windows (Git Bash)
 - [ ] `detect_os` returns `gitbash`
 - [ ] CRLF self-healing activates (check for `\r` in config files)
 - [ ] `safe.directory` rules injected for shared mounts
+- [ ] The installation root is `%LOCALAPPDATA%\gitsetu` while managed state
+      defaults to `%USERPROFILE%\.config\gitsetu` (or explicit
+      `XDG_CONFIG_HOME`)
+- [ ] PowerShell shims and Git Bash invocation both use the same versioned
+      `gitsetu.exe`; `gitsetu` and `git-setu` are separate executable names
 
 ### WSL
 - [ ] `detect_os` returns `wsl`
@@ -375,7 +484,10 @@ bash uninstall.sh
 After all manual tests pass:
 
 - [ ] `bash tests/run_all.sh` (or `make test` where `make` is available) — every required suite passes; explicit skips are documented
-- [ ] Windows Sandbox verification — when available, record `COMPLETED_SUCCESS`, `COMPLETED_ENVIRONMENT_BLOCK`, or `COMPLETED_FAILURE`; no terminal status is inconclusive
+- [ ] Experimental Windows Sandbox verification — when available, record
+      `COMPLETED_SUCCESS`, `COMPLETED_ENVIRONMENT_BLOCK`, or
+      `COMPLETED_FAILURE`; it is supplemental while its legacy fixtures are
+      being reconciled, and no terminal status is inconclusive
 - [ ] `bash -n`/ShellCheck or the repository lint target passes
 - [ ] `CHANGELOG.md`, README, installation, security, and packaging documents describe the same candidate state
 - [ ] Website documentation is synchronized only from an immutable source commit
