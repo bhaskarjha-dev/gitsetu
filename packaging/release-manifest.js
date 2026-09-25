@@ -198,8 +198,11 @@ function verify(options) {
   requireSha(manifest.sourceCommit, 'manifest source commit');
   requireSha(manifest.tagCommit, 'manifest tag commit');
   requireIso(manifest.createdAt, 'manifest created-at');
-  if (manifest.workflowRun !== null && (typeof manifest.workflowRun !== 'string' || manifest.workflowRun.length === 0)) fail('invalid workflow run');
-  if (manifest.certificateIdentity !== null && (typeof manifest.certificateIdentity !== 'string' || manifest.certificateIdentity.length === 0)) fail('invalid certificate identity');
+  if (manifest.workflowRun !== null && !/^[0-9]+$/.test(manifest.workflowRun || '')) fail('invalid workflow run');
+  const sourceRepository = JSON.parse(fs.readFileSync(path.join(ROOT, 'packaging', 'release.json'), 'utf8')).sourceRepository;
+  if (manifest.certificateIdentity !== null && (typeof manifest.certificateIdentity !== 'string' || !manifest.certificateIdentity.startsWith(`${sourceRepository}/.github/workflows/`))) {
+    fail('invalid certificate identity');
+  }
   validateCommitRelationship(manifest.sourceCommit, manifest.tagCommit);
   if (!manifest.artifacts || typeof manifest.artifacts !== 'object' || Array.isArray(manifest.artifacts)) fail('manifest artifacts are missing');
   const manifestNames = Object.keys(manifest.artifacts);
