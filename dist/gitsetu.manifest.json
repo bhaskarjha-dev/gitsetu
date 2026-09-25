@@ -3,9 +3,9 @@
   "name": "gitsetu",
   "version": "1.1.0",
   "releaseState": "development",
-  "sourceCommit": "51197547c1368536f7eb3e75601e77c364c927f6",
-  "sourceDirty": "clean",
-  "bundleSha256": "7e2b72170864e9a676d789780dca14c0b8b4cb6eb9dc91ee7ca1005ffd229f65",
+  "sourceCommit": "063d979e0feaf4b81897dbb1dd617ddd87dc9eb3",
+  "sourceDirty": "dirty",
+  "bundleSha256": "6dd7a63961becc586893d97ac513de85ef1b2082f2b07a79e53c6e72efb1512e",
   "modules": [
     {
       "path": "lib/core.sh",
@@ -29,7 +29,7 @@
     },
     {
       "path": "lib/ssh.sh",
-      "sha256": "aefa2dfc94c47524c926e6225dc5f72ab966b60fa817b0a08bd4db1c31faeb57"
+      "sha256": "13d731b2abb767615cc9517007e77c9f632df927ecd48b0f1edfa18b2422138f"
     },
     {
       "path": "lib/gitconfig.sh",
@@ -57,7 +57,7 @@
     },
     {
       "path": "lib/setup.sh",
-      "sha256": "a71f7365bf82243727c5efe249db6ae1419c07e53ef85f1766018f59ecc03c8a"
+      "sha256": "0560cd1131ec379e6934f78baad3f936daa2e4268f7ff3b531d0a5cf5c180474"
     },
     {
       "path": "lib/keychain.sh",
