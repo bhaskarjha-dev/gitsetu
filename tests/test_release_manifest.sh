@@ -43,9 +43,17 @@ node "$NODE_ROOT/packaging/release-manifest.js" verify \
     --tag-commit "$TAG_COMMIT" \
     --skip-git true >/dev/null
 
-REAL_SOURCE_COMMIT="$(git -C "$ROOT" rev-parse HEAD^)"
-REAL_TAG_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
 RELATIONSHIP_MANIFEST="$TMP_ROOT/relationship-release-manifest.json"
+if REAL_SOURCE_COMMIT="$(git -C "$ROOT" rev-parse HEAD^ 2>/dev/null)"; then
+    REAL_TAG_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
+    RELATIONSHIP_ARGS=(--skip-git false)
+else
+    # Shallow CI checkouts have no parent object; retain a same-commit fixture
+    # there while full clones exercise the distinct source/tag relationship.
+    REAL_SOURCE_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
+    REAL_TAG_COMMIT="$REAL_SOURCE_COMMIT"
+    RELATIONSHIP_ARGS=(--skip-git true)
+fi
 node "$NODE_ROOT/packaging/release-manifest.js" create \
     --directory "$ASSETS" \
     --output "$RELATIONSHIP_MANIFEST" \
@@ -53,11 +61,13 @@ node "$NODE_ROOT/packaging/release-manifest.js" create \
     --source-commit "$REAL_SOURCE_COMMIT" \
     --tag-commit "$REAL_TAG_COMMIT" \
     --phase core \
-    --created-at 2026-09-25T00:00:00Z >/dev/null
+    --created-at 2026-09-25T00:00:00Z \
+    "${RELATIONSHIP_ARGS[@]}" >/dev/null
 node "$NODE_ROOT/packaging/release-manifest.js" verify \
     --manifest "$RELATIONSHIP_MANIFEST" \
     --directory "$ASSETS" \
-    --phase core >/dev/null
+    --phase core \
+    "${RELATIONSHIP_ARGS[@]}" >/dev/null
 
 CORE_MANIFEST="$TMP_ROOT/core-release-manifest.json"
 node "$NODE_ROOT/packaging/release-manifest.js" create \
