@@ -5,9 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased — v1.1.0 release candidate]
+## [1.1.0 — Verified release candidate (unpublished)]
 
-The v1.1.0 line is a verified, security-hardened release candidate but is not yet a public release. This section records the candidate state; it must not be treated as a published release or as permission to install a mutable branch artifact.
+The v1.1.0 line is a verified, security-hardened release candidate, but it is not yet a public release. This versioned candidate entry is intentionally separate from the public release history; it must not be treated as a published release or as permission to install a mutable branch artifact. The release workflow will promote it to a dated `[1.1.0]` entry only after the clean release commit, immutable tag, signed artifacts, provenance, and publication are complete.
 
 ### Changed
 
@@ -58,7 +58,7 @@ The inaugural General Availability (GA) production release of GitSetu — a zero
 - **Hook Proxying:** Transparently passes through to project-level hooks (`husky`, `lefthook`, `pre-commit`) when identity verification succeeds.
 - **Subshell-Free Environment Switching (`gitsetu run`):** Runs one-off commands under an explicit profile identity via environment variables without subshell overhead.
 - **Sub-2ms Shell Prompt Integration (`gitsetu prompt`):** Ultra-low-latency `$PS1` / Starship prompt context identifier implemented in pure Bash parameter expansion.
-- **Encrypted State Vault (`gitsetu backup` / `restore`):** Bundles and encrypts all GitSetu state and software SSH keys using OpenSSL AES-256-CBC (`-pbkdf2` / `-iter 100000`). Pre-flight safety net backs up existing state before restore.
+- **Encrypted State Vault (`gitsetu backup` / `restore`):** The historical 1.0.0 implementation used an OpenSSL AES-256-CBC envelope (`-pbkdf2` / `-iter 100000`). Current v1.1.0 candidates use the authenticated v2 format documented above; the older format is rejected.
 - **Clean State Teardown (`gitsetu teardown`):** Completely purges GitSetu managed blocks, unsets `core.hooksPath`, and removes application directories while preserving generated SSH keys. Supports deep cleanup (`--deep`) of matched local repository overrides.
 
 #### Windows Platform Support & Sandbox Testing
@@ -70,16 +70,19 @@ The inaugural General Availability (GA) production release of GitSetu — a zero
 - **Windows Sandbox Test Harness:** Fully automated, disposable test harness in `sandbox/` featuring `launch_sandbox.ps1`, `launch_sandbox.bat`, `gitsetu_test.wsb`, `bootstrap.ps1`, and `comprehensive_audit.sh` (31 phases, 107 empirical checks) for host-isolated zero-trust validation.
 
 #### Distribution, Quality Assurance & Tooling
+
+> The distribution notes in this section describe repository capabilities at the 1.0.0 release. They are not current publication claims; the candidate entry above is the authoritative v1.1.0 status.
+
 - **Multi-Platform Packaging Ecosystem:** Complete distribution support across all developer platforms:
   - **Standalone Monolith Bundle (`dist/gitsetu`):** Self-contained, single-file Bash executable built via `scripts/bundle.sh` (`make dist`).
-  - **Node.js npm/npx Package (`package.json`, `bin/gitsetu.js`):** Private release-candidate package with `gitsetu` and `git-setu` aliases; public publication is withheld.
-  - **Microsoft WinGet Manifest Templates (`packaging/winget/templates/`):** Validated release templates; no public manifest is published for the release candidate.
+  - **Node.js npm/npx Package (`package.json`, `bin/gitsetu.js`):** The package definition exposes `gitsetu` and `git-setu`; public publication remains withheld by current release policy.
+  - **Microsoft WinGet Manifest Templates (`packaging/winget/templates/`):** Validated templates; no public manifest is published for the current candidate.
   - **Native Windows C# Launcher (`packaging/windows/gitsetu.cs`):** Deterministic local launcher with trusted discovery and Windows quoting.
-  - **Windows Scoop Template (`packaging/scoop/`):** Validated release template; no public manifest is published for the release candidate.
-  - **Homebrew Template (`packaging/homebrew/`):** Validated release template; no public formula is published for the release candidate.
-  - **Arch Linux AUR Template (`packaging/aur/`):** Validated release template; no public package is published for the release candidate.
+  - **Windows Scoop Template (`packaging/scoop/`):** Validated template; no public package is published for the current candidate.
+  - **Homebrew Template (`packaging/homebrew/`):** Validated template; no public formula is published for the current candidate.
+  - **Arch Linux AUR Template (`packaging/aur/`):** Validated template; no public package is published for the current candidate.
   - **Nix Flake (`flake.nix`):** Zero-dependency hermetic execution from a reviewed local checkout.
-  - **GitHub CLI Extension Wrappers (`packaging/gh-extension/`):** Separate `gh-gitsetu` and `gh-setu` wrappers for future publication.
+  - **GitHub CLI Extension Wrappers (`packaging/gh-extension/`):** Local `gh-gitsetu` and `gh-setu` wrappers; public extension repositories are not published.
 - **Multi-OS GitHub Actions CI Matrix:** Continuous delivery matrix running automated validation across 5 platforms: Ubuntu Linux 24.04, Arch Linux container (`makepkg`), Alpine Linux container (Musl/BusyBox), macOS Apple Silicon (native `/bin/bash` 3.2), and Windows Native (PowerShell, WinGet, Scoop).
 - **Installer Regression Pipeline:** Added automated end-to-end testing for both POSIX and Windows PowerShell installer/uninstaller pipelines in `tests/test_installer.sh` with `$GITSETU_INSTALL_DIR` non-destructive test isolation.
 - **Comprehensive Regression & E2E Test Suites:** Full serial test coverage spanning core logic, CLI, SSH, Git configuration, guard behavior, credential brokering, backup/restore, concurrency, teardown, validation, platform detection, discovery, doctor, prompt, resilience, installers, keychain, manual-mode policy, bundling, npm wrapper, WinGet, AUR, Nix flake, GitHub extension, CRLF self-healing, audit regressions, clean-room npm E2E, and adversarial/concurrency stress.

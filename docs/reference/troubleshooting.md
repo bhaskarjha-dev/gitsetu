@@ -60,8 +60,13 @@ git config --local --unset user.email
 git config --local --unset user.name
 ```
 
-> [!TIP]
-> **Bypassing the Guard:** If you intentionally want to bypass the Identity Guard for a specific, isolated commit without clearing your local overrides, you can utilize Git's native `--no-verify` flag: `git commit -m "wip" --no-verify`.
+> [!IMPORTANT]
+> **Do not bypass the identity guard.** Do not use `git commit --no-verify` or
+> `git commit -n` to work around an identity mismatch. Clear the local override,
+> select the correct managed profile, or investigate the effective configuration
+> with `gitsetu status` and `git config --show-origin`. A deliberate policy
+> exception must be handled as a separately reviewed change, not as a
+> troubleshooting shortcut.
 
 ---
 
@@ -97,7 +102,7 @@ powershell -ExecutionPolicy Bypass -File .\sandbox\launch_sandbox.ps1
 # Or via Command Prompt / Explorer:
 .\sandbox\launch_sandbox.bat
 ```
-This boots a clean, disposable Windows Sandbox container, runs the available regression and adversarial checks, and simulates multi-profile Git commits without modifying the host setup.
+This boots a clean, disposable Windows Sandbox container and attempts the available regression and audit checks without modifying the host setup. A run with no terminal status is **inconclusive**, not a product pass.
 
 ---
 

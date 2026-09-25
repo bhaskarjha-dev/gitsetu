@@ -94,19 +94,23 @@ bash packaging/gh-extension/gh-setu --version
 
 ---
 
-## 3. Standalone Bundle (Verified Artifact)
+## 3. Standalone Bundle
 
-If you need a single executable, download a published release artifact from its immutable release URL, verify its checksum/signature, and then install it:
+There is currently no public v1.1.0 standalone download. For the verified local
+release candidate, build the deterministic bundle from a reviewed checkout:
 
 ```bash
-mkdir -p ~/.local/bin
-# Replace with the verified release URL and checksum/signature check:
-# curl -fL "$VERIFIED_RELEASE_URL" -o /tmp/gitsetu
-# sha256sum -c "$VERIFIED_SHA256_FILE"
-install -m 0755 /tmp/gitsetu ~/.local/bin/gitsetu
+bash scripts/bundle.sh
+./dist/gitsetu --version
 ```
 
-Do not use a mutable branch URL as a release trust root. The current development tree is not a published v1.1.0 artifact.
+The generated `dist/gitsetu` is a local candidate artifact, not a public release.
+Do not distribute it or use a mutable branch URL as a release trust root.
+
+After an intentional public release, obtain the standalone artifact from the
+immutable release URL, verify its checksum and signature, and install it with
+your organization's approved process. The release workflow will publish the
+exact URL and digest; they are intentionally absent from this candidate.
 
 ---
 
@@ -135,7 +139,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Once installed, verify that GitSetu is available:
 ```bash
 gitsetu --version
-# Outputs the development version/release channel
+# Outputs the current candidate version and release channel (development until publication)
 ```
 
 ### Instant 1-Second Setup

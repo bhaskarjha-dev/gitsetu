@@ -20,13 +20,13 @@ Our target is a flawless **100/100**. A developer using GitSetu should never hav
 
 ---
 
-## Foundation: Completed in Baseline GA Release
+## Foundation: Completed in the v1.1.0 Release-Candidate Baseline
 
-The following architectural hardening milestones establish the current verified release-candidate baseline, backed by automated regression, adversarial, packaging, and platform checks plus an isolated Windows Sandbox audit:
+The following architectural hardening milestones establish the current local release-candidate baseline. They are backed by automated regression, adversarial, packaging, and platform checks; an isolated Windows Sandbox run is environment-dependent, and a run without a terminal status is inconclusive rather than a product pass:
 - **Zero-Trust Identity Guard**: Hard pre-commit intercepts preventing dual-state leaks with longest-prefix directory matching, Windows/macOS case-insensitivity, and dynamic email re-reading.
 - **Single Source of Truth (SSOT)**: Dynamic resolution via isolated `.gitconfig` files without registry polling.
-- **Native Windows PowerShell Distribution**: Shipped native `install.ps1` & `uninstall.ps1` installers, automated Command Prompt (`gitsetu.cmd`) and PowerShell (`gitsetu.ps1`) shims in `%LOCALAPPDATA%\gitsetu\bin`, and User `PATH` environment management.
-- **Package Formula Definitions**: Authored official Homebrew formula (`packaging/homebrew/gitsetu.rb`) and Windows Scoop manifest (`packaging/scoop/gitsetu.json`).
+- **Native Windows PowerShell Distribution**: Provides local-candidate `install.ps1` & `uninstall.ps1` installers, automated Command Prompt (`gitsetu.cmd`) and PowerShell (`gitsetu.ps1`) shims in `%LOCALAPPDATA%\gitsetu\bin`, and User `PATH` environment management.
+- **Package Formula Definitions**: Maintains withheld Homebrew and Scoop templates for a future intentional publication; neither is a current public package.
 - **Headless & Dotfiles Automation**: Scriptable, non-interactive profile provisioning via `gitsetu add` and `gitsetu profile add` backed by POSIX directory concurrency locking (`profiles.lock`).
 - **Automated Workspace Provisioning**: Auto-creates missing workspace directories (`mkdir -p`) upon profile registration, with clean unmounting and pruning on profile deletion.
 - **Multi-Profile Persistence & Re-hydration**: Preserves and re-hydrates existing profiles across multiple `gitsetu setup` runs.
@@ -38,7 +38,7 @@ The following architectural hardening milestones establish the current verified 
 - **Bash 3.2 Array Panic Prevention**: Native C-style POSIX loop structures replacing fragile subshell bounds.
 - **Path Injection Prevention**: Strict newline sanitization preventing INI boundary corruption.
 - **Authenticated State Export**: Versioned authenticated v2 vault packaging (`gitsetu backup` / `gitsetu restore`) with staging, tamper checks, and rollback. Older vault formats are rejected.
-- **Empirical Sandbox Verification Matrix**: The Windows Sandbox audit supplements the local regression suite; results must be recorded from the tested revision rather than assumed from a historical count.
+- **Empirical Sandbox Verification**: Windows Sandbox is an optional environment check. Record the tested revision and terminal status; a run with no terminal status is inconclusive, not a product pass.
 
 ---
 
@@ -51,8 +51,8 @@ The following architectural hardening milestones establish the current verified 
 
 **Goal:** Eliminate all adoption friction by ensuring GitSetu is instantly discoverable, installable, and trusted across all developer environments without requiring git clones or elevated permissions.
 
-- **Single-File Bundled Binary (`gitsetu-standalone` / `make dist`):** 
-  - Release an automated build step that inlines all `lib/*.sh` modules into a single, self-contained executable script.
+- **Single-File Bundled Binary (`gitsetu-standalone` / `bash scripts/bundle.sh`):**
+  - Maintain the deterministic build step that inlines all `lib/*.sh` modules into a single, self-contained executable script.
   - Allows direct download without cloning the git repository:
     ```bash
     # Download a verified, immutable release artifact and verify its checksum/signature first.
@@ -65,7 +65,7 @@ The following architectural hardening milestones establish the current verified 
   - **Nix / Nixpkgs Flake:** Maintain a pinned `flake.nix` in the repository root for reproducible, zero-dependency NixOS execution from a reviewed checkout.
   - **npm / npx Wrapper:** Publish a thin npm binary wrapper (`npx gitsetu setup` / `npm i -g gitsetu`) for JavaScript and fullstack web developers.
 - **GitHub CLI Extensions (`gh gitsetu` / `gh setu`):** Publish separate `gh-gitsetu` and `gh-setu` extension repositories, allowing developers working inside GitHub CLI workflows to run either command natively.
-- **Smart Zero-Prompt Auto-Discovery (`gitsetu init --auto`):** Expand the discovery engine in `lib/discovery.sh` into an instant, non-interactive one-shot setup command that auto-detects existing Git identities, SSH keys, and workspace folders (`~/work`, `~/personal`), applying a recommended zero-trust configuration in under 1 second.
+- **Smart Zero-Prompt Auto-Discovery (`gitsetu setup --auto`):** Expand the discovery engine in `lib/discovery.sh` into an instant, non-interactive one-shot setup command that auto-detects existing Git identities, SSH keys, and workspace folders (`~/work`, `~/personal`), applying a recommended zero-trust configuration in under 1 second.
 - **Sponsorship & Governance:** Establish a formal Technical Steering Committee and define open-source contribution guidelines to guarantee long-term operational sustainability.
 
 ---

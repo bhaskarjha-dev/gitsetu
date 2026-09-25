@@ -17,10 +17,11 @@
   ],
   "scripts": {
     "metadata": "node packaging/release.js validate-source",
+    "docs": "node scripts/check-docs.mjs",
     "test": "bash tests/run_all.sh",
     "dist": "bash scripts/bundle.sh",
     "verify:bundle": "node packaging/release.js verify-bundle dist/gitsetu dist/gitsetu.manifest.json",
-    "check": "npm run metadata && npm test && npm run dist && npm run verify:bundle"
+    "check": "npm run metadata && npm run docs && npm test && npm run dist && npm run verify:bundle"
   },
   "repository": {
     "type": "git",

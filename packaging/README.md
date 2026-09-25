@@ -22,6 +22,11 @@ WinGet manifests and does not advertise a public v1.1.0 installer. The checked-i
 `package.json` is private for the same reason. Missing public v1.1.0 assets are
 expected, not a release failure.
 
+The `development` state and candidate/unpublished wording are intentional. Do
+not change them to `released` in a documentation-only commit; the release
+workflow must first create the clean commit, immutable tag, exact signed
+artifacts, provenance, and public URLs.
+
 ## Channels
 
 | Channel | Development checkout policy | Release source |
@@ -58,6 +63,7 @@ unreleased branch from acquiring installable claims or stale v1.0.0 hashes.
 
 ```bash
 node packaging/release.js validate-source
+node scripts/check-docs.mjs
 make dist-check
 make check
 ```

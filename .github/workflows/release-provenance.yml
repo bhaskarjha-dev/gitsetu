@@ -39,6 +39,7 @@ jobs:
         run: |
           set -euo pipefail
           node packaging/release.js validate-source
+          node scripts/check-docs.mjs
           test "$(node -p "require('./packaging/release.json').release.state")" = released
           expected_tag="v$(node -p "require('./packaging/release.json').version")"
           candidate_tag="${INPUT_TAG:-$GITHUB_REF_NAME}"

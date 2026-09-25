@@ -15,4 +15,5 @@
 - [ ] I have run `make lint` (ShellCheck) with zero warnings.
 - [ ] I have verified that tests pass across different environments (Linux/macOS/Windows).
 - [ ] I have updated the documentation accordingly.
+- [ ] I ran `npm run docs` (or `make docs`) and confirmed release-state wording is accurate.
 - [ ] I have added tests to cover my changes.

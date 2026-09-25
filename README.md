@@ -43,6 +43,8 @@ GitSetu scans your machine, discovers your existing Git identities, and **in one
 
 **Pure Bash 3.2 core. Native Git and OpenSSH integration. Optional platform stores and OpenSSL are detected explicitly.**
 
+> **Release state:** v1.1.0 is a verified local release candidate, not a public release. No public package-manager assets, signed release, or immutable `v1.1.0` download are available yet. Use a reviewed local checkout and verify its provenance; see [Installation](#installation) and [Security Policy](SECURITY.md).
+
 ---
 
 ## Getting Started
@@ -50,8 +52,7 @@ GitSetu scans your machine, discovers your existing Git identities, and **in one
 ### 30-Second Quick Start
 
 ```bash
-# Install a reviewed, pinned release using the platform package manager,
-# or build this checkout locally:
+# For the current unpublished candidate, run from a reviewed checkout:
 bash install.sh
 
 # Setup (discovers identities automatically)

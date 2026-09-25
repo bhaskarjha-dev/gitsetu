@@ -2,6 +2,11 @@
 
 A step-by-step integration test checklist for verifying that every GitSetu feature works on a real machine. Run this before every release to ensure the README claims are true.
 
+> **Release-state boundary:** This checklist validates the current v1.1.0
+> release candidate. It does not authorize publication. A public release requires
+> a clean release commit, immutable tag, signed artifacts, provenance, and the
+> release metadata transition described in `packaging/README.md`.
+
 > **Prerequisites:** A machine with `bash`, `git`, and `ssh-keygen`. Two GitHub/GitLab accounts are ideal but not required — you can verify most features with one account.
 
 ---
@@ -185,13 +190,13 @@ time (for i in $(seq 100); do gitsetu prompt > /dev/null; done)
 # During setup, provide a GitHub username and PAT when prompted
 # Or manually test with dummy credentials:
 
-printf 'protocol=https\nhost=github.com\nusername=testuser\npassword=ghp_test123\n\n' | gitsetu credential store
+printf 'protocol=https\nhost=github.com\nusername=testuser\npassword=dummy-token-not-a-secret\n\n' | gitsetu credential store
 
 printf 'protocol=https\nhost=github.com\n\n' | gitsetu credential get
 ```
 
 - [ ] `credential store` exits cleanly (no hang, no error)
-- [ ] `credential get` returns `username=testuser` and `password=ghp_test123`
+- [ ] `credential get` returns `username=testuser` and `password=dummy-token-not-a-secret`
 - [ ] Credentials stored in OS keychain (macOS: check Keychain Access; Linux: `secret-tool search service gitsetu`)
   - OR in file fallback: `cat ~/.config/gitsetu/.tokens`
 
@@ -364,12 +369,25 @@ bash uninstall.sh
 
 ## Release Checklist
 
+### Candidate validation
+
 After all manual tests pass:
 
-- [ ] `make test` (or `bash tests/run_all.sh`) — the complete available regression suite passes
-- [ ] Windows Sandbox verification — `.\sandbox\launch_sandbox.ps1` (or `launch_sandbox.bat`) boots a disposable VM and runs the current multi-profile and audit checks
-- [ ] `make lint` — ShellCheck clean
-- [ ] CHANGELOG.md updated
-- [ ] Version bumped in `gitsetu` (if applicable)
-- [ ] README claims match actual behavior
-- [ ] Tag and release
+- [ ] `bash tests/run_all.sh` (or `make test` where `make` is available) — every required suite passes; explicit skips are documented
+- [ ] Windows Sandbox verification — when available, record `COMPLETED_SUCCESS`, `COMPLETED_ENVIRONMENT_BLOCK`, or `COMPLETED_FAILURE`; no terminal status is inconclusive
+- [ ] `bash -n`/ShellCheck or the repository lint target passes
+- [ ] `CHANGELOG.md`, README, installation, security, and packaging documents describe the same candidate state
+- [ ] Website documentation is synchronized only from an immutable source commit
+- [ ] Candidate artifacts are rebuilt and their hashes are recorded
+
+### Public release gate
+
+Do not mark the release public until all of these are complete:
+
+- [ ] Create the clean release commit and immutable `v1.1.0` tag
+- [ ] Build the source archive and every exact artifact
+- [ ] Sign artifacts and publish verified checksums/provenance
+- [ ] Update `packaging/release.json` to `released` and render package manifests
+- [ ] Convert the changelog entry to a dated public release with immutable links
+- [ ] Synchronize and test the website from the released source commit
+- [ ] Publish only after the release workflow verifies every asset and provenance record

@@ -8,11 +8,11 @@ The v1.1.0 line is a **verified release candidate and is not yet a public releas
 
 | Version/channel | Security handling |
 | --------------- | ----------------- |
-| v1.1.x development branch | Tracked and tested on the development branch; not a published release |
+| v1.1.0 release-candidate branch | Tracked and tested locally; not a published release |
 | Latest official release | Supported according to the maintainers' release policy |
 | Older development snapshots | Not supported |
 
-Do not treat a local development version, mutable branch URL, or unreleased manifest as a release trust root.
+Do not treat a local development version, mutable branch URL, or unreleased manifest as a release trust root. The candidate/unpublished wording is intentional: it must not be changed to a public-release claim as a documentation-only edit.
 
 ## Reporting a Vulnerability
 

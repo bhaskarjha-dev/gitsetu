@@ -28,6 +28,7 @@ jobs:
       - name: Enforce non-public development release policy
         run: |
           node packaging/release.js validate-source
+          node scripts/check-docs.mjs
           if node packaging/release.js render "$RUNNER_TEMP/rendered" >/dev/null 2>&1; then
             echo "Development metadata must not render installable manifests" >&2
             exit 1

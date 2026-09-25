@@ -2,7 +2,7 @@
 
 **An authoritative, evidence-backed evaluation of multi-identity Git managers across architecture, features, security guardrails, and developer experience.**
 
-Managing multiple directory-scoped Git identities securely across work, open-source, and personal contexts is a foundational engineering problem. To help developers and engineering teams make informed tooling decisions, this document provides an objective, side-by-side comparison of the leading Git identity tools based on verified repository data as of **September 2026 (v1.1.0)**.
+Managing multiple directory-scoped Git identities securely across work, open-source, and personal contexts is a foundational engineering problem. To help developers and engineering teams make informed tooling decisions, this document provides an objective, side-by-side comparison of the leading Git identity tools based on repository evidence available in **September 2026**. The GitSetu column describes the current **unpublished v1.1.0 release candidate**, not a public release.
 
 ---
 

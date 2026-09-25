@@ -49,8 +49,8 @@ jobs:
           sudo install -m 0755 "$RUNNER_TEMP/shellcheck-v0.10.0/shellcheck" /usr/local/bin/shellcheck
           shellcheck --version | grep 'version: 0.10.0'
 
-      - name: Validate metadata and all shipped script types
-        run: make metadata lint
+      - name: Validate metadata, documentation, and all shipped script types
+        run: make metadata docs lint
 
   test:
     name: Tests (${{ matrix.os }})
