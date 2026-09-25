@@ -45,9 +45,9 @@ The following architectural hardening milestones establish the current local rel
 ## Phase 1: Zero-Friction Onboarding & Universal Distribution
 
 > **Release-candidate preparation:** v1.1.0 has passed the local verification
-> gates, but it is not publicly released. None of the package-manager or
-> extension commands below are available until an intentional release
-> publishes pinned artifacts and manifests.
+> gates and is publication-ready. Publication remains gated until the intentional
+> release workflow publishes pinned artifacts and manifests. None of the
+> package-manager or extension commands below are available before that gate.
 
 **Goal:** Eliminate all adoption friction by ensuring GitSetu is instantly discoverable, installable, and trusted across all developer environments without requiring git clones or elevated permissions.
 

@@ -3,7 +3,7 @@
 GitSetu is a Bash 3.2-compatible CLI with native Git and OpenSSH integration. It does not require Node.js, Python, or Go for the shell implementation. Optional credential stores and OpenSSL are detected explicitly; a feature that needs one fails clearly when it is unavailable.
 
 > [!IMPORTANT]
-> v1.1.0 is a verified local release candidate, but it is not yet a public release. Do not install a mutable `main` URL as if it were a release artifact. Use a reviewed tag, a verified package-manager manifest, or a local candidate checkout and verify its provenance before installation.
+> v1.1.0 is a verified, publication-ready release candidate. The canonical release workflow has not yet published the package-manager assets or immutable download. Do not install a mutable `main` URL as if it were a release artifact. Use a reviewed tag, a verified package-manager manifest, or a local candidate checkout and verify its provenance before installation.
 
 ---
 
@@ -104,7 +104,7 @@ bash scripts/bundle.sh
 ./dist/gitsetu --version
 ```
 
-The generated `dist/gitsetu` is a local candidate artifact, not a public release.
+The generated `dist/gitsetu` is a publication-ready local artifact, not a public download.
 Do not distribute it or use a mutable branch URL as a release trust root.
 
 After an intentional public release, obtain the standalone artifact from the

@@ -2,7 +2,7 @@
 
 ## Current release state
 
-`v1.1.0` is a **verified local release candidate**, not a public release.
+`v1.1.0` is a **verified, publication-ready release candidate**.
 `packaging/release.json` remains the canonical policy record and intentionally
 still declares the pre-publication state:
 
@@ -22,7 +22,7 @@ WinGet manifests and does not advertise a public v1.1.0 installer. The checked-i
 `package.json` is private for the same reason. Missing public v1.1.0 assets are
 expected, not a release failure.
 
-The `development` state and candidate/unpublished wording are intentional. Do
+The `development` state and publication-ready wording are intentional. Do
 not change them to `released` in a documentation-only commit; the release
 workflow must first create the clean commit, immutable tag, exact signed
 artifacts, provenance, and public URLs.

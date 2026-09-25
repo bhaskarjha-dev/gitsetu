@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-The v1.1.0 line is a **verified release candidate and is not yet a public release**. Local candidate artifacts have been built and checked, but the canonical release metadata remains non-public until an intentional release process creates a clean tag, signed artifacts, and published provenance. The latest official release remains the release documented by its published tag.
+The v1.1.0 line is a **verified, publication-ready release candidate**. The canonical release metadata remains non-public until an intentional release process creates a clean tag, signed artifacts, and published provenance. The latest official release remains the release documented by its published tag.
 
 “Release candidate” describes the verified local channel, not a public production claim: the current tree has passed the local regression, adversarial, packaging, and platform gates, but it is not a public production artifact until an intentional release process publishes and signs it.
 
@@ -12,7 +12,7 @@ The v1.1.0 line is a **verified release candidate and is not yet a public releas
 | Latest official release | Supported according to the maintainers' release policy |
 | Older development snapshots | Not supported |
 
-Do not treat a local development version, mutable branch URL, or unreleased manifest as a release trust root. The candidate/unpublished wording is intentional: it must not be changed to a public-release claim as a documentation-only edit.
+Do not treat a local development version, mutable branch URL, or unreleased manifest as a release trust root. The publication-ready wording is intentional: it must not be changed to a public-release claim as a documentation-only edit.
 
 ## Reporting a Vulnerability
 

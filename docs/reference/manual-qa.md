@@ -3,9 +3,10 @@
 A step-by-step integration test checklist for verifying that every GitSetu feature works on a real machine. Run this before every release to ensure the README claims are true.
 
 > **Release-state boundary:** This checklist validates the current v1.1.0
-> release candidate. It does not authorize publication. A public release requires
-> a clean release commit, immutable tag, signed artifacts, provenance, and the
-> release metadata transition described in `packaging/README.md`.
+> publication-ready release candidate. It does not authorize publication. A
+> public release requires a clean release commit, immutable tag, signed
+> artifacts, provenance, and the release metadata transition described in
+> `packaging/README.md`.
 
 > **Prerequisites:** A machine with `bash`, `git`, and `ssh-keygen`. Two GitHub/GitLab accounts are ideal but not required — you can verify most features with one account.
 

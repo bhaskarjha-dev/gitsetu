@@ -2,9 +2,10 @@
 
 GitSetu is a Bash CLI for directory-scoped Git identities, SSH keys, and credential helpers. Commands that mutate state use explicit validation, private staging, and recoverable writes.
 
-> This reference describes the current v1.1.0 release candidate. Its canonical
-> release state remains `development` until the intentional public-release
-> workflow completes; command availability does not imply publication.
+> This reference describes the current v1.1.0 publication-ready release
+> candidate. Its canonical release state remains `development` until the
+> intentional public-release workflow completes; command availability does not
+> imply publication.
 
 ## Provisioning and setup
 

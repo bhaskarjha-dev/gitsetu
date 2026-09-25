@@ -31,16 +31,16 @@ if (!development && !released) {
 const changelog = read('CHANGELOG.md');
 const changelogHeading = changelog.match(/^## \[[^\n]+\]/m)?.[0] || '';
 if (development) {
-  if (!/^## \[1\.1\.0 — Verified release candidate \(unpublished\)\]/.test(changelogHeading)) {
-    failures.push(`candidate changelog heading is not explicit: ${changelogHeading || 'missing'}`);
+  if (!/^## \[1\.1\.0 — Verified publication-ready release candidate\]/.test(changelogHeading)) {
+    failures.push(`publication-ready changelog heading is not explicit: ${changelogHeading || 'missing'}`);
   }
   if (/^## \[Unreleased/m.test(changelog)) {
     failures.push('active changelog section still uses an ambiguous Unreleased heading');
   }
   for (const file of ['README.md', 'SECURITY.md', 'packaging/README.md', 'docs/getting-started/installation.md', 'docs/reference/cli-commands.md']) {
     const text = read(file);
-    if (!/(release candidate|unpublished|not (?:yet )?a public release)/i.test(text)) {
-      failures.push(`${file} does not state the current unpublished candidate status`);
+    if (!/(publication-ready|release\s+candidate|unpublished|not (?:yet )?a public release)/i.test(text)) {
+      failures.push(`${file} does not state the current publication-ready candidate status`);
     }
   }
   if (/download(?:ed|ing)? a published release artifact/i.test(read('docs/getting-started/installation.md'))) {
