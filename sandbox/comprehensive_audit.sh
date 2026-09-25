@@ -1768,8 +1768,12 @@ echo "  - $CHAOS_FILE"
 echo "  - $BACKLOG_FILE"
 echo ""
 
-if [[ "$FAILED_TESTS" -eq 0 ]]; then
-    exit 0
-else
+if [[ "$FAILED_TESTS" -gt 0 ]]; then
     exit 1
+elif [[ "$WARNED_TESTS" -gt 0 ]]; then
+    # Warnings are not a green legacy-audit result. Bootstrap maps this to
+    # COMPLETED_INCONCLUSIVE rather than claiming that all checks passed.
+    exit 2
+else
+    exit 0
 fi

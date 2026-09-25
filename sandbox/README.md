@@ -18,6 +18,8 @@ Run from PowerShell:
 powershell -ExecutionPolicy Bypass -File .\sandbox\launch_sandbox.ps1
 # Optional: write results beneath a disposable run-scoped directory.
 powershell -ExecutionPolicy Bypass -File .\sandbox\launch_sandbox.ps1 -ResultsDir C:\Temp\gitsetu-sandbox-results
+# Optional: explicitly identify Git for Windows when it is not on PATH.
+powershell -ExecutionPolicy Bypass -File .\sandbox\launch_sandbox.ps1 -GitInstallPath 'C:\Program Files\Git'
 # Optional: explicitly allow networking for a separately approved live test.
 powershell -ExecutionPolicy Bypass -File .\sandbox\launch_sandbox.ps1 -EnableNetworking
 ```

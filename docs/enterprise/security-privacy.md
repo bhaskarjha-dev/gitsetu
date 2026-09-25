@@ -24,7 +24,7 @@ Native credential stores are preferred:
 - Windows Git Credential Manager / Windows Credential Manager;
 - Linux Secret Service (`secret-tool`).
 
-The lower-level credential API namespaces records by profile, host, and optional path. The normal `gitsetu credential` command currently resolves the active profile and host but does not parse Git's `path=` field; use the lower-level API or an explicitly supplied `GITSETU_CREDENTIAL_PATH` when path-level separation is required. GitSetu installs its broker only when no distinct user/system credential-helper policy is already present; an existing helper remains authoritative.
+The credential API namespaces records by profile, host, and Git's exact `path=` value. `GITSETU_CREDENTIAL_PATH` is an explicit wrapper/test override when a caller intentionally needs a different scope. GitSetu installs its broker only when no distinct user/system credential-helper policy is already present; an existing helper remains authoritative.
 
 Some minimal or headless Linux installations have no native Secret Service daemon. For those systems, GitSetu supports an **explicit zero-dependency plaintext fallback** at `~/.config/gitsetu/.tokens`. It is not encrypted, is not a compatibility mode, and must be treated as sensitive as the token itself:
 

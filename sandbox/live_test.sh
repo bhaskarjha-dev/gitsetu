@@ -15,6 +15,15 @@ echo -e "${BOLD}${CYAN}======================================================${R
 echo -e "${BOLD}${CYAN}    GitSetu Live End-to-End Sandbox Simulation        ${RESET}"
 echo -e "${BOLD}${CYAN}======================================================${RESET}"
 
+# Establish a valid global identity before adding mapped profiles. The current
+# strict-v2 contract requires the first registry record to be a complete global
+# profile; a clean Sandbox HOME must not be treated as an implicit fixture.
+if [[ ! -f "$HOME/.config/gitsetu/profiles.conf" ]]; then
+    git config --global user.name "Sandbox User"
+    git config --global user.email "sandbox@example.invalid"
+    "$GITSETU" setup --auto
+fi
+
 echo -e "\n${BOLD}[1/6] Adding 'personal' profile...${RESET}"
 mkdir -p "$HOME/workspace/personal"
 "$GITSETU" add personal "Sandbox Personal" "personal@example.com" "$HOME/workspace/personal"
@@ -22,6 +31,14 @@ mkdir -p "$HOME/workspace/personal"
 echo -e "\n${BOLD}[2/6] Adding 'work' profile...${RESET}"
 mkdir -p "$HOME/workspace/work"
 "$GITSETU" add work "Sandbox Corp" "work@company.com" "$HOME/workspace/work"
+
+# Assert the state the later phases claim to exercise.
+for key in id_ed25519_global id_ed25519_personal id_ed25519_work; do
+    if [[ ! -f "$HOME/.ssh/$key" || ! -f "$HOME/.ssh/$key.pub" ]]; then
+        echo -e "${RED}FAIL: expected SSH key pair is missing: $key${RESET}" >&2
+        exit 1
+    fi
+done
 
 echo -e "\n${BOLD}[3/6] Showing configured profiles status...${RESET}"
 "$GITSETU" status
@@ -83,14 +100,29 @@ if [[ "$W_PROMPT" != "work" ]]; then
 fi
 
 echo -e "\n${BOLD}[5/6] Running gitsetu diagnostics (doctor & verify)...${RESET}"
-"$GITSETU" doctor || true
-"$GITSETU" verify || true
+doctor_status=0
+verify_status=0
+"$GITSETU" doctor || doctor_status=$?
+"$GITSETU" verify || verify_status=$?
+if [[ "$doctor_status" -ne 0 || "$verify_status" -ne 0 ]]; then
+    echo -e "${RED}FAIL: doctor/verify returned doctor=$doctor_status verify=$verify_status${RESET}" >&2
+    exit 1
+fi
 
 echo -e "\n${BOLD}[6/6] Checking SSH config inclusion & aliases...${RESET}"
-if [[ -f "$HOME/.ssh/config" ]]; then
-    echo "  ~/.ssh/config content:"
-    cat "$HOME/.ssh/config"
+if [[ ! -f "$HOME/.ssh/config" ]]; then
+    echo -e "${RED}FAIL: SSH config was not created${RESET}" >&2
+    exit 1
 fi
+for alias in github-global github-personal github-work; do
+    if ! grep -q "Host $alias" "$HOME/.ssh/config" && ! grep -q "Host $alias" "$HOME/.config/gitsetu/profiles/ssh_config" 2>/dev/null; then
+        echo -e "${RED}FAIL: expected SSH alias is missing: $alias${RESET}" >&2
+        exit 1
+    fi
+done
+
+echo "  ~/.ssh/config content:"
+cat "$HOME/.ssh/config"
 
 echo -e "\n${BOLD}${GREEN}✔ ALL LIVE TESTS PASSED IN WINDOWS SANDBOX!${RESET}"
 echo -e "${BOLD}GitSetu successfully configured multiple profiles, SSH keys, and Git includeIf on Windows!${RESET}\n"

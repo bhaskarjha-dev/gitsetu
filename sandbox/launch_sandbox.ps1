@@ -1,6 +1,7 @@
 # sandbox/launch_sandbox.ps1 — Windows Sandbox Launcher for GitSetu Test Harness
 param(
     [string]$ResultsDir = "",
+    [string]$GitInstallPath = "",
     [switch]$NoPause,
     [switch]$EnableNetworking
 )
@@ -33,12 +34,34 @@ if (-not $sandboxCmd) {
     }
 }
 
-# 2. Check for Git on host
-$gitHostDir = "C:\Program Files\Git"
-if (-not (Test-Path "$gitHostDir\bin\bash.exe")) {
-    Write-Host "[WARNING] Git for Windows was not found at '$gitHostDir'." -ForegroundColor Yellow
-    Write-Host "Windows Sandbox maps this folder to provide zero-download offline Git/Bash."
+# 2. Resolve Git for Windows from an explicit path, PATH, or common install
+# locations. Map only a validated installation containing bin/bash.exe.
+$gitCandidates = @()
+if ($GitInstallPath) { $gitCandidates += $GitInstallPath }
+$gitCommand = Get-Command git.exe -ErrorAction SilentlyContinue
+if ($gitCommand) {
+    $gitExePath = [IO.Path]::GetFullPath($gitCommand.Source)
+    $gitCandidates += (Split-Path (Split-Path $gitExePath -Parent) -Parent)
 }
+$gitCandidates += @(
+    "C:\Program Files\Git",
+    "${env:ProgramFiles(x86)}\Git",
+    (Join-Path $env:LOCALAPPDATA "Programs\Git")
+)
+$gitHostDir = $null
+foreach ($candidate in ($gitCandidates | Where-Object { $_ } | Select-Object -Unique)) {
+    try {
+        $resolved = [IO.Path]::GetFullPath($candidate)
+        if (Test-Path (Join-Path $resolved "bin\bash.exe") -PathType Leaf) {
+            $gitHostDir = $resolved
+            break
+        }
+    } catch { }
+}
+if (-not $gitHostDir) {
+    throw "Git for Windows was not found or did not contain bin\bash.exe. Supply -GitInstallPath explicitly."
+}
+Write-Host "Using Git for Windows: $gitHostDir"
 
 # 3. Destination results directory. Every invocation receives a unique
 # run-scoped directory so a previous terminal status cannot be mistaken for a

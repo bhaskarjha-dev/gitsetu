@@ -86,7 +86,6 @@ jobs:
         run: make dist-check
 
       - name: Run bundle-selected regression suite
-        if: runner.os != 'Windows'
         run: make test-bundle
 
       - name: Parse and test Windows launchers/installers
@@ -95,7 +94,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $errors = $null
-          foreach ($file in @('install.ps1','uninstall.ps1','packaging/windows/build_launcher.ps1','packaging/windows/build_release_zip.ps1','tests/test_windows_cli_dispatch.ps1')) {
+          foreach ($file in @('install.ps1','uninstall.ps1','packaging/windows/build_launcher.ps1','packaging/windows/build_release_zip.ps1','sandbox/launch_sandbox.ps1','sandbox/bootstrap.ps1','tests/test_windows_cli_dispatch.ps1')) {
             [Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$null, [ref]$errors) | Out-Null
           }
           if ($errors.Count) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }

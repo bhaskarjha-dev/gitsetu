@@ -14,7 +14,7 @@ Modern developer environments are highly fragmented. Context-switching between d
 | :--- | :--- | :--- |
 | 🔴 **Corporate Identity Leaks** | Committing private proprietary code using a personal email address or public alias. | **Directory-Scoped `includeIf` routing:** Applies the selected profile when Git evaluates a managed path. |
 | 🔴 **Silent Authentication Collisions** | Single SSH keys loaded globally against overlapping multi-tenant remote hosts (e.g., `github.com`). | **Profile-scoped key generation:** Bootstraps separate `ed25519` keypairs for each managed profile. |
-| 🔴 **Cross-Profile PAT Pollution** | HTTPS pull/push streams blindly pulling cached global tokens from OS credentials, returning `HTTP 403 Forbidden`. | **Profile/host credential broker:** The lower-level API supports an optional path; the normal CLI currently does not parse Git's `path=` field. |
+| 🔴 **Cross-Profile PAT Pollution** | HTTPS pull/push streams blindly pulling cached global tokens from OS credentials, returning `HTTP 403 Forbidden`. | **Exact profile/host/path credential broker:** Git's `path=` value is part of the credential tuple, with an explicit wrapper override. |
 | 🔴 **Untracked Historical Config Drift** | Manual one-off edits to global `.gitconfig` files drifting out of compliance over time. | **Managed blocks and explicit review:** GitSetu writes recognized managed regions and leaves unrelated configuration for review. |
 | 🔴 **Pre-Flight Failure Vulnerability** | Forgetting to execute environment prep scripts before pushing code to protected branches. | **Fail-Closed Identity Guard:** Checks managed identity state during pre-commit and blocks divergent commits. |
 

@@ -581,7 +581,9 @@ test_verify_handshake_deceptive_host_never_uses_443() {
 
     assert_equals "1" "$rc" "deceptive host verification fails" || return 1
     assert_equals "1" "$(wc -l < "$calls" | tr -d ' ')" "deceptive host is attempted only on its literal port 22 route" || return 1
-    assert_not_contains "$(cat "$calls")" " -p 443 " "deceptive host never receives the GitHub 443 route" || return 1
+    assert_contains "$(cat "$calls")" "git@github.com.evil" "deceptive host keeps its literal SSH target" || return 1
+    assert_not_contains "$(cat "$calls")" "443" "deceptive host never receives any port-443 representation" || return 1
+    assert_not_contains "$(cat "$calls")" "ssh.github.com" "deceptive host is never redirected to the GitHub endpoint" || return 1
 }
 
 # ------------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 # Credential Broker Engine
 
-GitSetu provides a per-profile credential helper for HTTPS Personal Access Tokens (PATs). The lower-level keychain API namespaces records by profile, host, and optional path; the normal CLI currently resolves the active profile and host but does not parse Git's `path=` field.
+GitSetu provides a per-profile credential helper for HTTPS Personal Access Tokens (PATs). The broker namespaces records by the exact profile, host, and Git `path=` tuple. `GITSETU_CREDENTIAL_PATH` can explicitly override the protocol path for a controlled wrapper or test.
 
 ## Why native stores need namespacing
 
@@ -11,7 +11,7 @@ protocol=https
 host=github.com
 ```
 
-A native keychain queried only by `github.com` may return a personal token when a company repository expects a different one. GitSetu's lower-level API can include an optional credential path in its record key, but the normal `gitsetu credential` command currently leaves that path empty unless `GITSETU_CREDENTIAL_PATH` is supplied. Use the lower-level API or an explicit path when repository-level separation is required.
+A native keychain queried only by `github.com` may return a personal token when a company repository expects a different one. GitSetu includes Git's `path=` value in the record key, so repository-level requests remain isolated. Use the explicit environment override only when a wrapper intentionally needs a different scope.
 
 ## Managed Git configuration
 
@@ -39,7 +39,7 @@ printf 'protocol=https\nhost=github.com\nusername=dev\npassword=PAT_TOKEN\n\n' \
   | gitsetu credential store
 ```
 
-The `get` and `erase` actions use the same profile/host/path namespace at the keychain API boundary. The CLI path is empty unless explicitly supplied as described above. Records are versioned and fields are encoded so delimiters, whitespace, and Unicode values cannot be confused with record structure.
+The `get` and `erase` actions use the same profile/host/path namespace at the keychain API boundary. The CLI passes the protocol's exact `path=` value, while `GITSETU_CREDENTIAL_PATH` is an explicit wrapper/test override. Records are versioned and fields are encoded so delimiters, whitespace, and Unicode values cannot be confused with record structure.
 
 ## Explicit zero-dependency fallback
 
