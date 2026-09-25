@@ -63,6 +63,17 @@ node "$NODE_ROOT/packaging/release-manifest.js" verify \
     --manifest "$RELATIONSHIP_MANIFEST" \
     --directory "$ASSETS" \
     --phase core >/dev/null
+if node "$NODE_ROOT/packaging/release-manifest.js" create \
+    --directory "$ASSETS" \
+    --output "$TMP_ROOT/invalid-relationship.json" \
+    --tag v1.1.0 \
+    --source-commit 1111111111111111111111111111111111111111 \
+    --tag-commit 2222222222222222222222222222222222222222 \
+    --phase core \
+    --created-at 2026-09-25T00:00:00Z >/dev/null 2>&1; then
+    printf 'non-ancestor source/tag relationship was accepted\n' >&2
+    exit 1
+fi
 
 CORE_MANIFEST="$TMP_ROOT/core-release-manifest.json"
 node "$NODE_ROOT/packaging/release-manifest.js" create \
