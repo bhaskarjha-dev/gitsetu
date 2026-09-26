@@ -199,6 +199,56 @@ test_process_start_mismatch_is_reaped() {
 }
 
 # ------------------------------------------------------------------------------
+# Lock parent must be private without demanding a private ancestry
+# ------------------------------------------------------------------------------
+# The lock parent itself must be a real, user-owned directory, but requiring
+# every ancestor up to "/" to be user-owned rejects ordinary installations:
+# /home and /tmp are root-owned on Linux, /Users is root-owned on macOS, and
+# macOS ships /tmp and /var as symlinks into /private. This regression passed
+# unnoticed on Git Bash because MSYS reports every path as owned by the caller,
+# so the ownership gate was unreachable on the only platform available locally.
+test_lock_parent_under_shared_ancestor_is_accepted() {
+    local shared_base="" candidate
+    for candidate in "${TMPDIR:-/tmp}" /tmp /var/tmp /private/tmp; do
+        [[ -n "$candidate" && -d "$candidate" && -w "$candidate" ]] || continue
+        shared_base="$candidate"
+        break
+    done
+    if [[ -z "$shared_base" ]]; then
+        skip_test "shared-ancestor lock parent" "no writable shared temp directory is available"
+        return 0
+    fi
+
+    local parent status=0
+    parent=$(umask 077 && mktemp -d "$shared_base/gitsetu-lock-ancestor.XXXXXX") || {
+        printf '    FAIL: could not create a lock parent under %s\n' "$shared_base"
+        return 1
+    }
+
+    _gitsetu_lock_parent_is_safe "$parent" || status=$?
+    assert_equals "0" "$status" \
+        "lock parent under a shared ancestor ($shared_base) is accepted" || {
+        rm -rf "$parent"
+        return 1
+    }
+
+    # A symlinked lock parent is still refused: that is the component an
+    # attacker could redirect, and it is where the check must bite.
+    local link="$parent/redirected"
+    if ln -s "$parent" "$link" 2>/dev/null; then
+        status=0
+        _gitsetu_lock_parent_is_safe "$link" || status=$?
+        assert_equals "1" "$status" "symlinked lock parent is refused" || {
+            rm -rf "$parent"
+            return 1
+        }
+    else
+        skip_test "symlinked lock parent" "symlink creation is unavailable on this host"
+    fi
+    rm -rf "$parent"
+}
+
+# ------------------------------------------------------------------------------
 # Run all tests
 # ------------------------------------------------------------------------------
 printf '\n%btest_lock_contention.sh%b\n' "$T_BOLD" "$T_RESET"
@@ -207,6 +257,7 @@ run_test "re-entrant locking increments and decrements depth" test_lock_reentran
 run_test "stale lock recovery from dead PID" test_stale_lock_recovery
 run_test "lock contention timeout when held by live PID" test_lock_timeout_contention
 run_test "lock symlink is refused" test_lock_symlink_is_refused
+run_test "lock parent under a shared ancestor is accepted" test_lock_parent_under_shared_ancestor_is_accepted
 run_test "release rejects wrong path" test_release_rejects_wrong_path
 run_test "release rejects replaced token" test_release_rejects_replaced_token
 run_test "live owner survives old timestamp" test_live_owner_with_old_timestamp_is_not_reaped
