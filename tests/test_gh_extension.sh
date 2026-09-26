@@ -13,6 +13,25 @@ fail() { printf '  [FAIL] %s\n' "$1" >&2; failed=$((failed + 1)); }
 
 [[ -f "$EXT" && -x "$EXT" ]] && pass "gh-gitsetu is an executable file" || fail "gh-gitsetu executable"
 [[ -f "$ALIAS" && -x "$ALIAS" ]] && pass "gh-setu is an executable file" || fail "gh-setu executable"
+
+# A Windows worktree reports every file as executable, so -x alone cannot prove
+# that a fresh POSIX checkout receives the execute bit. Assert the recorded
+# index mode instead, because that is what git materializes on Linux/macOS and
+# what packaging/release.js validate-source enforces there.
+if command -v git >/dev/null 2>&1 && git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+    for tracked in "$EXT" "$ALIAS"; do
+        rel="${tracked#"$ROOT"/}"
+        mode=$(git -C "$ROOT" ls-files -s -- "$rel" 2>/dev/null | awk 'NR==1{print $1}')
+        if [[ "$mode" == "100755" ]]; then
+            pass "$rel records mode 100755 in the git index"
+        else
+            fail "$rel must be recorded as 100755 in the git index (found '${mode:-missing}')"
+        fi
+    done
+else
+    fail "git index mode check requires a git checkout"
+fi
+
 bash -n "$EXT" && bash -n "$ALIAS" && pass "extension scripts pass Bash syntax" || fail "extension syntax"
 if diff -u <(tail -n +3 "$EXT") <(tail -n +3 "$ALIAS") >/dev/null; then
     pass "gh setu uses the same verified extension implementation"

@@ -48,6 +48,16 @@ else
     fail "bundle manifest modules" "lib/completion.sh is not declared"
 fi
 
+# packaging/release.env is compared byte-for-byte against generated content by
+# release.js validate-source. Without an explicit LF attribute, a Windows
+# checkout (core.autocrlf=true) rewrites it to CRLF and the comparison fails even
+# though the committed file is current. Assert the attribute, not the worktree.
+if git -C "$REPO_DIR" check-attr eol -- packaging/release.env 2>/dev/null | grep -q 'eol: lf'; then
+    pass "release.env is pinned to LF so byte-exact validation is checkout-stable"
+else
+    fail "release.env line endings" "packaging/release.env needs an explicit eol=lf attribute in .gitattributes"
+fi
+
 # 3. Check standalone flag is embedded
 if grep -q "Release state: development" "$BUNDLE_FILE"; then
     pass "bundle banner marks the non-public development release state"
