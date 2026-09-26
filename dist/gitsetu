@@ -10699,14 +10699,32 @@ _gitsetu_lock_reap_if_unchanged() {
 }
 
 _gitsetu_lock_parent_is_safe() {
-    local parent="$1" current="$1" up canonical
+    local parent="$1" current="$1" up
     [[ -n "$parent" && "$parent" != *[[:cntrl:]]* ]] || return 1
     case "$parent" in /*|[A-Za-z]:/*) ;; *) return 1 ;; esac
-    canonical=$(normalize_path "$parent") || return 1
-    [[ "$canonical" == "$parent" ]] || return 1
+
+    # The lock parent is the only component an attacker could substitute, so
+    # redirection and ownership are enforced here: it must be a real directory,
+    # not a symlink or reparse point, and owned by the current user. acquire_lock
+    # re-runs this check after creating the directory, which rejects a parent
+    # that another user pre-created.
+    if [[ -e "$parent" || -L "$parent" ]]; then
+        [[ -d "$parent" && ! -L "$parent" && -O "$parent" ]] || return 1
+        if declare -F _gitsetu_is_reparse_point >/dev/null 2>&1 &&
+           _gitsetu_is_reparse_point "$parent"; then
+            return 1
+        fi
+    fi
+
+    # Ancestors are validated structurally only. Requiring every ancestor up to
+    # "/" to be owned by the current user rejects ordinary installations: /home
+    # and /tmp are root-owned on Linux, /Users is root-owned on macOS, and macOS
+    # ships /tmp and /var as symlinks into /private. A shared or symlinked
+    # ancestor is safe here because the lock parent itself must still be a
+    # private, user-owned directory.
     while [[ -n "$current" && "$current" != "/" && ! "$current" =~ ^[A-Za-z]:/$ ]]; do
         if [[ -e "$current" || -L "$current" ]]; then
-            [[ -d "$current" && ! -L "$current" && -O "$current" ]] || return 1
+            [[ -d "$current" ]] || return 1
             if declare -F _gitsetu_is_reparse_point >/dev/null 2>&1 &&
                _gitsetu_is_reparse_point "$current"; then
                 return 1
