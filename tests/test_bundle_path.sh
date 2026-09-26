@@ -128,6 +128,22 @@ bundle_invoke() {
     return 0
 }
 
+# Assert the last artifact invocation succeeded and, when it did not, print the
+# captured output.  A bare status code makes a platform-specific failure
+# undiagnosable: the artifact's own error text is the only actionable evidence,
+# and without it the same failure has to be reproduced on another platform.
+bundle_assert_ok() {
+    local label="$1"
+    if [[ "$BUNDLE_STATUS" -eq 0 ]]; then
+        return 0
+    fi
+    printf '    FAIL: %s\n' "$label"
+    printf '      Exit status: %s\n' "$BUNDLE_STATUS"
+    printf '      Artifact output (tail):\n'
+    printf '%s\n' "$BUNDLE_OUTPUT" | tail -n 30 | sed 's/^/        /'
+    return 1
+}
+
 # Start one isolated artifact invocation and write its status beside its output.
 # This is used only by the lock-contention case; ordinary cases use
 # bundle_invoke so their output remains easy to diagnose.
@@ -451,7 +467,7 @@ bundle_prepare_configured() {
             return 0
         fi
         bundle_invoke setup --auto
-        assert_equals "0" "$BUNDLE_STATUS" "bundle setup --auto succeeds" || return 1
+        bundle_assert_ok "bundle setup --auto succeeds" || return 1
         assert_contains "$BUNDLE_OUTPUT" "Setup Complete" "bundle setup --auto reports completion" || return 1
         bundle_cache_base_state || return 1
     fi

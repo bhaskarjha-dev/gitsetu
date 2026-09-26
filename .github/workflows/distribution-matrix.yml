@@ -95,16 +95,22 @@ jobs:
         run: |
           make dist-check
           make test-bundle
-      - name: Install hash-pinned Scoop 0.5.3 test dependency
+      - name: Install commit-pinned Scoop 0.5.3 test dependency
         run: |
           $ErrorActionPreference = 'Stop'
-          $zip = Join-Path $env:RUNNER_TEMP 'scoop-v0.5.3.zip'
-          Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/ScoopInstaller/Scoop/archive/refs/tags/v0.5.3.zip' -OutFile $zip
-          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($actual -ne '2a8d8b5f4d9bc60503d8274eba45b87dff8e938959a916b1fe4088ee9e9ef17b') { throw "Scoop test dependency hash mismatch: $actual" }
+          # Scoop 0.5.3 resolves its own version through git, so the test
+          # dependency has to be a real git checkout at the pinned commit. A
+          # hash-verified source archive carries no .git, which makes
+          # `scoop --version` abort with "not a git repository" before any
+          # package lifecycle test runs. The commit id below is the verified
+          # SHA for the v0.5.3 tag and pins the full tree, not a redirectable
+          # archive URL.
           $destination = Join-Path $env:RUNNER_TEMP 'scoop-0.5.3'
-          Expand-Archive -LiteralPath $zip -DestinationPath $destination
-          $env:SCOOP = Join-Path $destination 'Scoop-0.5.3'
+          & git clone --quiet --depth 1 --branch v0.5.3 https://github.com/ScoopInstaller/Scoop.git $destination
+          if ($LASTEXITCODE -ne 0) { throw "Scoop test dependency clone failed: $LASTEXITCODE" }
+          $actual = (& git -C $destination rev-parse HEAD).Trim().ToLowerInvariant()
+          if ($actual -ne 'b588a06e41d920d2123ec70aee682bae14935939') { throw "Scoop test dependency pin mismatch: $actual" }
+          $env:SCOOP = $destination
           foreach ($name in @('shims','apps','cache','buckets')) {
             [void][IO.Directory]::CreateDirectory((Join-Path $env:SCOOP $name))
           }
