@@ -79,9 +79,9 @@
           pkgs = nixpkgsFor.${system};
         in {
           aliases = pkgs.runCommand "gitsetu-alias-check" { } ''
-            test -x $package/bin/gitsetu
-            test -L $package/bin/git-setu
-            $package/bin/gitsetu --version | grep -F 'gitsetu v1.1.0'
+            test -x ${package}/bin/gitsetu
+            test -L ${package}/bin/git-setu
+            ${package}/bin/gitsetu --version | grep -F 'gitsetu v1.1.0'
           '';
         });
     };

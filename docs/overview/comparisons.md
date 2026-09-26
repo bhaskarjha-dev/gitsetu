@@ -33,9 +33,9 @@ Managing multiple directory-scoped Git identities securely across work, open-sou
 | **SSH & Cryptography Orchestration** | | | | | | | |
 | Automated SSH key generation | ✓ (Ed25519) | ~ (Import) | **✓** (Ed25519/RSA) | ✗ | ✗ | ✓ | ✗ |
 | Automated `ssh-agent` loading | **✓** | ✗ | **✓** | ✗ | ✗ | ✗ | ✗ |
-| OpenSSH `Include` directive pivot | **✓** | ~ | ~ | ✗ | ~ | ✗ | ✓ |
+| OpenSSH `Include` directive pivot | **✓** | ~ | ~ | ✗ | ✗ | ✗ | ✓ |
 | Corporate firewall Port 443 fallback | **✓** (explicit consent) | ✗ | ✗ | ✗ | ✗ | ✗ | ~ |
-| SSH commit signing (`gpgsign`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ~ |
+| SSH commit signing (`gpgsign`) | ✓ | ✓ | ✓ | ✓ | ✗ | ✗ | ~ |
 | Hardware key bootstrapping (FIDO2) | **✓** | ✗ | ✗ | ✗ | ✗ | ✗ | ~ |
 | Standard clone URLs (`git@github.com`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ |
 | **Safety Guard Rails & Integrity** | | | | | | | |

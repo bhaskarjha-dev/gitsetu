@@ -5,6 +5,15 @@
 *.sh text eol=lf
 gitsetu text eol=lf
 packaging/gh-extension/gh-gitsetu text eol=lf
+packaging/gh-extension/gh-setu text eol=lf
+
+# JavaScript / Node.js
+*.js text eol=lf
+*.mjs text eol=lf
+*.cjs text eol=lf
+
+# JSON
+*.json text eol=lf
 
 # Documentation
 *.md text eol=lf
@@ -15,6 +24,18 @@ packaging/gh-extension/gh-gitsetu text eol=lf
 .gitignore text eol=lf
 .gitattributes text eol=lf
 LICENSE text eol=lf
+Makefile text eol=lf
+*.nix text eol=lf
+*.lock text eol=lf
+*.ps1 text eol=lf
+*.cs text eol=lf
+*.toml text eol=lf
+.shellcheckrc text eol=lf
+CODEOWNERS text eol=lf
+
+# Windows batch files — CMD.exe requires CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
 
 # Export ignore rules for clean, deterministic release archives
 .github export-ignore

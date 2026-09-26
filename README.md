@@ -246,17 +246,17 @@ gitsetu teardown
 
 ## Why GitSetu?
 
-| | GitSetu | gitego | karn | gitch | Manual DIY |
+| | GitSetu | git-ego | karn | gitch | Manual DIY |
 |---|:---:|:---:|:---:|:---:|:---:|
 | Zero runtime dependencies | ✓ | | | | ✓ |
 | Auto-discovery setup | ✓ | | | | |
-| SSH key generation | ✓ | ~ | ~ | ~ | |
-| Pre-commit guard | ✓ | ~ | ✓ | ✓ | |
-| Credential broker | ✓ | ✓ | ~ | ✓ | |
+| SSH key generation | ✓ | ~ | | ~ | |
+| Pre-commit guard | ✓ | ~ | | ✓ | |
+| Credential broker | ✓ | ✓ | | ✓ | |
 | Authenticated v2 backup | ✓ | | | | |
 | Windows native support | ✓ | ~ | | | ~ |
 | Built-in doctor/verify | ✓ | | | | |
-| Shell prompt | ✓ | ✓ | ✓ | ✓ | |
+| Shell prompt | ✓ | ✓ | | ✓ | |
 
 See [full comparison →](docs/overview/comparisons.md)
 
