@@ -580,7 +580,10 @@ test_backup_restore_cleanup_on_decryption_failure() {
     assert_equals 1 "$res" "restore fails cleanly on bad vault" || return 1
 
     local leaks
-    leaks=$(find "${TMPDIR:-/tmp}" -maxdepth 1 -name "*gitsetu_vault*" 2>/dev/null | wc -l)
+    # BSD/macOS wc pads its output with leading spaces when reading a pipe, so
+    # normalize before comparing. Without this the count is "       0" and the
+    # assertion fails on a clean run.
+    leaks=$(find "${TMPDIR:-/tmp}" -maxdepth 1 -name "*gitsetu_vault*" 2>/dev/null | wc -l | tr -d '[:space:]')
     assert_equals "0" "$leaks" "no temporary vault files leaked on restore failure"
 
     rm -f "corrupted_vault.enc"

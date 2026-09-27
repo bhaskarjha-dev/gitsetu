@@ -3,6 +3,12 @@
 # All salts, keys, identities, and payloads below are disposable test data.
 set -euo pipefail
 
+# This suite reads and rewrites binary vault files. BSD sed and grep abort with
+# "RE error: illegal byte sequence" when they meet ciphertext under a UTF-8
+# locale, so the whole suite runs in the C locale like the product's own byte
+# handling does.
+export LC_ALL=C
+
 source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 setup_test_home
 
