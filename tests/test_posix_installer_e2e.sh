@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/gitsetu-posix-e2e.XXXXXX")"
+SANDBOX="$(mktemp -d "$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)/gitsetu-posix-e2e.XXXXXX")"
 trap 'rm -rf -- "$SANDBOX"' EXIT HUP INT TERM
 INSTALL_ROOT="$SANDBOX/install"
 ARTIFACT="$SANDBOX/gitsetu"

@@ -91,13 +91,16 @@ _run_credential() {
     shift 2
 
     local stdout_log="$HOME/.credential_stdout_$$.log"
+    local stderr_log="$HOME/.credential_stderr_$$.log"
     local kill_status=0
     local wait_status=0
 
     # Run in a background subshell (portable — no GNU timeout needed).
     # OS override is via marker file, not env var (bash 3.2 limitation).
+    # stderr is captured rather than discarded: the broker reports refusals
+    # there, and dropping it made every failure indistinguishable.
     (printf "%b" "$stdin_data" | bash "$GITSETU_EXE" "$@" \
-        >"$stdout_log" 2>/dev/null) &
+        >"$stdout_log" 2>"$stderr_log") &
     local cmd_pid=$!
 
     # Watchdog: kill the command after timeout_secs
@@ -125,13 +128,18 @@ _run_credential() {
     fi
 
     if [[ $rc -ne 0 ]]; then
-        rm -f "$stdout_log"
+        CREDENTIAL_LAST_STATUS="$rc"
+        CREDENTIAL_LAST_STDERR=$(cat "$stderr_log" 2>/dev/null || printf '')
+        CREDENTIAL_LAST_STDOUT=$(cat "$stdout_log" 2>/dev/null || printf '')
+        rm -f "$stdout_log" "$stderr_log"
         return "$rc"
     fi
 
-    # Print stdout (needed for credential get)
+    # Print stdout (needed for credential get) and retain stderr for diagnosis.
+    CREDENTIAL_LAST_STATUS=0
+    CREDENTIAL_LAST_STDERR=$(cat "$stderr_log" 2>/dev/null || printf '')
     cat "$stdout_log" 2>/dev/null
-    rm -f "$stdout_log"
+    rm -f "$stdout_log" "$stderr_log"
     return 0
 }
 
@@ -156,23 +164,44 @@ test_credential_broker() {
     local store_input="protocol=https\nhost=github.com\nusername=work_user\npassword=secret_pat_123\n\n"
     _run_credential 15 "$store_input" credential store || {
         printf '    FAIL: credential store hung or failed\n'
+        printf '    store status: %s\n' "${CREDENTIAL_LAST_STATUS:-?}"
+        printf '    store stderr: %s\n' "${CREDENTIAL_LAST_STDERR:-<empty>}"
         return 1
     }
+    local store_status="$CREDENTIAL_LAST_STATUS"
+    local store_stderr="$CREDENTIAL_LAST_STDERR"
 
     # Verify it hit the fallback file
-    assert_equals 0 $? "credential store exits cleanly" || return 1
+    assert_equals 0 "$store_status" "credential store exits cleanly" || return 1
 
     # 2. Test getting credentials
     local get_input="protocol=https\nhost=github.com\n\n"
     local get_output
     get_output=$(_run_credential 15 "$get_input" credential get) || {
         printf '    FAIL: credential get hung or failed\n'
+        printf '    get status: %s\n' "${CREDENTIAL_LAST_STATUS:-?}"
+        printf '    get stderr: %s\n' "${CREDENTIAL_LAST_STDERR:-<empty>}"
+        printf '    store stderr: %s\n' "${store_stderr:-<empty>}"
         return 1
     }
 
     # It should output username=... and password=...
     if [[ "$get_output" != *"username=work_user"* ]] || [[ "$get_output" != *"password=secret_pat_123"* ]]; then
-        echo "Failed to retrieve correct credentials. Output: $get_output"
+        printf 'Failed to retrieve correct credentials. Output: %s\n' "$get_output"
+        printf '    get status:   %s\n' "${CREDENTIAL_LAST_STATUS:-?}"
+        printf '    get stderr:   %s\n' "${CREDENTIAL_LAST_STDERR:-<empty>}"
+        printf '    store status: %s\n' "$store_status"
+        printf '    store stderr: %s\n' "${store_stderr:-<empty>}"
+        printf '    backend: %s  os: %s  OSTYPE: %s\n' \
+            "${GITSETU_CREDENTIAL_BACKEND:-unset}" "${GITSETU_OS:-unset}" "${OSTYPE:-unset}"
+        printf '    token store:\n'
+        local tokens_file="${GITSETU_CONFIG_DIR:-$HOME/.config/gitsetu}/.tokens"
+        if [[ -f "$tokens_file" ]]; then
+            printf '      %s (%s bytes)\n' "$tokens_file" "$(wc -c < "$tokens_file" | tr -d ' ')"
+            sed -e 's/^/      | /' "$tokens_file"
+        else
+            printf '      absent: %s\n' "$tokens_file"
+        fi
         return 1
     fi
 

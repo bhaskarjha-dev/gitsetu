@@ -14,7 +14,7 @@ failed=0
 pass() { printf '  [PASS] %s\n' "$1"; passed=$((passed + 1)); }
 fail() { printf '  [FAIL] %s: %s\n' "$1" "$2" >&2; failed=$((failed + 1)); }
 
-TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/gitsetu-distribution-security.XXXXXX")"
+TMP_ROOT="$(mktemp -d "$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)/gitsetu-distribution-security.XXXXXX")"
 trap 'rm -rf -- "$TMP_ROOT"' EXIT HUP INT TERM
 
 # H-11: v1.1.0 is intentionally withheld and has no installable package claims.

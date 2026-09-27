@@ -29,7 +29,7 @@ if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
 fi
 
 # 1. Prepare sterile clean-room sandbox
-SANDBOX_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/gitsetu-npm-e2e.XXXXXX")
+SANDBOX_ROOT=$(mktemp -d "$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)/gitsetu-npm-e2e.XXXXXX")
 if [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]]; then
     SANDBOX_ROOT=$(cd "$SANDBOX_ROOT" && pwd -W)
 fi

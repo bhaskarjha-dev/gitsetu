@@ -2,7 +2,7 @@
 # Isolated tests for strict v2 registry, numeric, path, and secure temp helpers.
 set -euo pipefail
 
-TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/gitsetu-foundations.XXXXXX")
+TEST_ROOT=$(mktemp -d "$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)/gitsetu-foundations.XXXXXX")
 trap 'rm -rf "$TEST_ROOT"' EXIT
 export HOME="$TEST_ROOT/home"
 mkdir -p "$HOME/.config/gitsetu/profiles" "$HOME/work" "$HOME/.ssh"

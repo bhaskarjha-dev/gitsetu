@@ -7,7 +7,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 test_posix_pinned_installer() {
     local sandbox root artifact digest output
-    sandbox="$(mktemp -d "${TMPDIR:-/tmp}/gitsetu-installer-test.XXXXXX")"
+    sandbox="$(mktemp -d "$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)/gitsetu-installer-test.XXXXXX")"
     root="$sandbox/install"
     artifact="$sandbox/gitsetu"
     mkdir -p "$sandbox/home"
