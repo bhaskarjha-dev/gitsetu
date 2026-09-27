@@ -3494,13 +3494,23 @@ _vault_file_size() {
 _vault_private_temp_dir() {
     local template="${1:-}"
     local temp_base="${TMPDIR:-${TMP:-${TEMP:-/tmp}}}"
-    [[ -n "$temp_base" && -d "$temp_base" && ! -L "$temp_base" && -O "$temp_base" ]] || return 1
+    [[ -n "$temp_base" && -d "$temp_base" && ! -L "$temp_base" ]] || return 1
     [[ -n "$template" && "$template" != *[[:cntrl:]]* && "$template" != */* ]] || return 1
 
+    # Resolve the staging base rather than rejecting it, and do not require it to
+    # be owned by the current user. /tmp is root-owned on every Unix host, and
+    # macOS additionally ships /tmp and /var as symlinks into /private, so both
+    # of the earlier requirements made vault backup and restore impossible on a
+    # default Linux or macOS installation. A shared base is safe here: the
+    # staging directory is created by mktemp with a unique name under umask 077,
+    # and the checks below require the created directory to be a real,
+    # user-owned, non-symlink, mode-700 directory. That directory, not its
+    # parent, is what holds the staged private keys.
     if declare -F canonicalize_path >/dev/null 2>&1; then
         local canonical_temp
         canonical_temp=$(canonicalize_path "$temp_base") || return 1
-        [[ "$canonical_temp" == "$temp_base" ]] || return 1
+        [[ -n "$canonical_temp" && -d "$canonical_temp" ]] || return 1
+        temp_base="$canonical_temp"
     fi
     if declare -F _gitsetu_path_has_symlink_component >/dev/null 2>&1; then
         local link_status=0
@@ -3531,7 +3541,9 @@ _vault_private_temp_dir() {
         path=$(umask 077 && mktemp -d "$temp_base/$template.XXXXXX" 2>/dev/null) || return 1
     fi
     path=${path%$'\r'}
-    [[ -d "$path" && ! -L "$path" ]] || return 1
+    # The created staging directory must be ours. This is the ownership check
+    # that matters, and it is enforced here rather than on the shared base.
+    [[ -d "$path" && ! -L "$path" && -O "$path" ]] || return 1
     chmod 700 "$path" 2>/dev/null || {
         rm -rf "$path" 2>/dev/null || true
         return 1
