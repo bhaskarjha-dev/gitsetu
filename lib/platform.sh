@@ -80,18 +80,20 @@ detect_os() {
 # and tab are therefore still rejected, while UTF-8 path bytes remain valid.
 _gitsetu_contains_ascii_control() {
     [[ $# -eq 1 ]] || return 1
-    local value="$1" char ordinal
-    local LC_ALL=C
 
-    while [[ -n "$value" ]]; do
-        char="${value:0:1}"
-        value="${value:1}"
-        printf -v ordinal '%d' "'$char" || return 1
-        [[ "$ordinal" =~ ^[0-9]+$ ]] || return 1
-        if [[ "$ordinal" -le 31 || "$ordinal" -eq 127 ]]; then
-            return 0
-        fi
-    done
+    # Byte-exact and locale-independent. The previous implementation walked the
+    # value one character at a time and converted each with printf '%d' on the
+    # character. Under bash 3.2 a non-ASCII byte in the C locale cannot be
+    # converted that way, and the loop reported "no control found" at that
+    # point, abandoning the rest of the value. A path carrying a UTF-8 byte
+    # followed by a newline was therefore accepted, which is the exact
+    # injection shape this check exists to reject. A C0/DEL bracket expression
+    # inspects every byte with no conversion step, no external process, and no
+    # locale dependency.
+    local LC_ALL=C
+    case "$1" in
+        *[$'\001'-$'\037'$'\177']*) return 0 ;;
+    esac
     return 1
 }
 

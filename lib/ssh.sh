@@ -967,23 +967,32 @@ auto_register_ssh_keys() {
         done
     fi
 
-    # Deduplicate candidate key paths
+    # Deduplicate candidate key paths. Bash 3.2, the interpreter macOS still
+    # ships, raises "unbound variable" when an empty array is value-expanded
+    # under set -u. Both loops therefore iterate behind an explicit count check,
+    # because either array is legitimately empty on the first pass.
     local -a unique_keys=()
     local kp
-    for kp in "${keys_to_process[@]}"; do
-        [[ -z "$kp" ]] && continue
-        local seen=0
-        local u
-        for u in "${unique_keys[@]}"; do
-            if [[ "$u" == "$kp" ]]; then
-                seen=1
-                break
+    local process_count=${#keys_to_process[@]}
+    if [[ "$process_count" -gt 0 ]]; then
+        for kp in "${keys_to_process[@]}"; do
+            [[ -z "$kp" ]] && continue
+            local seen=0
+            local u
+            local unique_count=${#unique_keys[@]}
+            if [[ "$unique_count" -gt 0 ]]; then
+                for u in "${unique_keys[@]}"; do
+                    if [[ "$u" == "$kp" ]]; then
+                        seen=1
+                        break
+                    fi
+                done
+            fi
+            if [[ "$seen" -eq 0 ]]; then
+                unique_keys+=("$kp")
             fi
         done
-        if [[ "$seen" -eq 0 ]]; then
-            unique_keys+=("$kp")
-        fi
-    done
+    fi
 
     if [[ "${#unique_keys[@]}" -eq 0 ]]; then
         print_info "No profile SSH keys found to register."

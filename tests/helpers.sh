@@ -8,6 +8,27 @@
 set -euo pipefail
 
 # ------------------------------------------------------------------------------
+# Canonical temporary base
+# ------------------------------------------------------------------------------
+# macOS exposes /tmp and /var as symlinks into /private, and its per-user TMPDIR
+# lives under /var/folders. gitsetu correctly refuses to write managed state
+# through a symlinked path component, so a suite that builds its own temporary
+# root under ${TMPDIR:-/tmp} hands the product a path the product must reject.
+# Publishing one canonical temp base here means every suite that sources this
+# file inherits a symlink-free location. Git Bash is excluded: its paths are
+# already synthetic and this harness converts them with `pwd -W`.
+if [[ "${OSTYPE:-}" != msys* && "${OSTYPE:-}" != cygwin* && "${OSTYPE:-}" != mingw* ]]; then
+    _test_canonical_tmp=""
+    if [[ -n "${TMPDIR:-}" && -d "${TMPDIR:-}" ]]; then
+        _test_canonical_tmp=$(cd "${TMPDIR%/}" 2>/dev/null && pwd -P) || _test_canonical_tmp=""
+    fi
+    if [[ -n "$_test_canonical_tmp" && -d "$_test_canonical_tmp" ]]; then
+        export TMPDIR="$_test_canonical_tmp"
+    fi
+    unset _test_canonical_tmp
+fi
+
+# ------------------------------------------------------------------------------
 # Test counters and result state
 # ------------------------------------------------------------------------------
 # Keep the initialized state when a suite sources helpers a second time from a

@@ -209,8 +209,10 @@ test_process_start_mismatch_is_reaped() {
 # so the ownership gate was unreachable on the only platform available locally.
 test_lock_parent_under_shared_ancestor_is_accepted() {
     local shared_base="" candidate
-    for candidate in "${TMPDIR:-/tmp}" /tmp /var/tmp /private/tmp; do
+    for candidate in "${TMPDIR:-}" /tmp /var/tmp; do
         [[ -n "$candidate" && -d "$candidate" && -w "$candidate" ]] || continue
+        candidate=$(cd "$candidate" 2>/dev/null && pwd -P) || continue
+        [[ -d "$candidate" && -w "$candidate" ]] || continue
         shared_base="$candidate"
         break
     done
