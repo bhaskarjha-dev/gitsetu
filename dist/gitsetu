@@ -4131,6 +4131,47 @@ _vault_archive_member_broad_allowed() {
     return 1
 }
 
+_vault_verbose_member_size() {
+    # Read one "tar -tv" line and print the member size, or fail when the layout
+    # is not recognized. Human-readable tar output is not a stable interface and
+    # the two dominant implementations disagree about the owner field:
+    #
+    #   GNU: -rw------- 0/0            1234 2026-09-27 09:26 name
+    #   BSD: -rw------- 0 user group    1234 Sep 27 09:26 name
+    #
+    # Assuming GNU's layout made BSD report the group name in the size column, so
+    # vault backup refused its own freshly written archive on macOS. Owner fields
+    # vary in both arity and type, so the size is located by anchoring on the
+    # date, which both implementations print immediately after it. tar always
+    # emits English month abbreviations, independent of the caller's locale.
+    local line="$1" type="$2" candidate=""
+    local -a fields=()
+    local i last
+
+    [[ -n "$line" && "$type" == "-" ]] || { printf ''; return 1; }
+
+    # shellcheck disable=SC2206  # Deliberate word splitting of tar's fields.
+    fields=( $line )
+    # fields[0] is "<type><permissions>"; the member name is always last.
+    [[ "${#fields[@]}" -ge 4 ]] || { printf ''; return 1; }
+    last=$((${#fields[@]} - 1))
+
+    for (( i=1; i<last; i++ )); do
+        case "${fields[$i]}" in
+            Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) break ;;
+        esac
+        if [[ "${fields[$i]}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+            break
+        fi
+    done
+    # The size is the field immediately before the date. A date at the leading
+    # position means this is not a listing line we understand.
+    (( i > 1 && i < last )) || { printf ''; return 1; }
+    candidate="${fields[$((i - 1))]}"
+    [[ "$candidate" =~ ^[0-9]+$ ]] || { printf ''; return 1; }
+    printf '%s' "$candidate"
+}
+
 _vault_validate_archive_listing() {
     local archive_path="$1" private_dir="$2"
     local names_list="$private_dir/tar.names"
@@ -4179,9 +4220,8 @@ _vault_validate_archive_listing() {
         [[ -n "$line_no" ]] || return 1
         type="${line_no:0:1}"
         [[ "$type" == "-" || "$type" == "d" ]] || return 1
-        IFS=' ' read -r permissions owner member_size remainder <<< "$line_no"
-        [[ "$type" == "d" || "$member_size" =~ ^[0-9]+$ ]] || return 1
         if [[ "$type" == "-" ]]; then
+            member_size=$(_vault_verbose_member_size "$line_no" "$type") || return 1
             _vault_validate_bounded_uint "$member_size" 0 "$GITSETU_VAULT_MAX_MEMBER_BYTES" || return 1
         fi
     done < "$verbose_list"
