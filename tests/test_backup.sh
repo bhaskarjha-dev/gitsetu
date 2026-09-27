@@ -125,6 +125,53 @@ assert_no_vault_restore_sidecars() {
     return 0
 }
 
+# The vault's archive safety check reads "tar -tv" listings, and GNU and BSD
+# disagree about the owner field. macOS ships bsdtar, so a GNU-shaped parse put
+# the group name in the size column and backup rejected its own fresh archive.
+# Feed recorded listing lines from both implementations so the contract is
+# verifiable on every platform, not only where a BSD tar happens to exist.
+test_vault_verbose_listing_size_layouts() {
+    local line want got rc=0 failures=0 entry rest kind
+    local -a cases=(
+        'gnu|-rw------- 0/0          1234 2026-09-27 09:26 gitsetu-v2/state/profiles.conf|1234'
+        'gnu-zero|-rw------- 0/0             0 2026-09-27 09:26 gitsetu-v2/keys/0.pub|0'
+        'bsd|-rw-------  0 runner  staff    1234 Sep 27 09:26 gitsetu-v2/state/profiles.conf|1234'
+        'bsd-zero|-rw-r--r--  0 runner  staff       0 Sep 27 09:26 gitsetu-v2/keys/0.pub|0'
+        'bsd-numeric-gid|-rw-r--r--  0 runner  20  4096 Sep 27 09:26 gitsetu-v2/state/profiles.conf|4096'
+    )
+    for entry in "${cases[@]}"; do
+        rest="${entry#*|}"
+        line="${rest%%|*}"
+        want="${rest##*|}"
+        got=""
+        rc=0
+        got=$(_vault_verbose_member_size "$line" "-") || rc=$?
+        if [[ "$rc" -ne 0 || "$got" != "$want" ]]; then
+            failures=$((failures + 1))
+        fi
+    done
+    assert_equals "0" "$failures" \
+        "GNU and BSD tar -tv layouts both yield the member size" || return 1
+
+    # Non-regular members and unrecognized layouts must still fail closed.
+    local -a refused=(
+        'drwxr-xr-x  0 runner  staff      64 Sep 27 09:26 gitsetu-v2/state|d'
+        'lrwxr-xr-x  0 runner  staff       7 Sep 27 09:26 gitsetu-v2/keys/evil|l'
+        'hrw-r--r--  0 runner  staff       0 Sep 27 09:26 link to gitsetu-v2/keys/0|h'
+        '-rw-------  0 runner  staff  nope Sep 27 09:26 gitsetu-v2/x|-'
+    )
+    failures=0
+    for entry in "${refused[@]}"; do
+        line="${entry%%|*}"
+        kind="${entry##*|}"
+        rc=0
+        _vault_verbose_member_size "$line" "$kind" >/dev/null 2>&1 || rc=$?
+        [[ "$rc" -ne 0 ]] || failures=$((failures + 1))
+    done
+    assert_equals "0" "$failures" \
+        "directory, symlink, hardlink and unparsable listings fail closed"
+}
+
 # --- Tests ---
 
 test_ensure_dirs_creates_all() {
@@ -621,5 +668,6 @@ run_backup_test "vault ciphertext permissions 600" test_backup_vault_file_permis
 run_backup_test "restore cleanup on decryption failure" test_backup_restore_cleanup_on_decryption_failure
 run_backup_test "backup does not leak env var" test_backup_does_not_leak_env_var
 run_backup_test "restore rejects path traversal" test_backup_rejects_path_traversal
+run_backup_test "GNU and BSD tar listing sizes parse identically" test_vault_verbose_listing_size_layouts
 
 print_results "Backup tests"
