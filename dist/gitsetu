@@ -8526,6 +8526,10 @@ _verify_stat_mode() {
 }
 
 _verify_stat_fstype() {
+    # GNU: -f selects filesystem status and -c sets the format. BSD/macOS: -f
+    # takes the format directly, so "-f -c" is a malformed request there and the
+    # second form is the one that answers. The previous first form was invalid on
+    # both platforms, so filesystem-type detection always fell through to empty.
     stat -f -c '%T' "$1" 2>/dev/null || stat -f '%T' "$1" 2>/dev/null || printf ''
 }
 
