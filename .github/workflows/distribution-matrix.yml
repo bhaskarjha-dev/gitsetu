@@ -120,6 +120,9 @@ jobs:
           $env:Path = "$env:SCOOP;$env:Path"
           & "$env:SCOOP\bin\scoop.ps1" --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Each run: step is a separate process, so an in-process $env:SCOOP is
+          # gone by the next step. Hand it forward explicitly.
+          "SCOOP=$destination" >> $env:GITHUB_ENV
       - name: Test controlled Scoop package and GitHub extension lifecycle
         run: |
           if (-not $env:SCOOP) { throw 'Pinned Scoop test dependency was not prepared' }

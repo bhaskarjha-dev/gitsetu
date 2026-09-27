@@ -132,16 +132,22 @@ bundle_invoke() {
 # captured output.  A bare status code makes a platform-specific failure
 # undiagnosable: the artifact's own error text is the only actionable evidence,
 # and without it the same failure has to be reproduced on another platform.
-bundle_assert_ok() {
-    local label="$1"
-    if [[ "$BUNDLE_STATUS" -eq 0 ]]; then
+bundle_assert_status() {
+    local expected="$1" label="$2"
+    if [[ "$BUNDLE_STATUS" -eq "$expected" ]]; then
         return 0
     fi
     printf '    FAIL: %s\n' "$label"
-    printf '      Exit status: %s\n' "$BUNDLE_STATUS"
+    printf '      Exit status: %s (expected %s)\n' "$BUNDLE_STATUS" "$expected"
     printf '      Artifact output (tail):\n'
     printf '%s\n' "$BUNDLE_OUTPUT" | tail -n 30 | sed 's/^/        /'
     return 1
+}
+
+# Every artifact invocation in this suite asserts on an exit status, so a bare
+# status code hides the only actionable evidence: the artifact own output.
+bundle_assert_ok() {
+    bundle_assert_status 0 "$1"
 }
 
 # Start one isolated artifact invocation and write its status beside its output.
@@ -472,7 +478,7 @@ bundle_prepare_configured() {
         bundle_cache_base_state || return 1
     fi
     bundle_invoke add work "Work User" "work@example.com" "$BUNDLE_HOME/work"
-    assert_equals "0" "$BUNDLE_STATUS" "bundle add creates a second profile" || return 1
+    bundle_assert_ok "bundle add creates a second profile" || return 1
     assert_contains "$BUNDLE_OUTPUT" "work@example.com" "bundle add reports the new profile" || return 1
     bundle_cache_current_state || return 1
     return 0
@@ -599,7 +605,7 @@ bundle_setup_auto_writes_state() {
     fi
 
     bundle_invoke setup --auto
-    assert_equals "0" "$BUNDLE_STATUS" "bundle setup --auto succeeds in isolation" || return 1
+    bundle_assert_ok "bundle setup --auto succeeds in isolation" || return 1
     assert_contains "$BUNDLE_OUTPUT" "Zero-Prompt Auto-Discovery Blueprint" "setup uses the standalone auto path" || return 1
     assert_contains "$BUNDLE_OUTPUT" "Setup Complete" "setup reports completion" || return 1
     assert_contains "$BUNDLE_OUTPUT" "bundle@example.com" "setup preserves the discovered identity" || return 1
@@ -629,12 +635,12 @@ bundle_add_remove_status_prompt_run() {
             return 0
         fi
         bundle_invoke setup --auto
-        assert_equals "0" "$BUNDLE_STATUS" "setup succeeds before add lifecycle" || return 1
+        bundle_assert_ok "setup succeeds before add lifecycle" || return 1
         bundle_cache_base_state || return 1
     fi
 
     bundle_invoke add work "Work User" "work@example.com" "$BUNDLE_HOME/work"
-    assert_equals "0" "$BUNDLE_STATUS" "bundle add succeeds" || return 1
+    bundle_assert_ok "bundle add succeeds" || return 1
     assert_contains "$BUNDLE_OUTPUT" "work@example.com" "add output identifies the profile" || return 1
     assert_file_exists "$BUNDLE_PROFILES_DIR/work.gitconfig" "add writes the profile config" || return 1
     assert_file_exists "$BUNDLE_KEY_WORK" "add creates the profile private key" || return 1
@@ -649,10 +655,10 @@ bundle_add_remove_status_prompt_run() {
 
     BUNDLE_CWD="$BUNDLE_REPO_DIR"
     bundle_invoke prompt
-    assert_equals "0" "$BUNDLE_STATUS" "prompt succeeds in the mapped repository" || return 1
+    bundle_assert_ok "prompt succeeds in the mapped repository" || return 1
     assert_equals "work" "$BUNDLE_OUTPUT" "prompt returns the longest matching profile" || return 1
     bundle_invoke status
-    assert_equals "0" "$BUNDLE_STATUS" "status succeeds in the mapped repository" || return 1
+    bundle_assert_ok "status succeeds in the mapped repository" || return 1
     assert_contains "$BUNDLE_OUTPUT" "Directory context: work" "status reports the mapped context" || return 1
     assert_contains "$BUNDLE_OUTPUT" "Configured Profiles" "status renders configured profiles" || return 1
     assert_contains "$BUNDLE_OUTPUT" "work@example.com" "status renders the added identity" || return 1
@@ -662,12 +668,12 @@ bundle_add_remove_status_prompt_run() {
     # environment variables after gitsetu has exported them.
     # shellcheck disable=SC2016
     bundle_invoke run work -- bash -c 'printf "%s|%s|%s|%s" "$GIT_AUTHOR_NAME" "$GIT_AUTHOR_EMAIL" "$GIT_COMMITTER_EMAIL" "$GIT_SSH_COMMAND"'
-    assert_equals "0" "$BUNDLE_STATUS" "run executes a command under the selected profile" || return 1
+    bundle_assert_ok "run executes a command under the selected profile" || return 1
     assert_contains "$BUNDLE_OUTPUT" "Work User|work@example.com|work@example.com" "run exports the selected identity" || return 1
     assert_contains "$BUNDLE_OUTPUT" "$BUNDLE_KEY_WORK" "run exports the selected SSH key" || return 1
 
     bundle_invoke remove work --force
-    assert_equals "0" "$BUNDLE_STATUS" "remove deletes the selected profile" || return 1
+    bundle_assert_ok "remove deletes the selected profile" || return 1
     assert_contains "$BUNDLE_OUTPUT" "successfully removed" "remove reports success" || return 1
     assert_file_exists "$BUNDLE_KEY_WORK" "remove preserves private keys by default" || return 1
     assert_file_exists "$BUNDLE_KEY_WORK.pub" "remove preserves public keys by default" || return 1
@@ -683,7 +689,7 @@ bundle_add_remove_status_prompt_run() {
     assert_equals "" "$BUNDLE_OUTPUT" "prompt emits no label after profile removal" || return 1
     BUNDLE_CWD="$BUNDLE_RUN_DIR"
     bundle_invoke status
-    assert_equals "0" "$BUNDLE_STATUS" "status remains safe after profile removal" || return 1
+    bundle_assert_ok "status remains safe after profile removal" || return 1
     assert_not_contains "$BUNDLE_OUTPUT" "work@example.com" "status no longer renders the removed identity" || return 1
 }
 
@@ -709,7 +715,7 @@ bundle_guard_uninstall_restores_policy() {
 
     BUNDLE_CWD="$BUNDLE_RUN_DIR"
     bundle_invoke guard --uninstall
-    assert_equals "0" "$BUNDLE_STATUS" "bundle guard --uninstall succeeds" || return 1
+    bundle_assert_ok "bundle guard --uninstall succeeds" || return 1
     assert_contains "$BUNDLE_OUTPUT" "Removed guard hook" "guard uninstall removes the hook" || return 1
     assert_contains "$BUNDLE_OUTPUT" "Restored prior core.hooksPath" "guard uninstall restores the prior policy" || return 1
     assert_file_not_exists "$BUNDLE_HOOKS_DIR/pre-commit" "guard uninstall removes the installed hook" || return 1
@@ -736,7 +742,7 @@ bundle_guard_install_is_explicitly_skipped_for_standalone() {
         assert_contains "$BUNDLE_OUTPUT" "Guard hook installed" "standalone guard install reports installation" || return 1
         assert_file_exists "$BUNDLE_HOOKS_DIR/pre-commit" "standalone guard install writes a hook when supported" || return 1
         bundle_invoke guard --uninstall
-        assert_equals "0" "$BUNDLE_STATUS" "standalone guard uninstall follows a successful install" || return 1
+        bundle_assert_ok "standalone guard uninstall follows a successful install" || return 1
         return 0
     fi
     if [[ "$BUNDLE_OUTPUT" == *"canonical regular-file GitSetu library root"* ]]; then
@@ -762,7 +768,7 @@ bundle_verify_validates_isolated_state() {
 
     BUNDLE_CWD="$BUNDLE_REPO_DIR"
     bundle_invoke verify
-    assert_equals "0" "$BUNDLE_STATUS" "verify succeeds for an isolated valid state" || return 1
+    bundle_assert_ok "verify succeeds for an isolated valid state" || return 1
     assert_contains "$BUNDLE_OUTPUT" "SSH key files, permissions, and key pairs are valid." "verify checks key pairs" || return 1
     assert_contains "$BUNDLE_OUTPUT" "Git configuration and effective identities are valid." "verify checks effective identity" || return 1
     assert_contains "$BUNDLE_OUTPUT" "SKIPPED: network checks are opt-in" "verify keeps network checks explicitly skipped" || return 1
@@ -783,7 +789,7 @@ bundle_doctor_validates_isolated_state() {
 
     BUNDLE_CWD="$BUNDLE_REPO_DIR"
     bundle_invoke doctor
-    assert_equals "0" "$BUNDLE_STATUS" "doctor succeeds for an isolated valid state" || return 1
+    bundle_assert_ok "doctor succeeds for an isolated valid state" || return 1
     assert_contains "$BUNDLE_OUTPUT" "Active Profile: work" "doctor resolves the mapped profile" || return 1
     assert_contains "$BUNDLE_OUTPUT" "Registry: OK (2 profile(s))" "doctor validates the strict registry" || return 1
     assert_contains "$BUNDLE_OUTPUT" "All required offline diagnostics passed." "doctor reports offline success" || return 1
@@ -807,12 +813,12 @@ bundle_backup_restore_round_trip() {
     export GITSETU_TEST_VAULT_PASS='bundle-contract-password-123'
     BUNDLE_CWD="$BUNDLE_RUN_DIR"
     bundle_invoke backup "$BUNDLE_VAULT_DIR/bundle.vault"
-    assert_equals "0" "$BUNDLE_STATUS" "bundle backup creates a vault" || return 1
+    bundle_assert_ok "bundle backup creates a vault" || return 1
     assert_contains "$BUNDLE_OUTPUT" "Authenticated v2 vault created successfully" "backup reports authenticated v2 creation" || return 1
     assert_file_exists "$BUNDLE_VAULT_DIR/bundle.vault" "backup installs the requested vault path" || return 1
 
     bundle_invoke teardown --force
-    assert_equals "0" "$BUNDLE_STATUS" "teardown removes state before restore" || return 1
+    bundle_assert_ok "teardown removes state before restore" || return 1
     assert_contains "$BUNDLE_OUTPUT" "teardown complete" "teardown reports completion" || return 1
     assert_dir_not_exists "$BUNDLE_CONFIG_DIR" "teardown removes the managed config root" || return 1
     assert_file_exists "$BUNDLE_HOME/.gitconfig" "teardown preserves the user Git config" || return 1
@@ -821,7 +827,7 @@ bundle_backup_restore_round_trip() {
     assert_file_exists "$BUNDLE_KEY_GLOBAL" "teardown preserves the global private key" || return 1
     assert_file_exists "$BUNDLE_KEY_WORK" "teardown preserves the work private key" || return 1
     bundle_invoke restore "$BUNDLE_VAULT_DIR/bundle.vault"
-    assert_equals "0" "$BUNDLE_STATUS" "bundle restore succeeds from the standalone artifact" || return 1
+    bundle_assert_ok "bundle restore succeeds from the standalone artifact" || return 1
     assert_contains "$BUNDLE_OUTPUT" "Authenticated v2 vault restored successfully" "restore reports successful authentication" || return 1
     assert_file_exists "$BUNDLE_REGISTRY" "restore reinstalls the registry" || return 1
     assert_file_exists "$BUNDLE_PROFILES_DIR/work.gitconfig" "restore reinstalls profile configs" || return 1
@@ -843,26 +849,26 @@ bundle_credential_paths_are_isolated() {
     export GITSETU_CREDENTIAL_BACKEND=file
     BUNDLE_CWD="$BUNDLE_REPO_DIR"
     bundle_invoke_input $'protocol=https\nhost=github.com\npath=/repo-a\nusername=alice\npassword=alice-secret\n\n' credential store
-    assert_equals "0" "$BUNDLE_STATUS" "bundle stores the first path-scoped credential" || return 1
+    bundle_assert_ok "bundle stores the first path-scoped credential" || return 1
     bundle_invoke_input $'protocol=https\nhost=github.com\npath=/repo-b\nusername=bob\npassword=bob-secret\n\n' credential store
-    assert_equals "0" "$BUNDLE_STATUS" "bundle stores the second path-scoped credential" || return 1
+    bundle_assert_ok "bundle stores the second path-scoped credential" || return 1
 
     bundle_invoke_input $'protocol=https\nhost=github.com\npath=/repo-a\n\n' credential get
-    assert_equals "0" "$BUNDLE_STATUS" "bundle reads the first path-scoped credential" || return 1
+    bundle_assert_ok "bundle reads the first path-scoped credential" || return 1
     assert_contains "$BUNDLE_OUTPUT" "username=alice" "first path resolves its own username" || return 1
     assert_not_contains "$BUNDLE_OUTPUT" "bob-secret" "first path does not expose the second secret" || return 1
 
     bundle_invoke_input $'protocol=https\nhost=github.com\npath=/repo-b\n\n' credential get
-    assert_equals "0" "$BUNDLE_STATUS" "bundle reads the second path-scoped credential" || return 1
+    bundle_assert_ok "bundle reads the second path-scoped credential" || return 1
     assert_contains "$BUNDLE_OUTPUT" "username=bob" "second path resolves its own username" || return 1
     assert_not_contains "$BUNDLE_OUTPUT" "alice-secret" "second path does not expose the first secret" || return 1
 
     bundle_invoke_input $'protocol=https\nhost=github.com\npath=/repo-a\n\n' credential erase
-    assert_equals "0" "$BUNDLE_STATUS" "bundle erases only the selected path" || return 1
+    bundle_assert_ok "bundle erases only the selected path" || return 1
     bundle_invoke_input $'protocol=https\nhost=github.com\npath=/repo-a\n\n' credential get
-    assert_equals "1" "$BUNDLE_STATUS" "erased path is absent" || return 1
+    bundle_assert_status 1 "erased path is absent" || return 1
     bundle_invoke_input $'protocol=https\nhost=github.com\npath=/repo-b\n\n' credential get
-    assert_equals "0" "$BUNDLE_STATUS" "other path survives selected-path erase" || return 1
+    bundle_assert_ok "other path survives selected-path erase" || return 1
     assert_contains "$BUNDLE_OUTPUT" "username=bob" "other path remains readable after erase" || return 1
 
     bundle_invoke_input $'protocol=https\nhost=github.com\npath=/repo-b\n\n' credential erase
@@ -887,7 +893,7 @@ bundle_registry_rejects_legacy_format() {
 
     BUNDLE_CWD="$BUNDLE_RUN_DIR"
     bundle_invoke status
-    assert_equals "1" "$BUNDLE_STATUS" "the standalone artifact rejects a legacy registry" || return 1
+    bundle_assert_status 1 "the standalone artifact rejects a legacy registry" || return 1
     assert_contains "$BUNDLE_OUTPUT" "invalid or uses an unsupported format" "registry rejection names the unsupported format" || return 1
 }
 
@@ -903,7 +909,6 @@ bundle_stop_lock_holder() {
 }
 
 bundle_hold_runtime_lock() {
-    local process_start=""
     local token="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
     sleep 15 &
@@ -915,10 +920,18 @@ bundle_hold_runtime_lock() {
         return 1
     fi
     chmod 700 "$BUNDLE_LOCK_DIR" 2>/dev/null || true
-    process_start=$(ps -p "$bundle_lock_holder_pid" -o lstart= 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' || true)
     printf '%s\n' "$bundle_lock_holder_pid" > "$BUNDLE_LOCK_DIR/pid"
     printf '%s\n' "$token" > "$BUNDLE_LOCK_DIR/token"
-    printf '%s\n' "$process_start" > "$BUNDLE_LOCK_DIR/process_start"
+    # Deliberately no process_start value. The artifact records and verifies
+    # process start through /proc/<pid>/stat field 22 on Linux and falls back to
+    # "ps -o lstart=" only where /proc is unavailable, so a fixture writing the
+    # ps form is unreadable to a real Linux owner check: the live holder is
+    # misread as dead, reaped, and the mutation under test wrongly succeeds. With
+    # no start recorded the artifact treats liveness as kill -0, which is the
+    # contract this case exists to prove - a live foreign owner blocks a writer.
+    # Start-time comparison semantics are covered by tests/test_lock_contention.sh,
+    # which calls the product helper directly on every platform.
+    : > "$BUNDLE_LOCK_DIR/process_start"
     date +%s > "$BUNDLE_LOCK_DIR/timestamp"
     return 0
 }
@@ -944,7 +957,7 @@ bundle_concurrent_registry_mutations_serialize() {
     bundle_stop_lock_holder
     unset GITSETU_LOCK_TIMEOUT
 
-    assert_equals "1" "$BUNDLE_STATUS" "a concurrent registry mutation fails closed while the lock is held" || return 1
+    bundle_assert_status 1 "a concurrent registry mutation fails closed while the lock is held" || return 1
     assert_contains "$BUNDLE_OUTPUT" "Failed to acquire lock" "lock contention is reported explicitly" || return 1
     assert_dir_not_exists "$BUNDLE_LOCK_DIR" "the externally held lock is cleaned up by the fixture" || return 1
     bundle_assert_registry_v2 || return 1
