@@ -410,8 +410,8 @@ cmd_prompt() {
     GITSETU_PROMPT_PROFILE=""
     local home="${HOME:-}"
     local xdg_config="${XDG_CONFIG_HOME:-$home/.config}"
-    [[ -n "$home" ]] || return 0
     _gitsetu_prompt_stage "home-empty"
+    [[ -n "$home" ]] || return 0
     local conf_file="$xdg_config/gitsetu/profiles.conf"
     GITSETU_PROMPT_CONF="$conf_file"
     local current_pwd profile_dir check_pwd check_dir
@@ -424,8 +424,8 @@ cmd_prompt() {
         /*|[a-zA-Z]:/*) ;;
         *) return 0 ;;
     esac
-    [[ -f "$conf_file" && ! -L "$conf_file" ]] || return 0
     _gitsetu_prompt_stage "registry-unusable"
+    [[ -f "$conf_file" && ! -L "$conf_file" ]] || return 0
 
     local windows_context=0
     case "${GITSETU_OS:-}:${OSTYPE:-}" in
@@ -438,8 +438,8 @@ cmd_prompt() {
     else
         current_pwd=$(pwd -P 2>/dev/null || printf '%s' "$PWD")
     fi
-    current_pwd=$(_gitsetu_context_path "$current_pwd") || return 0
     _gitsetu_prompt_stage "context-path-failed"
+    current_pwd=$(_gitsetu_context_path "$current_pwd") || return 0
     GITSETU_PROMPT_CWD="$current_pwd"
     if _gitsetu_case_insensitive_context; then
         case_insensitive=1
@@ -451,73 +451,73 @@ cmd_prompt() {
     while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
         line_number=$((line_number + 1))
         if [[ "$line_number" -eq 1 ]]; then
-            [[ "$raw_line" == "# gitsetu-registry-v2" ]] || return 0
             _gitsetu_prompt_stage "bad-header"
+            [[ "$raw_line" == "# gitsetu-registry-v2" ]] || return 0
             header_seen=1
             continue
         fi
-        [[ "$header_seen" -eq 1 && -n "$raw_line" ]] || return 0
         _gitsetu_prompt_stage "blank-or-preheader-line"
-        [[ "${#raw_line}" -le 131072 ]] || return 0
+        [[ "$header_seen" -eq 1 && -n "$raw_line" ]] || return 0
         _gitsetu_prompt_stage "line-too-long"
+        [[ "${#raw_line}" -le 131072 ]] || return 0
 
         IFS=: read -r encoded_label encoded_dir encoded_provider encoded_sign encoded_key encoded_user extra <<< "$raw_line"
-        [[ -z "$extra" ]] || return 0
         _gitsetu_prompt_stage "extra-field"
-        _gitsetu_valid_encoded_field "$encoded_label" || return 0
+        [[ -z "$extra" ]] || return 0
         _gitsetu_prompt_stage "encode-label"
-        _gitsetu_valid_encoded_field "$encoded_dir" || return 0
+        _gitsetu_valid_encoded_field "$encoded_label" || return 0
         _gitsetu_prompt_stage "encode-dir"
-        _gitsetu_valid_encoded_field "$encoded_provider" || return 0
+        _gitsetu_valid_encoded_field "$encoded_dir" || return 0
         _gitsetu_prompt_stage "encode-provider"
-        _gitsetu_valid_encoded_field "$encoded_sign" || return 0
+        _gitsetu_valid_encoded_field "$encoded_provider" || return 0
         _gitsetu_prompt_stage "encode-sign"
-        _gitsetu_valid_encoded_field "$encoded_key" || return 0
+        _gitsetu_valid_encoded_field "$encoded_sign" || return 0
         _gitsetu_prompt_stage "encode-key"
-        _gitsetu_valid_encoded_field "$encoded_user" || return 0
+        _gitsetu_valid_encoded_field "$encoded_key" || return 0
         _gitsetu_prompt_stage "encode-user"
+        _gitsetu_valid_encoded_field "$encoded_user" || return 0
 
-        _gitsetu_decode_registry_field "$encoded_label" || return 0
         _gitsetu_prompt_stage "decode-label"
+        _gitsetu_decode_registry_field "$encoded_label" || return 0
         label="$_GITSETU_DECODED_FIELD"
-        _gitsetu_decode_registry_field "$encoded_dir" || return 0
         _gitsetu_prompt_stage "decode-dir"
+        _gitsetu_decode_registry_field "$encoded_dir" || return 0
         directory="$_GITSETU_DECODED_FIELD"
-        _gitsetu_decode_registry_field "$encoded_provider" || return 0
         _gitsetu_prompt_stage "decode-provider"
+        _gitsetu_decode_registry_field "$encoded_provider" || return 0
         provider="$_GITSETU_DECODED_FIELD"
-        _gitsetu_decode_registry_field "$encoded_sign" || return 0
         _gitsetu_prompt_stage "decode-sign"
+        _gitsetu_decode_registry_field "$encoded_sign" || return 0
         sign_commits="$_GITSETU_DECODED_FIELD"
-        _gitsetu_decode_registry_field "$encoded_key" || return 0
         _gitsetu_prompt_stage "decode-key"
+        _gitsetu_decode_registry_field "$encoded_key" || return 0
         key_path="$_GITSETU_DECODED_FIELD"
-        _gitsetu_decode_registry_field "$encoded_user" || return 0
         _gitsetu_prompt_stage "decode-user"
+        _gitsetu_decode_registry_field "$encoded_user" || return 0
         provider_user="$_GITSETU_DECODED_FIELD"
 
-        [[ "$label" =~ ^[a-z][a-z0-9-]{0,19}$ && "$label" != *- ]] || return 0
         _gitsetu_prompt_stage "label-invalid"
-        [[ "$sign_commits" == "0" || "$sign_commits" == "1" ]] || return 0
+        [[ "$label" =~ ^[a-z][a-z0-9-]{0,19}$ && "$label" != *- ]] || return 0
         _gitsetu_prompt_stage "sign-invalid"
-        _gitsetu_prompt_valid_provider "$provider" || return 0
+        [[ "$sign_commits" == "0" || "$sign_commits" == "1" ]] || return 0
         _gitsetu_prompt_stage "provider-invalid"
-        _gitsetu_prompt_valid_user "$provider_user" || return 0
+        _gitsetu_prompt_valid_provider "$provider" || return 0
         _gitsetu_prompt_stage "user-invalid"
-        [[ -n "$key_path" ]] || return 0
+        _gitsetu_prompt_valid_user "$provider_user" || return 0
         _gitsetu_prompt_stage "key-empty"
-        _gitsetu_prompt_valid_path "$key_path" || return 0
+        [[ -n "$key_path" ]] || return 0
         _gitsetu_prompt_stage "key-path-invalid"
+        _gitsetu_prompt_valid_path "$key_path" || return 0
         if [[ "$label" == "global" ]]; then
-            [[ -z "$directory" ]] || return 0
             _gitsetu_prompt_stage "global-has-directory"
+            [[ -z "$directory" ]] || return 0
         else
-            _gitsetu_prompt_valid_path "$directory" || return 0
             _gitsetu_prompt_stage "dir-path-invalid"
+            _gitsetu_prompt_valid_path "$directory" || return 0
             [[ "$directory" != "/" && ! "$directory" =~ ^[A-Za-z]:/$ ]] || return 0
         fi
-        _gitsetu_prompt_profile_identity_valid "$xdg_config" "$label" || return 0
         _gitsetu_prompt_stage "identity-invalid"
+        _gitsetu_prompt_profile_identity_valid "$xdg_config" "$label" || return 0
         if [[ -z "$seen_labels" && "$label" != "global" ]]; then
             return 0
         fi
@@ -527,8 +527,8 @@ cmd_prompt() {
         seen_labels="${seen_labels}${label}"$'\n'
 
         [[ -n "$directory" ]] || continue
-        profile_dir=$(_gitsetu_context_path "$directory") || return 0
         _gitsetu_prompt_stage "dir-context-failed"
+        profile_dir=$(_gitsetu_context_path "$directory") || return 0
         check_dir="$profile_dir"
         [[ "$case_insensitive" -eq 0 ]] || check_dir=$(_gitsetu_lower "$check_dir")
         if [[ "$check_pwd/" == "$check_dir/"* || "$check_pwd" == "$check_dir" ]]; then
@@ -541,8 +541,8 @@ cmd_prompt() {
         fi
     done < "$conf_file"
 
-    [[ "$header_seen" -eq 1 ]] || return 0
     _gitsetu_prompt_stage "header-not-seen"
+    [[ "$header_seen" -eq 1 ]] || return 0
     if [[ -n "$matched_profile" ]]; then
         _gitsetu_prompt_stage "matched"
         GITSETU_PROMPT_STATE="matched"
