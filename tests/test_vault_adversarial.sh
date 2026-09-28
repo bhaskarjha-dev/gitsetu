@@ -406,7 +406,12 @@ _adv_replace_header_line() {
         return 1
     }
     {
-        head -n "$((line_number - 1))" "$header"
+        # BSD head rejects `head -n 0` ("illegal line count -- 0") where GNU
+        # prints nothing, so a payload on line 1 aborted on macOS. sed treats
+        # the 0 range as empty on every platform.
+        if [[ "$((line_number - 1))" -gt 0 ]]; then
+            head -n "$((line_number - 1))" "$header"
+        fi
         printf '%s\n' "$replacement"
         tail -n "+$((line_number + 1))" "$header"
         tail -c "$payload_length" "$input"
@@ -459,12 +464,52 @@ test_vault_adversarial_authenticated_baseline_is_valid() {
         "restored registry does not retain source-home paths" || return 1
 }
 
+# Print the stored member names when a fixture assertion fails, so the CI log
+# shows what the archive actually contains instead of only that it was wrong.
+_adv_dump_listing() {
+    printf '    archive members of %s:\n' "$1" >&2
+    if command -v python3 >/dev/null 2>&1; then
+        python3 - "$1" <<'PY' >&2 2>/dev/null || printf '    <listing unavailable>\n' >&2
+import sys
+import tarfile
+with tarfile.open(sys.argv[1], "r:*") as handle:
+    for entry in handle.getmembers():
+        print("    " + entry.name)
+PY
+    else
+        tar -tzf "$1" 2>/dev/null | sed -e 's/^/    /' || printf '    <listing unavailable>\n' >&2
+    fi
+}
+
+# Assert that a fixture archive really stores a member, byte-exact.
+#
+# On the BSD/macOS path the archive is written by the python3 tarfile builder,
+# so verify it with the same tool. BSD `tar -tzf` normalises or refuses to list
+# `..` and rooted member names, which made these assertions fail on macOS
+# before the restore was ever attempted -- the test then proved nothing. The
+# restore-rejection assertions that follow are unchanged.
+_adv_archive_lists_member() {
+    local archive="$1" member="$2" listing=""
+    if command -v python3 >/dev/null 2>&1; then
+        listing=$(python3 - "$archive" <<'PY'
+import sys
+import tarfile
+with tarfile.open(sys.argv[1], "r:*") as handle:
+    for entry in handle.getmembers():
+        print(entry.name)
+PY
+        ) || return 1
+    else
+        listing=$(tar -tzf "$archive" 2>/dev/null) || return 1
+    fi
+    printf '%s\n' "$listing" | grep -Fxq -- "$member"
+}
+
 test_vault_adversarial_rejects_traversal_and_absolute_members() {
     local traversal_tree="$_ADV_WORK/traversal-tree"
     local traversal_archive="$_ADV_WORK/traversal.tar.gz"
     local absolute_tree="$_ADV_WORK/absolute-tree"
     local absolute_archive="$_ADV_WORK/absolute.tar.gz"
-    local listing=""
 
     rm -rf "$traversal_tree" "$absolute_tree"
     _adv_build_payload_tree "$traversal_tree" || return 1
@@ -476,9 +521,11 @@ test_vault_adversarial_rejects_traversal_and_absolute_members() {
         return 0
     fi
     [[ "$transform_status" -eq 0 ]] || return 1
-    listing=$(tar -tzf "$traversal_archive" 2>/dev/null) || return 1
-    assert_contains "$listing" "gitsetu-v2/../../escape.conf" \
-        "traversal fixture really stores ../ members" || return 1
+    if ! _adv_archive_lists_member "$traversal_archive" "gitsetu-v2/../../escape.conf"; then
+        printf '    traversal fixture does not really store ../ members\n' >&2
+        _adv_dump_listing "$traversal_archive"
+        return 1
+    fi
     _adv_expect_restore_rejected "authenticated traversal archive" "$traversal_archive" || return 1
 
     _adv_build_payload_tree "$absolute_tree" || return 1
@@ -490,9 +537,11 @@ test_vault_adversarial_rejects_traversal_and_absolute_members() {
         return 0
     fi
     [[ "$transform_status" -eq 0 ]] || return 1
-    listing=$(tar --absolute-names -tzf "$absolute_archive" 2>/dev/null) || return 1
-    assert_contains "$listing" "/gitsetu-v2/state/profiles.conf" \
-        "absolute-path fixture really stores rooted members" || return 1
+    if ! _adv_archive_lists_member "$absolute_archive" "/gitsetu-v2/state/profiles.conf"; then
+        printf '    absolute fixture does not really store rooted members\n' >&2
+        _adv_dump_listing "$absolute_archive"
+        return 1
+    fi
     _adv_expect_restore_rejected "authenticated absolute-path archive" "$absolute_archive"
 }
 
