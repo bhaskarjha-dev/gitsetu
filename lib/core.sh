@@ -679,17 +679,23 @@ escape_registry_field() {
     fi
 
     local value="$1"
-    local LC_ALL=C
     local output=""
-    local char hex
+    local hex_stream
     local i
+    local LC_ALL=C
     if [[ ${#value} -gt 4096 ]]; then
         return 1
     fi
-    for (( i=0; i<${#value}; i++ )); do
-        char="${value:i:1}"
-        printf -v hex '%02X' "'$char"
-        output="${output}%${hex}"
+
+    # bash 3.2 (macOS) mishandles printf's "'<char>" numeric-byte form for
+    # bytes >= 0x80: it yields a 64-bit value, so "%02X" emits 16 hex digits
+    # instead of 2 and the registry writer rejects its own row. Convert the
+    # whole string with od, which is byte-exact on every platform. This runs on
+    # registry write paths only, so the extra forks are not on a hot path.
+    hex_stream=$(printf '%s' "$value" | od -A n -v -t x1 | tr -d ' \n' | tr 'a-f' 'A-F') || return 1
+    local len=${#hex_stream}
+    for (( i=0; i<len; i+=2 )); do
+        output="${output}%${hex_stream:i:2}"
     done
     printf '%s' "$output"
 }

@@ -313,9 +313,18 @@ _gitsetu_prompt_valid_path() {
 _gitsetu_prompt_valid_provider() {
     local provider="${1:-}"
     local rest part
-    [[ "$provider" == *.* && "$provider" != *..* && "$provider" != *[[:space:]]* ]] || return 1
-    case "$provider" in *\\*) return 1 ;; esac
-    [[ "$provider" != *:* && "$provider" != */* ]] || return 1
+    local _why=""
+    [[ "$provider" == *.* && "$provider" != *..* && "$provider" != *[[:space:]]* ]] || {
+        _why="shape"
+        [[ -n "${GITSETU_PROMPT_TRACE:-}" ]] && printf 'provider-why: %s\n' "$_why" >&2
+        return 1
+    }
+    case "$provider" in *\\*) _why="backslash"; [[ -n "${GITSETU_PROMPT_TRACE:-}" ]] && printf 'provider-why: %s\n' "$_why" >&2; return 1 ;; esac
+    [[ "$provider" != *:* && "$provider" != */* ]] || {
+        _why="separator"
+        [[ -n "${GITSETU_PROMPT_TRACE:-}" ]] && printf 'provider-why: %s\n' "$_why" >&2
+        return 1
+    }
     rest="$provider"
     while :; do
         if [[ "$rest" == *.* ]]; then
@@ -325,9 +334,14 @@ _gitsetu_prompt_valid_provider() {
             part="$rest"
             rest=""
         fi
-        [[ "$part" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || return 1
+        if ! [[ "$part" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
+            _why="label-regex part=[$part]"
+            [[ -n "${GITSETU_PROMPT_TRACE:-}" ]] && printf 'provider-why: %s\n' "$_why" >&2
+            return 1
+        fi
         [[ -n "$rest" ]] || break
     done
+    return 0
 }
 
 _gitsetu_prompt_valid_user() {
