@@ -6,6 +6,12 @@ source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 setup_test_home
 source_gitsetu_libs
 
+# TEMPORARY DIAGNOSTIC: the prompt fast path rejects platform-specifically on
+# macOS with no output, which is indistinguishable from "no match". This makes
+# the rejecting condition name itself on stderr for CI. Remove once the
+# macOS-specific rejection in cmd_prompt is root-caused and fixed.
+export GITSETU_PROMPT_TRACE=1
+
 GITSETU_EXE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/gitsetu"
 GITSETU_EXE="${GITSETU_EXE%$'\r'}"
 

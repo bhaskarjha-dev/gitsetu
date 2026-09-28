@@ -168,6 +168,14 @@ find_trusted_tool() {
 }
 
 HASH_TOOL="$(find_trusted_tool sha256 /usr/bin/sha256sum /bin/sha256sum /usr/bin/shasum /bin/shasum /usr/local/bin/sha256sum)" || error "No trusted SHA-256 implementation was found"
+
+# shasum defaults to SHA-1; GNU sha256sum is already SHA-256 and
+# rejects -a. Without this, macOS verifies a SHA-1 digest against
+# a SHA-256 pin and every install fails closed.
+case "$HASH_TOOL" in
+    *shasum) HASH_TOOL_ARGS=(-a 256) ;;
+    *) HASH_TOOL_ARGS=() ;;
+esac
 DOWNLOADER=""
 COSIGN_TOOL=""
 GIT_TOOL=""
@@ -180,7 +188,7 @@ fi
 
 hash_file() {
     local file="$1" output
-    output="$("$HASH_TOOL" "$file" 2>/dev/null)" || return 1
+    output="$("$HASH_TOOL" "${HASH_TOOL_ARGS[@]+"${HASH_TOOL_ARGS[@]}"}" "$file" 2>/dev/null)" || return 1
     case "$HASH_TOOL" in
         *sha256sum) printf '%s\n' "${output%% *}" ;;
         *) printf '%s\n' "$(printf '%s\n' "$output" | awk '{print $1}')" ;;

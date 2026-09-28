@@ -51,6 +51,50 @@ test_percent_round_trip() {
     [[ "$decoded" == "$value" ]]
 }
 
+# bash 3.2 on macOS mishandles the `printf '%d' "'$char"` numeric-byte idiom
+# for bytes >= 0x80, which silently corrupts percent encoding and makes the
+# registry writer reject the row. Use raw bytes so this is exercised directly.
+test_percent_encoding_non_ascii() {
+    local failed=0
+    _check_enc() {  # _check_enc <label> <raw-string> <expected-hex>
+        local label="$1" raw="$2" want="$3" got
+        if ! got=$(escape_registry_field "$raw"); then
+            printf '    %s: escape_registry_field FAILED for raw bytes [%s]
+'                 "$label" "$raw" >&2
+            failed=1
+            return 0
+        fi
+        if [[ "$got" != "$want" ]]; then
+            printf '    %s: expected [%s] got [%s]
+' "$label" "$want" "$got" >&2
+            failed=1
+        fi
+        if ! validate_registry_field "$got"; then
+            printf '    %s: validate_registry_field REJECTED [%s]
+' "$label" "$got" >&2
+            failed=1
+        fi
+    }
+
+    # U+00FC encodes to C3 BC; U+65E5 encodes to E6 97 A5.
+    _check_enc 'u-umlaut'   $'ü'         '%C3%BC'
+    _check_enc 'cjk'        $'日'     '%E6%97%A5'
+    _check_enc 'utf-8 path' $'/tmp/ü/x'   '%2F%74%6D%70%2F%C3%BC%2F%78'
+    # A bare 0x80..0xFF byte must never produce a short or non-hex triplet.
+    _check_enc 'high byte'  $'�'             '%80'
+    _check_enc 'high byte'  $'�'             '%FF'
+
+    # Full round trip through the decoder the loader uses.
+    local raw=$'/wü/日' decoded
+    decoded=$(unescape_registry_field "$(escape_registry_field "$raw")")
+    if [[ "$decoded" != "$raw" ]]; then
+        printf '    round trip: expected [%s] got [%s]
+' "$raw" "$decoded" >&2
+        failed=1
+    fi
+
+    [[ $failed -eq 0 ]]
+}
 test_strict_encoded_fields() {
     validate_registry_field '' || return 1
     validate_registry_field '%6E%6F%74%65%73' || return 1
@@ -400,6 +444,7 @@ test_legacy_and_partial_v2_rejected() {
 
 printf '\nFoundation helper tests\n'
 run_test 'percent encoding round trip' test_percent_round_trip
+run_test 'non-ASCII percent encoding is byte-exact' test_percent_encoding_non_ascii
 run_test 'strict encoded field syntax' test_strict_encoded_fields
 run_test 'safe numeric validators' test_safe_numeric_validators
 run_test 'strict semantic field validators' test_strict_field_validators
