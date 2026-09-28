@@ -261,12 +261,12 @@ _gitsetu_decode_registry_field() {
         printf -v char '\\%s' "$octal"
         decoded="${decoded}${char}"
     done
-    # bash 3.2 (macOS) does not apply the assignment when printf -v is handed an
-    # empty argument, so the previous field's value survived into this one: an
-    # empty directory or provider_user field decoded to the preceding field (a
-    # key path), which then failed validation and made cmd_prompt return empty
-    # on every profile. Assign the empty result explicitly instead of relying on
-    # printf to clear it.
+    # bash 3.2 (macOS) does not apply the assignment when printf -v is
+    # handed an empty argument, so the previous field's value survived
+    # into this one: an empty directory or provider_user field decoded to
+    # the preceding field (a key path), which then failed validation and
+    # made cmd_prompt return empty on every profile. Assign the empty
+    # result explicitly instead of relying on printf to clear it.
     if [[ -z "$decoded" ]]; then
         _GITSETU_DECODED_FIELD=""
         return 0
@@ -323,18 +323,9 @@ _gitsetu_prompt_valid_path() {
 _gitsetu_prompt_valid_provider() {
     local provider="${1:-}"
     local rest part
-    local _why=""
-    [[ "$provider" == *.* && "$provider" != *..* && "$provider" != *[[:space:]]* ]] || {
-        _why="shape"
-        [[ -n "${GITSETU_PROMPT_TRACE:-}" ]] && printf 'provider-why: %s\n' "$_why" >&2
-        return 1
-    }
-    case "$provider" in *\\*) _why="backslash"; [[ -n "${GITSETU_PROMPT_TRACE:-}" ]] && printf 'provider-why: %s\n' "$_why" >&2; return 1 ;; esac
-    [[ "$provider" != *:* && "$provider" != */* ]] || {
-        _why="separator"
-        [[ -n "${GITSETU_PROMPT_TRACE:-}" ]] && printf 'provider-why: %s\n' "$_why" >&2
-        return 1
-    }
+    [[ "$provider" == *.* && "$provider" != *..* && "$provider" != *[[:space:]]* ]] || return 1
+    case "$provider" in *\\*) return 1 ;; esac
+    [[ "$provider" != *:* && "$provider" != */* ]] || return 1
     rest="$provider"
     while :; do
         if [[ "$rest" == *.* ]]; then
@@ -344,24 +335,13 @@ _gitsetu_prompt_valid_provider() {
             part="$rest"
             rest=""
         fi
-        if ! [[ "$part" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
-            _why="label-regex part=[$part]"
-            [[ -n "${GITSETU_PROMPT_TRACE:-}" ]] && printf 'provider-why: %s\n' "$_why" >&2
-            return 1
-        fi
+        [[ "$part" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || return 1
         [[ -n "$rest" ]] || break
     done
-    return 0
 }
 
 _gitsetu_prompt_valid_user() {
     local user="${1:-}"
-    # Diagnostic only. An empty user returns 0 on every bash, so a rejection
-    # here on macOS means the caller supplied something non-empty. Report the
-    # received value and its length so the CI log settles that in one run.
-    if [[ -n "${GITSETU_PROMPT_TRACE:-}" ]]; then
-        printf 'user-why: received=[%s] len=%s\n' "$user" "${#user}" >&2
-    fi
     [[ -z "$user" ]] && return 0
     [[ "$user" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ && "$user" != *. && "$user" != *- && "$user" != *..* ]]
 }
@@ -398,38 +378,13 @@ _gitsetu_prompt_profile_identity_valid() {
     }
 }
 
-# Diagnostics for the prompt fast path. Every rejection below returns 0 with no
-# output, so a platform-specific rejection cannot be told apart from "no match"
-# without this. Emitted only when GITSETU_PROMPT_TRACE is set, so normal PS1
-# output stays a single clean line. Each marker sits after its check, so
-# GITSETU_PROMPT_STAGE names the last check that actually failed.
-#
-# GITSETU_PROMPT_STATE and GITSETU_PROMPT_PROFILE are product state consumed by
-# cmd_status and are deliberately not touched here.
-GITSETU_PROMPT_STAGE="unset"
-GITSETU_PROMPT_CONF=""
-GITSETU_PROMPT_CWD=""
-_gitsetu_prompt_stage() {
-    GITSETU_PROMPT_STAGE="$1"
-}
-_gitsetu_prompt_trace() {
-    [[ -n "${GITSETU_PROMPT_TRACE:-}" ]] || return 0
-    printf 'prompt-trace: stage=%s state=%s conf=%s cwd=%s profile=%s\n' \
-        "${GITSETU_PROMPT_STAGE:-unset}" "${GITSETU_PROMPT_STATE:-unset}" \
-        "${GITSETU_PROMPT_CONF:-unset}" "${GITSETU_PROMPT_CWD:-unset}" \
-        "${GITSETU_PROMPT_PROFILE:-unset}" >&2
-    return 0
-}
-
 cmd_prompt() {
     GITSETU_PROMPT_STATE="unmanaged"
     GITSETU_PROMPT_PROFILE=""
     local home="${HOME:-}"
     local xdg_config="${XDG_CONFIG_HOME:-$home/.config}"
-    _gitsetu_prompt_stage "home-empty"
     [[ -n "$home" ]] || return 0
     local conf_file="$xdg_config/gitsetu/profiles.conf"
-    GITSETU_PROMPT_CONF="$conf_file"
     local current_pwd profile_dir check_pwd check_dir
     local raw_line encoded_label encoded_dir encoded_provider encoded_sign encoded_key encoded_user extra
     local label directory provider sign_commits key_path provider_user
@@ -440,7 +395,6 @@ cmd_prompt() {
         /*|[a-zA-Z]:/*) ;;
         *) return 0 ;;
     esac
-    _gitsetu_prompt_stage "registry-unusable"
     [[ -f "$conf_file" && ! -L "$conf_file" ]] || return 0
 
     local windows_context=0
@@ -454,9 +408,7 @@ cmd_prompt() {
     else
         current_pwd=$(pwd -P 2>/dev/null || printf '%s' "$PWD")
     fi
-    _gitsetu_prompt_stage "context-path-failed"
     current_pwd=$(_gitsetu_context_path "$current_pwd") || return 0
-    GITSETU_PROMPT_CWD="$current_pwd"
     if _gitsetu_case_insensitive_context; then
         case_insensitive=1
         check_pwd=$(_gitsetu_lower "$current_pwd")
@@ -467,77 +419,47 @@ cmd_prompt() {
     while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
         line_number=$((line_number + 1))
         if [[ "$line_number" -eq 1 ]]; then
-            _gitsetu_prompt_stage "bad-header"
             [[ "$raw_line" == "# gitsetu-registry-v2" ]] || return 0
             header_seen=1
             continue
         fi
-        _gitsetu_prompt_stage "blank-or-preheader-line"
         [[ "$header_seen" -eq 1 && -n "$raw_line" ]] || return 0
-        _gitsetu_prompt_stage "line-too-long"
         [[ "${#raw_line}" -le 131072 ]] || return 0
 
         IFS=: read -r encoded_label encoded_dir encoded_provider encoded_sign encoded_key encoded_user extra <<< "$raw_line"
-        _gitsetu_prompt_stage "extra-field"
         [[ -z "$extra" ]] || return 0
-        _gitsetu_prompt_stage "encode-label"
         _gitsetu_valid_encoded_field "$encoded_label" || return 0
-        _gitsetu_prompt_stage "encode-dir"
         _gitsetu_valid_encoded_field "$encoded_dir" || return 0
-        _gitsetu_prompt_stage "encode-provider"
         _gitsetu_valid_encoded_field "$encoded_provider" || return 0
-        _gitsetu_prompt_stage "encode-sign"
         _gitsetu_valid_encoded_field "$encoded_sign" || return 0
-        _gitsetu_prompt_stage "encode-key"
         _gitsetu_valid_encoded_field "$encoded_key" || return 0
-        _gitsetu_prompt_stage "encode-user"
         _gitsetu_valid_encoded_field "$encoded_user" || return 0
 
-        _gitsetu_prompt_stage "decode-label"
         _gitsetu_decode_registry_field "$encoded_label" || return 0
         label="$_GITSETU_DECODED_FIELD"
-        _gitsetu_prompt_stage "decode-dir"
         _gitsetu_decode_registry_field "$encoded_dir" || return 0
         directory="$_GITSETU_DECODED_FIELD"
-        _gitsetu_prompt_stage "decode-provider"
         _gitsetu_decode_registry_field "$encoded_provider" || return 0
         provider="$_GITSETU_DECODED_FIELD"
-        _gitsetu_prompt_stage "decode-sign"
         _gitsetu_decode_registry_field "$encoded_sign" || return 0
         sign_commits="$_GITSETU_DECODED_FIELD"
-        _gitsetu_prompt_stage "decode-key"
         _gitsetu_decode_registry_field "$encoded_key" || return 0
         key_path="$_GITSETU_DECODED_FIELD"
-        _gitsetu_prompt_stage "decode-user"
         _gitsetu_decode_registry_field "$encoded_user" || return 0
         provider_user="$_GITSETU_DECODED_FIELD"
 
-        _gitsetu_prompt_stage "label-invalid"
         [[ "$label" =~ ^[a-z][a-z0-9-]{0,19}$ && "$label" != *- ]] || return 0
-        _gitsetu_prompt_stage "sign-invalid"
         [[ "$sign_commits" == "0" || "$sign_commits" == "1" ]] || return 0
-        _gitsetu_prompt_stage "provider-invalid"
         _gitsetu_prompt_valid_provider "$provider" || return 0
-        _gitsetu_prompt_stage "user-invalid"
-        # Diagnostic only: distinguish a bad field split from a bad decode.
-        if [[ -n "${GITSETU_PROMPT_TRACE:-}" ]]; then
-            printf 'user-field: encoded=[%s] decoded=[%s] len=%s label=[%s]\n' \
-                "$encoded_user" "$provider_user" "${#provider_user}" "$label" >&2
-        fi
         _gitsetu_prompt_valid_user "$provider_user" || return 0
-        _gitsetu_prompt_stage "key-empty"
         [[ -n "$key_path" ]] || return 0
-        _gitsetu_prompt_stage "key-path-invalid"
         _gitsetu_prompt_valid_path "$key_path" || return 0
         if [[ "$label" == "global" ]]; then
-            _gitsetu_prompt_stage "global-has-directory"
             [[ -z "$directory" ]] || return 0
         else
-            _gitsetu_prompt_stage "dir-path-invalid"
             _gitsetu_prompt_valid_path "$directory" || return 0
             [[ "$directory" != "/" && ! "$directory" =~ ^[A-Za-z]:/$ ]] || return 0
         fi
-        _gitsetu_prompt_stage "identity-invalid"
         _gitsetu_prompt_profile_identity_valid "$xdg_config" "$label" || return 0
         if [[ -z "$seen_labels" && "$label" != "global" ]]; then
             return 0
@@ -548,7 +470,6 @@ cmd_prompt() {
         seen_labels="${seen_labels}${label}"$'\n'
 
         [[ -n "$directory" ]] || continue
-        _gitsetu_prompt_stage "dir-context-failed"
         profile_dir=$(_gitsetu_context_path "$directory") || return 0
         check_dir="$profile_dir"
         [[ "$case_insensitive" -eq 0 ]] || check_dir=$(_gitsetu_lower "$check_dir")
@@ -562,14 +483,10 @@ cmd_prompt() {
         fi
     done < "$conf_file"
 
-    _gitsetu_prompt_stage "header-not-seen"
     [[ "$header_seen" -eq 1 ]] || return 0
     if [[ -n "$matched_profile" ]]; then
-        _gitsetu_prompt_stage "matched"
         GITSETU_PROMPT_STATE="matched"
         printf '%s\n' "$matched_profile"
-    else
-        _gitsetu_prompt_stage "no-match"
     fi
     return 0
 }
@@ -582,9 +499,7 @@ if [[ "${1:-}" == "prompt" ]]; then
         exit 1
     fi
     cmd_prompt
-    _gitsetu_prompt_rc=$?
-    _gitsetu_prompt_trace
-    exit "$_gitsetu_prompt_rc"
+    exit $?
 fi
 
 # ------------------------------------------------------------------------------
