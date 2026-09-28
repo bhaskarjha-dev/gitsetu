@@ -128,6 +128,18 @@ test_lock_symlink_is_refused() {
         skip_test "lock symlink refusal" "symlink creation is unavailable on this host"
         return 0
     fi
+    # Prove the fixture really is a symlink at the lock path.  When ln(1) is
+    # handed an existing directory it links *inside* it instead of failing, so
+    # without this guard a broken fixture silently exercises the ordinary
+    # directory case and reports the product as following the symlink.
+    if [[ ! -L "$GITSETU_LOCK_DIR" ]]; then
+        printf '    FAIL: fixture did not create a symlink at the lock path: %s\n' "$GITSETU_LOCK_DIR" >&2
+        printf '      lock path type: %s\n' "$([[ -d "$GITSETU_LOCK_DIR" ]] && printf directory || printf other)" >&2
+        ls -ld "$GITSETU_LOCK_DIR" >&2 2>/dev/null || true
+        rm -rf "$GITSETU_LOCK_DIR"
+        mark_test_failure
+        return 1
+    fi
 
     local rc=0
     acquire_lock >/dev/null 2>&1 || rc=$?

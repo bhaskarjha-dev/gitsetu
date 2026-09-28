@@ -62,7 +62,18 @@ fi
 # return-status check must still fail even though bash -n is not rerun.
 printf 'if then\n' > "$source_module"
 source_failure_case() {
-    source_test_module "$source_module"
+    # Sourcing a file that fails to parse is fatal for a non-interactive shell
+    # on bash 3.2: the shell exits 2 and this function never returns, so the
+    # whole fixture dies before it can report the counters.  Run the contract in
+    # a child and assert on the child's status instead.  The behaviour under
+    # test is that source_test_module reports the failure, not that bash
+    # survives reporting it, and the case must fail either way for the
+    # 6/0/1 counter contract below to hold on every supported bash.
+    local status=0
+    ( source_test_module "$source_module" ) || status=$?
+    printf '    invalid module: child exited %d on bash %s\n' \
+        "$status" "${BASH_VERSION:-unknown}" >&2
+    return "$status"
 }
 
 run_test "fail then pass" fail_then_pass

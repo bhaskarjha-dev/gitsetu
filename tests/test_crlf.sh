@@ -105,7 +105,7 @@ read -r _l1 < "${BASH_SOURCE[0]:-$0}" 2>/dev/null || _l1="" #
     export GITSETU_CRLF_CLEAN=1 #
     _tmp=$(mktemp "${TMPDIR:-/tmp}/test_loop_tmp.XXXXXX") #
     tr -d '\r' < "${BASH_SOURCE[0]:-$0}" > "$_tmp" #
-    if ! sed -i -e 's/$/\r/' "$_tmp" 2>/dev/null; then
+    if ! sed -i -e 's/$/\r/' "$_tmp" 2>/dev/null; then #
         sed -e 's/$/\r/' "$_tmp" > "${_tmp}.crlf" || exit 1
         mv "${_tmp}.crlf" "$_tmp" 2>/dev/null || exit 1
     fi #
@@ -119,12 +119,31 @@ EOF
     local crlf_runner="$TEST_HOME/test_crlf_loop_runner.sh"
     sed -e 's/$/\r/' "$runner" > "$crlf_runner"
 
+    # The CRLF runner must still parse on the running bash.  A reserved word that
+    # touches the carriage return (`then` + CR with no space) is not lexed as a
+    # reserved word by bash 3.2, so the `if` never opens and the runner dies on
+    # the matching `fi` with status 2 instead of ever reaching the loop
+    # assertion.  That surfaces as a misleading "exits with code 1" mismatch, so
+    # check the parse explicitly and report it as what it is.
+    local parse_error="$TEST_HOME/crlf_parse.err"
+    if ! bash -n "$crlf_runner" 2>"$parse_error"; then
+        printf '    FAIL: CRLF runner does not parse on bash %s\n' "${BASH_VERSION:-unknown}" >&2
+        [[ -s "$parse_error" ]] && sed 's/^/      /' "$parse_error" >&2
+        rm -f "$runner" "$crlf_runner" "$parse_error"
+        mark_test_failure
+        return 1
+    fi
+
     local output="" rc=0
     output=$(bash "$crlf_runner" 2>&1) || rc=$?
+    if [[ "$rc" -ne 1 ]]; then
+        printf '    CRLF runner on bash %s exited %d (expected 1):\n' "${BASH_VERSION:-unknown}" "$rc" >&2
+        printf '%s\n' "$output" | sed 's/^/      /' >&2
+    fi
     assert_equals "1" "$rc" "Loop script exits with code 1"
     assert_contains "$output" "CRLF normalization loop detected" "Error diagnosed vboxsf loop"
 
-    rm -f "$runner" "$crlf_runner"
+    rm -f "$runner" "$crlf_runner" "$parse_error"
 }
 
 # ------------------------------------------------------------------------------

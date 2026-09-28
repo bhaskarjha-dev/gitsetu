@@ -7,6 +7,36 @@ source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 setup_test_home
 source_gitsetu_libs
 
+# verify_* name the precise reason for every issue they find, but the status
+# code alone cannot distinguish "permissions are wrong" from "the recorded key
+# path is not canonical".  Discarding that diagnosis is what made the macOS
+# regressions unreadable, so keep it and print it next to the assertion.
+verify_report() {
+    local label="$1" status="$2" output="$3"
+    [[ "$status" -eq 0 ]] && return 0
+    printf '    %s returned %d; reported reasons:\n' "$label" "$status" >&2
+    if [[ -z "$output" ]]; then
+        printf '      <no diagnostic output>\n' >&2
+    else
+        printf '%s\n' "$output" | sed 's/^/      /' >&2
+    fi
+    # Report the platform-sensitive facts the validators depend on, so a failure
+    # is diagnosable from the log alone instead of needing a second round trip.
+    local key_path="${4:-}" probe
+    if [[ -n "$key_path" && -e "$key_path" ]]; then
+        printf '    probe for %s:\n' "$key_path" >&2
+        probe=$(stat -c '%a mode, %U owner' "$key_path" 2>/dev/null || \
+                stat -f '%Lp mode, %Su owner' "$key_path" 2>/dev/null || printf '?')
+        printf '      %s\n' "$probe" >&2
+        printf '      parent canonical: %s\n' \
+            "$(cd -P -- "$(dirname "$key_path")" 2>/dev/null && pwd -P || printf '<unresolvable>')" >&2
+        printf '      parent is symlink: %s   key is symlink: %s\n' \
+            "$([[ -L "$(dirname "$key_path")" ]] && printf yes || printf no)" \
+            "$([[ -L "$key_path" ]] && printf yes || printf no)" >&2
+    fi
+    return 0
+}
+
 setup_verify_state() {
     setup_test_home
     source_gitsetu_libs
@@ -52,8 +82,9 @@ test_verify_ssh_keys_all_ok() {
         return 0
     fi
     setup_verify_state
-    local status=0
-    verify_ssh_keys >/dev/null 2>&1 || status=$?
+    local status=0 output=""
+    output=$(verify_ssh_keys 2>&1) || status=$?
+    verify_report "verify_ssh_keys" "$status" "$output" "$HOME/.ssh/id_ed25519_global"
     assert_equals "0" "$status" "matching key pairs with supported permissions pass" || return 1
 }
 
@@ -104,8 +135,9 @@ test_verify_external_approved_key_path() {
         return 1
     fi
     PROFILE_KEYS[1]="$external_dir/identity"
-    local status=0
-    verify_ssh_keys >/dev/null 2>&1 || status=$?
+    local status=0 output=""
+    output=$(verify_ssh_keys 2>&1) || status=$?
+    verify_report "verify_ssh_keys" "$status" "$output" "$external_dir/identity"
     assert_equals "0" "$status" "validated external key path is accepted consistently" || return 1
 }
 
@@ -157,6 +189,8 @@ test_verify_all_stderr_only_and_offline() {
     setup_verify_state
     local stdout_output status=0
     stdout_output=$(verify_all 2>"$TEST_HOME/verify.stderr") || status=$?
+    verify_report "verify_all" "$status" "$(cat "$TEST_HOME/verify.stderr" 2>/dev/null || printf '')" \
+        "$HOME/.ssh/id_ed25519_global"
     assert_equals "" "$stdout_output" "verify_all produces zero stdout" || return 1
     assert_equals "0" "$status" "valid state passes required offline checks" || return 1
     assert_file_contains "$TEST_HOME/verify.stderr" "SKIPPED: network checks are opt-in" "network checks are visibly separate" || return 1

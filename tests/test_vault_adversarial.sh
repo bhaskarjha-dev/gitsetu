@@ -199,19 +199,26 @@ if not match:
 pattern, replacement = match.groups()
 pattern = pattern.replace("$", r"\Z")
 with tarfile.open(archive, "w:gz") as output:
+    def member(path, relative):
+        # gettarinfo() normalises arcname with `arcname.lstrip("/")`: it
+        # documents itself as turning "absolute paths into relative paths".
+        # addfile() then writes info.name verbatim, so the transformed name has
+        # to be restored here.  Without this a rooted-member fixture silently
+        # degrades into an ordinary relative archive and asserts nothing.
+        arcname = re.sub(pattern, replacement, relative)
+        info = output.gettarinfo(path, arcname=arcname)
+        info.name = arcname
+        return info
+
     for directory, dirs, files in os.walk(root):
         dirs.sort()
         files.sort()
-        for name in ["."] if directory == root else []:
-            relative = "."
-            arcname = re.sub(pattern, replacement, relative)
-            info = output.gettarinfo(directory, arcname=arcname)
-            output.addfile(info)
+        if directory == root:
+            output.addfile(member(directory, "."))
         for name in dirs + files:
             path = os.path.join(directory, name)
             relative = os.path.relpath(path, root).replace(os.sep, "/")
-            arcname = re.sub(pattern, replacement, relative)
-            info = output.gettarinfo(path, arcname=arcname)
+            info = member(path, relative)
             if stat.S_ISREG(info.mode):
                 with open(path, "rb") as stream:
                     output.addfile(info, stream)
@@ -483,25 +490,18 @@ PY
 
 # Assert that a fixture archive really stores a member, byte-exact.
 #
-# On the BSD/macOS path the archive is written by the python3 tarfile builder,
-# so verify it with the same tool. BSD `tar -tzf` normalises or refuses to list
-# `..` and rooted member names, which made these assertions fail on macOS
-# before the restore was ever attempted -- the test then proved nothing. The
-# restore-rejection assertions that follow are unchanged.
+# `tar -tzf` prints the stored member names verbatim on both implementations
+# this project supports: GNU tar and BSD/libarchive tar (macOS).  Measured
+# against archives carrying `gitsetu-v2/../../escape.conf` and
+# `/gitsetu-v2/state/profiles.conf`, both list the hostile name unchanged and
+# exit 0, so no separate reader is needed.  An earlier version preferred a
+# python3 tarfile reader here; that added a second code path for no gain and
+# broke on any host where `python3` resolves to a stub that exits non-zero.
+# tar is a hard product dependency (cmd_restore extracts with it), so it is
+# always available here.
 _adv_archive_lists_member() {
     local archive="$1" member="$2" listing=""
-    if command -v python3 >/dev/null 2>&1; then
-        listing=$(python3 - "$archive" <<'PY'
-import sys
-import tarfile
-with tarfile.open(sys.argv[1], "r:*") as handle:
-    for entry in handle.getmembers():
-        print(entry.name)
-PY
-        ) || return 1
-    else
-        listing=$(tar -tzf "$archive" 2>/dev/null) || return 1
-    fi
+    listing=$(tar -tzf "$archive" 2>/dev/null) || return 1
     printf '%s\n' "$listing" | grep -Fxq -- "$member"
 }
 
