@@ -346,6 +346,12 @@ _gitsetu_prompt_valid_provider() {
 
 _gitsetu_prompt_valid_user() {
     local user="${1:-}"
+    # Diagnostic only. An empty user returns 0 on every bash, so a rejection
+    # here on macOS means the caller supplied something non-empty. Report the
+    # received value and its length so the CI log settles that in one run.
+    if [[ -n "${GITSETU_PROMPT_TRACE:-}" ]]; then
+        printf 'user-why: received=[%s] len=%s\n' "$user" "${#user}" >&2
+    fi
     [[ -z "$user" ]] && return 0
     [[ "$user" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ && "$user" != *. && "$user" != *- && "$user" != *..* ]]
 }
@@ -503,6 +509,11 @@ cmd_prompt() {
         _gitsetu_prompt_stage "provider-invalid"
         _gitsetu_prompt_valid_provider "$provider" || return 0
         _gitsetu_prompt_stage "user-invalid"
+        # Diagnostic only: distinguish a bad field split from a bad decode.
+        if [[ -n "${GITSETU_PROMPT_TRACE:-}" ]]; then
+            printf 'user-field: encoded=[%s] decoded=[%s] len=%s label=[%s]\n' \
+                "$encoded_user" "$provider_user" "${#provider_user}" "$label" >&2
+        fi
         _gitsetu_prompt_valid_user "$provider_user" || return 0
         _gitsetu_prompt_stage "key-empty"
         [[ -n "$key_path" ]] || return 0
