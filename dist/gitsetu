@@ -235,18 +235,6 @@ _gitsetu_valid_encoded_field() {
 _gitsetu_decode_registry_field() {
     local encoded="${1:-}"
     _GITSETU_DECODED_FIELD=""
-    # Diagnostic only. macOS supplies an empty user field yet cmd_prompt ends up
-    # holding the preceding key field's value, so report the input, whether the
-    # field validator accepted it, and the resulting global. Purely additive.
-    if [[ -n "${GITSETU_PROMPT_TRACE:-}" ]]; then
-        printf 'decode: in=[%s] len=%s valid=' "$encoded" "${#encoded}" >&2
-        if _gitsetu_valid_encoded_field "$encoded"; then
-            printf 'yes' >&2
-        else
-            printf 'no(rc=%s)' "$?" >&2
-        fi
-        printf ' before=[%s]\n' "$_GITSETU_DECODED_FIELD" >&2
-    fi
     _gitsetu_valid_encoded_field "$encoded" || return 1
     [[ "$encoded" != *%00* ]] || return 1
 
@@ -273,11 +261,17 @@ _gitsetu_decode_registry_field() {
         printf -v char '\\%s' "$octal"
         decoded="${decoded}${char}"
     done
-    printf -v _GITSETU_DECODED_FIELD '%b' "$decoded"
-    if [[ -n "${GITSETU_PROMPT_TRACE:-}" ]]; then
-        printf 'decode: out=[%s] len=%s\n' "$_GITSETU_DECODED_FIELD" \
-            "${#_GITSETU_DECODED_FIELD}" >&2
+    # bash 3.2 (macOS) does not apply the assignment when printf -v is handed an
+    # empty argument, so the previous field's value survived into this one: an
+    # empty directory or provider_user field decoded to the preceding field (a
+    # key path), which then failed validation and made cmd_prompt return empty
+    # on every profile. Assign the empty result explicitly instead of relying on
+    # printf to clear it.
+    if [[ -z "$decoded" ]]; then
+        _GITSETU_DECODED_FIELD=""
+        return 0
     fi
+    printf -v _GITSETU_DECODED_FIELD '%b' "$decoded"
 }
 
 _gitsetu_context_path() {
