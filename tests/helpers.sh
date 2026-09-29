@@ -635,11 +635,52 @@ assert_exit_code() {
     return 1
 }
 
+# Locate a `stat` that the test harness does not own.
+#
+# test_keychain.sh and test_vault_cross_home.sh each install a mock `stat` in a
+# directory named "test-bin" so that mode and owner checks stay deterministic.
+# Both mocks answer a hardcoded 700 for every path that is not */.tokens, so
+# asking one of them about the capability probe below always reported "this
+# filesystem ignores chmod 600" and can_chmod_600 could never succeed in those
+# suites -- on any platform, including POSIX hosts that honour mode bits.
+#
+# This helper asks a question about the filesystem, so it must not ask a shim.
+# Resolution order is otherwise exactly the shell's: first match on PATH wins.
+# The PATH is split by parameter expansion rather than IFS or globbing so that
+# entries containing spaces or wildcard characters cannot corrupt the scan.
+_can_chmod_real_stat() {
+    local entry rest resolved=""
+    rest="$PATH"
+    while [[ -n "$rest" ]]; do
+        entry="${rest%%:*}"
+        if [[ "$rest" == *:* ]]; then
+            rest="${rest#*:}"
+        else
+            rest=""
+        fi
+        case "${entry##*/}" in
+            test-bin) continue ;;
+        esac
+        if [[ -n "$entry" && -x "$entry/stat" ]]; then
+            resolved="$entry/stat"
+            break
+        fi
+    done
+    if [[ -z "$resolved" ]]; then
+        resolved=$(command -v stat 2>/dev/null) || resolved=""
+    fi
+    printf '%s' "$resolved"
+}
+
 # Check if chmod 600 is honored on the current $HOME filesystem.
 # Some CI runners, container mounts, and VM shared folders ignore chmod.
 # Usage: if can_chmod_600; then ...; else skip_test ...; fi
 can_chmod_600() {
-    local test_file
+    local test_file stat_bin
+    stat_bin=$(_can_chmod_real_stat)
+    if [[ -z "$stat_bin" ]]; then
+        return 1
+    fi
     if ! test_file=$(umask 077; mktemp "$HOME/.chmod_test.XXXXXX"); then
         return 1
     fi
@@ -648,7 +689,7 @@ can_chmod_600() {
         return 1
     fi
     local perms
-    perms=$(stat -c '%a' "$test_file" 2>/dev/null || stat -f '%Lp' "$test_file" 2>/dev/null || echo "???")
+    perms=$("$stat_bin" -c '%a' "$test_file" 2>/dev/null || "$stat_bin" -f '%Lp' "$test_file" 2>/dev/null || echo "???")
     rm -f "$test_file"
     [[ "$perms" == "600" ]]
 }
