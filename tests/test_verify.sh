@@ -20,19 +20,34 @@ verify_report() {
     else
         printf '%s\n' "$output" | sed 's/^/      /' >&2
     fi
-    # Report the platform-sensitive facts the validators depend on, so a failure
-    # is diagnosable from the log alone instead of needing a second round trip.
-    local key_path="${4:-}" probe
+    # Report the platform-sensitive facts the validators depend on, and evaluate
+    # each sub-check of _verify_runtime_key_safe directly, so a failure names the
+    # exact condition instead of a single opaque "unsafe" verdict.
+    local key_path="${4:-}"
     if [[ -n "$key_path" && -e "$key_path" ]]; then
-        printf '    probe for %s:\n' "$key_path" >&2
-        probe=$(stat -c '%a mode, %U owner' "$key_path" 2>/dev/null || \
-                stat -f '%Lp mode, %Su owner' "$key_path" 2>/dev/null || printf '?')
-        printf '      %s\n' "$probe" >&2
-        printf '      parent canonical: %s\n' \
-            "$(cd -P -- "$(dirname "$key_path")" 2>/dev/null && pwd -P || printf '<unresolvable>')" >&2
-        printf '      parent is symlink: %s   key is symlink: %s\n' \
-            "$([[ -L "$(dirname "$key_path")" ]] && printf yes || printf no)" \
-            "$([[ -L "$key_path" ]] && printf yes || printf no)" >&2
+        local parent base canonical probe
+        parent=$(cd -P -- "$(dirname "$key_path")" 2>/dev/null && pwd -P) || parent='<unresolvable>'
+        base="${key_path##*/}"
+        canonical="${parent%/}/${base}"
+        probe() { stat -c "$1" "$2" 2>/dev/null || stat -f "$3" "$2" 2>/dev/null || printf '?'; }
+        printf '    probe for %s\n' "$key_path" >&2
+        printf '      key    mode=%s owner=%s is_file=%s symlink=%s owned_by_me=%s\n' \
+            "$(probe '%a' "$key_path" '%Lp')" "$(probe '%U' "$key_path" '%Su')" \
+            "$([[ -f "$key_path" ]] && printf yes || printf no)" \
+            "$([[ -L "$key_path" ]] && printf yes || printf no)" \
+            "$([[ -O "$key_path" ]] && printf yes || printf no)" >&2
+        printf '      parent path=%s mode=%s owner=%s is_dir=%s symlink=%s\n' \
+            "$parent" "$(probe '%a' "$parent" '%Lp')" "$(probe '%U' "$parent" '%Su')" \
+            "$([[ -d "$parent" ]] && printf yes || printf no)" \
+            "$([[ -L "$parent" ]] && printf yes || printf no)" >&2
+        printf '      canonical equality (key == parent/base): %s\n' \
+            "$([[ "$key_path" == "$canonical" ]] && printf yes || printf no)" >&2
+        printf '      sub-check _ssh_assert_no_symlink_components: %s\n' \
+            "$(_ssh_assert_no_symlink_components "$parent" >/dev/null 2>&1 && printf pass || printf FAIL)" >&2
+        printf '      sub-check _ssh_assert_private_directory     : %s\n' \
+            "$(_ssh_assert_private_directory "$parent" >/dev/null 2>&1 && printf pass || printf FAIL)" >&2
+        printf '      sub-check _verify_runtime_key_safe         : %s\n' \
+            "$(_verify_runtime_key_safe "$key_path" >/dev/null 2>&1 && printf pass || printf FAIL)" >&2
     fi
     return 0
 }

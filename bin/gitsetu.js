@@ -89,9 +89,27 @@ function assertPathContained(root, candidate) {
 }
 
 function validatePackageContract() {
-  const invokedRoot = path.resolve(path.dirname(process.argv[1]), '..');
-  const invocationRelative = path.relative(invokedRoot, rootDir);
-  if (invocationRelative || path.isAbsolute(invocationRelative)) {
+  // npm's bin shim is legitimately a symlink into the package, and npx invokes
+  // the wrapper through exactly that path: node_modules/.bin/gitsetu resolves to
+  // node_modules/gitsetu/bin/gitsetu.js. Comparing argv[1]'s parent against
+  // rootDir therefore rejected every npx run. Resolve only the final component
+  // and require it to land inside the loaded package, while still refusing a
+  // symlink at any higher component -- that is the actual redirection case, and
+  // it stays rejected because hasReparseComponent(rootDir) already requires the
+  // package's own ancestors to be symlink-free.
+  const scriptArg = process.argv[1];
+  const scriptDir = path.dirname(scriptArg);
+  if (hasReparseComponent(scriptDir)) {
+    throw new Error('npm wrapper was invoked through a redirected package path');
+  }
+  let resolvedScript;
+  try {
+    resolvedScript = fs.realpathSync(scriptArg);
+  } catch (error) {
+    throw new Error(`npm wrapper entry point could not be resolved: ${error.message}`);
+  }
+  const invocationRelative = path.relative(rootDir, resolvedScript);
+  if (invocationRelative.startsWith('..') || path.isAbsolute(invocationRelative)) {
     throw new Error('npm wrapper was invoked through a redirected package path');
   }
   const rootStat = fs.lstatSync(rootDir);

@@ -36,6 +36,13 @@ _gitsetu_configure_lock_path() {
         /*|[A-Za-z]:/*) ;;
         *) return 1 ;;
     esac
+    # Refuse a symlink posing as the lock directory *before* canonicalization.
+    # normalize_path resolves symlinks, so a symlink here would be silently
+    # rewritten to its target: acquire_lock would then mkdir a real directory
+    # inside whatever the symlink pointed at, and its own "never follow a
+    # symlink posing as the lock directory" check could never fire because the
+    # resolved path is no longer a symlink by the time acquire_lock inspects it.
+    [[ ! -L "$candidate" ]] || return 1
     if declare -F normalize_path >/dev/null 2>&1; then
         local normalized
         normalized=$(normalize_path "$candidate") || return 1

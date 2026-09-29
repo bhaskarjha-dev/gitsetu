@@ -47,6 +47,12 @@ _keychain_init_constants() {
 # whose spelling differs between GNU and macOS.
 _keychain_hex_encode() {
     local value="${1-}"
+    local encoded=""
+
+    if [[ -z "$value" ]]; then
+        KEYCHAIN_HEX_DECODED=""
+        return 0
+    fi
 
     # Byte-exact, and independent of bash's printf. Walking the value one
     # character at a time and converting each with printf '%d' is broken on
@@ -54,17 +60,30 @@ _keychain_hex_encode() {
     # so "%02x" -- a minimum width, not a maximum -- emits the full sixteen hex
     # digits of that integer and the stored credential is corrupted rather than
     # rejected. This is reachable, not theoretical: repository paths are allowed
-    # to contain UTF-8, and credential_path is one of the encoded fields. od
-    # reads the bytes directly and yields exactly two hex digits per byte on
-    # every supported bash, which is the same byte-exact approach the registry
-    # escaper uses.
-    if [[ -z "$value" ]]; then
-        KEYCHAIN_HEX_DECODED=""
-        return 0
+    # to contain UTF-8, and credential_path is one of the encoded fields.
+    #
+    # od reads the bytes directly and is the authoritative path, but it is an
+    # external command, and credential storage is deliberately exercised with an
+    # empty PATH to prove a missing native backend fails closed. Degrading to an
+    # empty encoding there turned a status-2 refusal into a status-1 error, so
+    # fall back to a pure-bash walk instead.
+    if command -v od >/dev/null 2>&1 && command -v tr >/dev/null 2>&1; then
+        encoded=$(printf '%s' "$value" | od -A n -v -t x1 2>/dev/null | tr -d ' \r\n') || encoded=""
     fi
 
-    local encoded
-    encoded=$(printf '%s' "$value" | od -A n -v -t x1 2>/dev/null | tr -d ' \r\n') || encoded=""
+    if [[ -z "$encoded" ]]; then
+        local char ordinal i length
+        length=${#value}
+        for (( i=0; i<length; i++ )); do
+            char="${value:i:1}"
+            printf -v ordinal '%d' "'$char" || { encoded=""; break; }
+            # bash 3.2 widens a byte >= 0x80 into a 64-bit value whose low byte is
+            # still the byte itself, so mask it back before formatting.
+            printf -v char '%02x' "$(( ordinal & 0xFF ))" || { encoded=""; break; }
+            encoded="${encoded}${char}"
+        done
+    fi
+
     KEYCHAIN_HEX_DECODED="$encoded"
 }
 
