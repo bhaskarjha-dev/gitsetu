@@ -89,7 +89,11 @@ test_completion_legacy_registry_not_offered() {
     COMP_WORDS=(gitsetu run "")
     COMP_CWORD=2
     _gitsetu
-    assert_not_contains "${COMPREPLY[*]}" "work" "legacy labels are never offered" || return 1
+    # _gitsetu resets COMPREPLY before doing anything, so an unloadable legacy
+    # registry leaves it empty. Under bash 3.2 `set -u`, expanding an empty array
+    # as "${arr[*]}" raises "unbound variable"; the :- default keeps the read
+    # portable and leaves the assertion meaningful (nothing was offered).
+    assert_not_contains "${COMPREPLY[*]:-}" "work" "legacy labels are never offered" || return 1
 }
 
 printf '\n%btest_completion.sh%b\n' "$T_BOLD" "$T_RESET"

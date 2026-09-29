@@ -59,6 +59,15 @@ setup_verify_state() {
     unset CI SSH_AUTH_SOCK GIT_AUTHOR_EMAIL GIT_COMMITTER_EMAIL GITSETU_VERIFY_NETWORK GITSETU_ALLOW_SSH_HOST_KEY GITSETU_SSH_ACCEPT_NEW_HOST
 
     mkdir -p "$HOME/work/repo" "$HOME/.ssh"
+    # The product's own setup path enforces mode 0700 on ~/.ssh and asserts it
+    # through _ssh_assert_private_directory. This fixture bypasses that path with
+    # a bare mkdir under the ambient umask, leaving 0755 -- a state gitsetu never
+    # creates -- which verify_ssh_keys then correctly rejects. Match the mode the
+    # product guarantees rather than weakening the validator.
+    if ! chmod 700 "$HOME/.ssh" 2>/dev/null; then
+        printf '    FAIL: could not secure the ~/.ssh fixture\n'
+        return 1
+    fi
     ssh-keygen -q -t ed25519 -N '' -f "$HOME/.ssh/id_ed25519_global"
     ssh-keygen -q -t ed25519 -N '' -f "$HOME/.ssh/id_ed25519_work"
 
