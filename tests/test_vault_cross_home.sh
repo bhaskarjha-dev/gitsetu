@@ -373,6 +373,10 @@ test_cross_home_restore_maps_paths_and_preserves_user_config() {
             "restored token store is mode 0600" || return 1
         assert_equals "700" "$(_cross_mode "$GITSETU_HOOKS_DIR/pre-commit")" \
             "restored guard hook is mode 0700" || return 1
+    else
+        # A dropped assertion must never be reported as a PASS.
+        skip_test "HOME A backup restores into HOME B with different XDG" \
+            "filesystem does not expose POSIX mode bits"
     fi
     _cross_assert_no_transaction "successful cross-home restore" || return 1
     _cross_assert_no_sidecars "successful cross-home restore"
@@ -547,6 +551,10 @@ test_cross_home_incomplete_rollback_leaves_recovery_marker() {
             "recovery transaction directory is private mode 0700" || return 1
         assert_equals "600" "$(_cross_mode "$txn/RECOVERY_REQUIRED")" \
             "recovery marker is private mode 0600" || return 1
+    else
+        # A dropped assertion must never be reported as a PASS.
+        skip_test "incomplete rollback retains a private recovery marker" \
+            "filesystem does not expose POSIX mode bits"
     fi
     _cross_assert_no_sidecars "incomplete rollback"
     rm -f "$TEST_HOME/incomplete-restore.out"

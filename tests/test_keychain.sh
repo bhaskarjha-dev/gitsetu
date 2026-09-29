@@ -32,11 +32,26 @@ _keychain_setup() {
     # Use POSIX permission checks for ordinary cases. The dedicated ACL case
     # below restores an MSYS environment before invoking the DACL parser.
 
-    # Supply a test-only stat shim so mode/owner checks are deterministic on
-    # Git Bash/NTFS as well as POSIX hosts.
-    local mock_bin="$HOME/test-bin"
-    mkdir -p "$mock_bin"
-    cat > "$mock_bin/stat" <<'EOF'
+    # Supply a test-only stat shim so mode/owner checks are deterministic where
+    # the real filesystem cannot express POSIX modes at all (Git Bash/NTFS).
+    #
+    # This shim must NOT be installed unconditionally. Installed always, it
+    # shadowed `stat` for the can_chmod_600 capability probe: the probe reads
+    # the mode of a .chmod_test.* file, and the shim answers a hardcoded 700 for
+    # every path that is not */.tokens. can_chmod_600 could therefore never
+    # return true inside this suite, which silently dropped three mode-600
+    # assertions about the plaintext credential file -- one reported as a SKIP
+    # that wrongly blamed the filesystem, and two reported as a PASS whose
+    # assertion never executed. On a POSIX host we want the real mode, so the
+    # shim is only installed once the probe has honestly reported that the
+    # filesystem cannot honour chmod 600.
+    #
+    # setup_test_home snapshots and restores PATH around every case, so no
+    # earlier test can leave a shim directory sitting in front of this probe.
+    if ! can_chmod_600; then
+        local mock_bin="$HOME/test-bin"
+        mkdir -p "$mock_bin"
+        cat > "$mock_bin/stat" <<'EOF'
 #!/usr/bin/env sh
 format=""
 path=""
@@ -58,15 +73,16 @@ case "$format" in
         ;;
 esac
 EOF
-    chmod +x "$mock_bin/stat"
-    local path_bin="$mock_bin"
-    if command -v cygpath >/dev/null 2>&1; then
-        path_bin=$(cygpath -u "$mock_bin" 2>/dev/null || printf '%s' "$mock_bin")
+        chmod +x "$mock_bin/stat"
+        local path_bin="$mock_bin"
+        if command -v cygpath >/dev/null 2>&1; then
+            path_bin=$(cygpath -u "$mock_bin" 2>/dev/null || printf '%s' "$mock_bin")
+        fi
+        case ":$PATH:" in
+            *":$path_bin:"*) ;;
+            *) export PATH="$path_bin:$PATH" ;;
+        esac
     fi
-    case ":$PATH:" in
-        *":$path_bin:"*) ;;
-        *) export PATH="$path_bin:$PATH" ;;
-    esac
 
     # keychain_store expects the config dir to exist (ensure_dirs creates it in production)
     mkdir -p "$HOME/.config/gitsetu"
@@ -370,6 +386,10 @@ test_keychain_tokens_permissions_from_inception() {
         local perms
         perms=$(stat -c '%a' "$tokens_file" 2>/dev/null || stat -f '%Lp' "$tokens_file" 2>/dev/null || echo "???")
         assert_equals "600" "$perms" "tokens file is born with 600 perms (umask 077 enforced at inception)" || return 1
+    else
+        # A dropped assertion must never be reported as a PASS.
+        skip_test "tokens file permissions from inception" \
+            "filesystem does not expose POSIX mode bits"
     fi
 
     # Verify content is intact
@@ -408,6 +428,10 @@ test_keychain_erase_maintains_600_permissions() {
         local perms
         perms=$(stat -c '%a' "$tokens_file" 2>/dev/null || stat -f '%Lp' "$tokens_file" 2>/dev/null || echo "???")
         assert_equals "600" "$perms" "tokens file retains 600 permissions after keychain_erase" || return 1
+    else
+        # A dropped assertion must never be reported as a PASS.
+        skip_test "erase maintains 600 permissions" \
+            "filesystem does not expose POSIX mode bits"
     fi
 }
 

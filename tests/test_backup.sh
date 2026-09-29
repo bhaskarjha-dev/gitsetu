@@ -461,6 +461,10 @@ test_backup_reports_recovery_snapshot() {
         local perms
         perms=$(stat -c '%a' "$txn/RECOVERY_REQUIRED" 2>/dev/null || stat -f '%Lp' "$txn/RECOVERY_REQUIRED" 2>/dev/null || echo "???")
         assert_equals "600" "$perms" "recovery marker is private" || return 1
+    else
+        # A dropped assertion must never be reported as a PASS.
+        skip_test "interrupted restore reports private recovery snapshot" \
+            "filesystem does not expose POSIX mode bits"
     fi
 
     rm -f "$output" "$signal_output"
@@ -533,6 +537,11 @@ test_backup_tar_isolated_in_private_temp_dir() {
 
     if can_chmod_600; then
         assert_equals "700" "$captured_tar_dir_perms" "intermediate tar parent directory restricted to 0700" || return 1
+    else
+        # The tar shim above fabricated the perms value it is compared against,
+        # so this assertion is meaningless unless the filesystem reports modes.
+        skip_test "intermediate tar isolated in private temp dir" \
+            "filesystem does not expose POSIX mode bits"
     fi
 
     assert_file_not_exists "$captured_tar_path" "intermediate tar deleted after backup"
@@ -571,6 +580,10 @@ test_backup_vault_file_permissions_600() {
         local perms
         perms=$(stat -c '%a' "$vault_out" 2>/dev/null || stat -f '%Lp' "$vault_out" 2>/dev/null || echo "???")
         assert_equals "600" "$perms" "vault ciphertext file restricted to mode 600" || return 1
+    else
+        # A dropped assertion must never be reported as a PASS.
+        skip_test "vault ciphertext permissions 600" \
+            "filesystem does not expose POSIX mode bits"
     fi
 
     rm -f "$vault_out"
