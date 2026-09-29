@@ -177,27 +177,46 @@ test_write_profiles_conf() {
 }
 
 test_path_escaping() {
-    # Test that GitConfig paths are properly escaped for double quotes and normalized
+    # This asserts escaping, not drive-letter semantics.  The original fixture fed
+    # 'C:\Users\John"Doe\work' on every platform, but on POSIX that directory does
+    # not exist, so canonicalize_path anchors it at $PWD and emits
+    # "<cwd>/C:/Users/John\"Doe/work/".  That difference is in path resolution,
+    # not escaping, and it only ever reproduced off Windows.  Anchor the
+    # end-to-end assertions under $HOME -- already canonicalised by the harness,
+    # and unlike /tmp it is not a symlink into /private on macOS -- and assert the
+    # drive-letter escaping contract directly against the quoting helper, so
+    # Windows-shaped input stays covered on every platform.
     PROFILE_LABELS=("global" "hacker")
     PROFILE_NAMES=("Global" "Hacker")
     PROFILE_EMAILS=("g@t.com" "hacker@test.com")
-    # A path that contains double quotes and backslashes
-    PROFILE_DIRS=("" 'C:\Users\John"Doe\work')
+    # A path that contains a double quote and a backslash
+    local quoted_dir="$HOME/John\" Doe\\work"
+    PROFILE_DIRS=("" "$quoted_dir")
     PROFILE_COUNT=2
 
     local block
     block=$(build_global_gitconfig_block)
 
-    # Backslashes are normalized to forward slashes, quotes are escaped
-    local expected_escaped_dir='C:/Users/John\"Doe/work/'
+    # Backslashes are normalized to forward slashes, quotes are escaped.  The
+    # expected value is written \\" so the shell keeps a literal backslash before
+    # the quote; inside double quotes a bare \" would be consumed as an escape and
+    # the expectation would silently stop checking for the escaping at all.
+    local expected_escaped_dir="${HOME}/John\\\" Doe/work/"
     local keyword
     keyword=$(get_gitdir_keyword)
-    
+
     assert_contains "$block" "[includeIf \"${keyword}${expected_escaped_dir}\"]" "path is properly escaped in includeIf" || return 1
-    
+
     # Check that [safe] directory is also escaped
-    local expected_safe_dir='C:/Users/John\"Doe/work/*'
+    local expected_safe_dir="${HOME}/John\\\" Doe/work/*"
     assert_contains "$block" "directory = \"${expected_safe_dir}\"" "path is properly escaped in safe directory" || return 1
+
+    # Windows drive-letter input keeps its own escaping contract: backslashes are
+    # doubled and the embedded quote is escaped, independent of whether the path
+    # itself can be resolved on the running platform.
+    assert_equals '"C:\\Users\\John\"Doe\\work"' \
+        "$(_gitconfig_quote_double_value 'C:\Users\John"Doe\work')" \
+        "drive-letter paths are escaped for backslashes and quotes" || return 1
 }
 
 test_path_injection_newlines() {
