@@ -47,30 +47,24 @@ _keychain_init_constants() {
 # whose spelling differs between GNU and macOS.
 _keychain_hex_encode() {
     local value="${1-}"
-    local encoded=""
-    local char ordinal
-    local had_lc=0
-    local old_lc=""
 
-    if [[ -n "${LC_ALL+x}" ]]; then
-        had_lc=1
-        old_lc="$LC_ALL"
+    # Byte-exact, and independent of bash's printf. Walking the value one
+    # character at a time and converting each with printf '%d' is broken on
+    # bash 3.2 for any byte >= 0x80: the value comes back as a 64-bit integer,
+    # so "%02x" -- a minimum width, not a maximum -- emits the full sixteen hex
+    # digits of that integer and the stored credential is corrupted rather than
+    # rejected. This is reachable, not theoretical: repository paths are allowed
+    # to contain UTF-8, and credential_path is one of the encoded fields. od
+    # reads the bytes directly and yields exactly two hex digits per byte on
+    # every supported bash, which is the same byte-exact approach the registry
+    # escaper uses.
+    if [[ -z "$value" ]]; then
+        KEYCHAIN_HEX_DECODED=""
+        return 0
     fi
-    LC_ALL=C
 
-    while [[ -n "$value" ]]; do
-        char="${value:0:1}"
-        value="${value:1}"
-        printf -v ordinal '%d' "'$char"
-        printf -v char '%02x' "$ordinal"
-        encoded="${encoded}${char}"
-    done
-
-    if [[ "$had_lc" -eq 1 ]]; then
-        LC_ALL="$old_lc"
-    else
-        unset LC_ALL
-    fi
+    local encoded
+    encoded=$(printf '%s' "$value" | od -A n -v -t x1 2>/dev/null | tr -d ' \r\n') || encoded=""
     KEYCHAIN_HEX_DECODED="$encoded"
 }
 

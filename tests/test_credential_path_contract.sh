@@ -683,6 +683,59 @@ test_literal_percent_0a_suffix_roundtrips_exactly() {
         "literal percent-0A text is preserved byte-for-byte" || return 1
 }
 
+# The credential codec must be byte-exact for every byte value.  Encoding a
+# field one character at a time with printf '%d' is broken on bash 3.2 for any
+# byte >= 0x80, where the ordinal comes back as a 64-bit integer and "%02x" --
+# a minimum width, not a maximum -- emits sixteen hex digits instead of two.
+# Repository paths are allowed to contain UTF-8, so this is reachable.
+test_hex_codec_is_byte_exact_for_non_ascii() {
+    _setup_contract_home || return 1
+
+    local input encoded decoded expected
+    local -a samples=(
+        '/repos/café/work'
+        '/repos/プロジェクト/日本語'
+        'naïve-user'
+        $'raw\ttab'
+        'plain-ascii-path'
+    )
+    local failures=0 sample
+
+    for sample in "${samples[@]}"; do
+        input="$sample"
+        # od gives the authoritative expected encoding, independent of bash.
+        expected=$(printf '%s' "$input" | od -A n -v -t x1 | tr -d ' \r\n')
+
+        _keychain_hex_encode "$input" || { failures=$((failures + 1)); continue; }
+        encoded="$KEYCHAIN_HEX_DECODED"
+        if [[ "$encoded" != "$expected" ]]; then
+            printf '    FAIL: encode mismatch for %s\n      got:      %s\n      expected: %s\n' \
+                "$sample" "$encoded" "$expected" >&2
+            failures=$((failures + 1))
+            continue
+        fi
+        # And the decoded value must come back byte-identical, not merely be the
+        # right length.
+        _keychain_hex_decode "$encoded" || { failures=$((failures + 1)); continue; }
+        decoded="$KEYCHAIN_HEX_DECODED"
+        if [[ "$decoded" != "$input" ]]; then
+            printf '    FAIL: round-trip mismatch for %s\n' "$sample" >&2
+            failures=$((failures + 1))
+        fi
+    done
+
+    # An empty field must stay empty rather than inheriting the previous value.
+    _keychain_hex_encode "seeded" || return 1
+    _keychain_hex_encode "" || return 1
+    if [[ -n "$KEYCHAIN_HEX_DECODED" ]]; then
+        printf '    FAIL: empty field encoded to %s\n' "$KEYCHAIN_HEX_DECODED" >&2
+        failures=$((failures + 1))
+    fi
+
+    assert_equals "0" "$failures" \
+        "credential hex codec is byte-exact for non-ASCII and empty fields" || return 1
+}
+
 # A v2 field is hex, and decoded CR/LF bytes are never valid credential
 # values.  Test both the actual trailing-newline byte and an odd-length hex
 # field through the public file backend.
@@ -775,6 +828,7 @@ run_test "CLI duplicate credential fields fail closed" test_cli_duplicate_fields
 run_test "CLI unsupported and malformed input" test_cli_unsupported_and_malformed_input
 run_test "exact profile/host/path tuple isolation" test_exact_tuple_isolation_and_erase_scope
 run_test "literal percent-0A suffix roundtrip" test_literal_percent_0a_suffix_roundtrips_exactly
+run_test "hex codec is byte-exact for non-ASCII fields" test_hex_codec_is_byte_exact_for_non_ascii
 run_test "v2 trailing newline and odd hex rejection" test_v2_trailing_newline_and_odd_hex_are_rejected
 run_test "v2 duplicate and corrupt record rejection" test_v2_duplicate_and_corrupt_records_fail_closed
 print_results "Credential path contract tests"

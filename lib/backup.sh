@@ -859,7 +859,7 @@ _vault_verbose_member_size() {
     # emits English month abbreviations, independent of the caller's locale.
     local line="$1" type="$2" candidate=""
     local -a fields=()
-    local i last
+    local i last date_index=-1
 
     [[ -n "$line" && "$type" == "-" ]] || { printf ''; return 1; }
 
@@ -869,18 +869,26 @@ _vault_verbose_member_size() {
     [[ "${#fields[@]}" -ge 4 ]] || { printf ''; return 1; }
     last=$((${#fields[@]} - 1))
 
+    # Scan for the LAST date-like token before the member name, not the first.
+    # The owner and group names live in the tar header and are therefore
+    # attacker controlled, so one of them can be spelled "Sep". Matching the
+    # first date-like token then read the numeric uid that precedes it as the
+    # size, reporting 0 for a member of any real size and so silently passing
+    # GITSETU_VAULT_MAX_MEMBER_BYTES. The genuine date is always the last
+    # date-like token before the name, because only the time and the name follow
+    # it and neither can be mistaken for a date. If a member name itself contains
+    # a month, the scan lands in the name and the field before it is the time,
+    # which is not numeric, so the line is refused rather than misread.
     for (( i=1; i<last; i++ )); do
         case "${fields[$i]}" in
-            Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) break ;;
+            Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) date_index=$i ;;
+            [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) date_index=$i ;;
         esac
-        if [[ "${fields[$i]}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-            break
-        fi
     done
     # The size is the field immediately before the date. A date at the leading
     # position means this is not a listing line we understand.
-    (( i > 1 && i < last )) || { printf ''; return 1; }
-    candidate="${fields[$((i - 1))]}"
+    (( date_index > 1 && date_index < last )) || { printf ''; return 1; }
+    candidate="${fields[$((date_index - 1))]}"
     [[ "$candidate" =~ ^[0-9]+$ ]] || { printf ''; return 1; }
     printf '%s' "$candidate"
 }

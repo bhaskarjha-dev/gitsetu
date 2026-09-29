@@ -138,6 +138,13 @@ test_vault_verbose_listing_size_layouts() {
         'bsd|-rw-------  0 runner  staff    1234 Sep 27 09:26 gitsetu-v2/state/profiles.conf|1234'
         'bsd-zero|-rw-r--r--  0 runner  staff       0 Sep 27 09:26 gitsetu-v2/keys/0.pub|0'
         'bsd-numeric-gid|-rw-r--r--  0 runner  20  4096 Sep 27 09:26 gitsetu-v2/state/profiles.conf|4096'
+        # The owner and group names are attacker-controlled strings in the tar
+        # header. A header that spells one of them as a month abbreviation must
+        # not make the numeric uid parse as the size, which would report 0 for a
+        # member of any size and silently pass GITSETU_VAULT_MAX_MEMBER_BYTES.
+        'bsd-uname-month|-rw-------  0 Sep staff  9999999999999 Sep 27 09:26 gitsetu-v2/keys/0|9999999999999'
+        'bsd-gname-month|-rw-------  0 runner Sep  9999999999999 Sep 27 09:26 gitsetu-v2/keys/0|9999999999999'
+        'gnu-owner-month|-rw-------  0/Sep    9999999999999 2026-09-27 09:26 gitsetu-v2/keys/0|9999999999999'
     )
     for entry in "${cases[@]}"; do
         rest="${entry#*|}"
@@ -159,6 +166,10 @@ test_vault_verbose_listing_size_layouts() {
         'lrwxr-xr-x  0 runner  staff       7 Sep 27 09:26 gitsetu-v2/keys/evil|l'
         'hrw-r--r--  0 runner  staff       0 Sep 27 09:26 link to gitsetu-v2/keys/0|h'
         '-rw-------  0 runner  staff  nope Sep 27 09:26 gitsetu-v2/x|-'
+        # A month abbreviation inside the member name pulls the scan past the
+        # real date; the field before it is then the time, which is not numeric,
+        # so the line must be refused rather than misread.
+        '-rw-------  0 runner  staff  1234 Sep 27 09:26 Sep 12345|-'
     )
     failures=0
     for entry in "${refused[@]}"; do
