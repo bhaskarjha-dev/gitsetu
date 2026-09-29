@@ -867,10 +867,26 @@ setup_test_home() {
         printf '  [FATAL] unable to create isolated test home\n' >&2
         return 1
     fi
+    # Keep the resolved directory: the msys branch below deliberately clears
+    # new_home when pwd -W fails, and the fallback still needs a path to cd into.
+    local _home_dir="$new_home"
     if [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]] || [[ "${OSTYPE:-}" == "mingw"* ]]; then
-        new_home=$(cd "$new_home" && pwd -W)
+        new_home=$(cd "$_home_dir" && pwd -W 2>/dev/null) || new_home=""
+        # pwd -W only exists on a real Windows host. When a suite has forced
+        # OSTYPE to an msys value, fall back instead of leaving the home empty.
+        if [[ -z "$new_home" ]]; then
+            new_home=$(cd "$_home_dir" && pwd -P 2>/dev/null) || new_home=""
+        fi
     else
-        new_home=$(cd "$new_home" && pwd -P)
+        new_home=$(cd "$_home_dir" && pwd -P)
+    fi
+
+    # An empty or relative HOME is worse than no sandbox at all: every later
+    # "$HOME/..." path would resolve against "/", so a suite can end up trying to
+    # create /.ssh or /.config. Fail closed rather than hand out a broken root.
+    if [[ -z "$new_home" || ( "$new_home" != /* && ! "$new_home" =~ ^[A-Za-z]:[\\/] ) ]]; then
+        printf '  [FATAL] isolated test home did not resolve to an absolute path\n' >&2
+        return 1
     fi
 
     TEST_ENV_STACK[frame_index]="$snapshot"

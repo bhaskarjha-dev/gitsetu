@@ -20,13 +20,17 @@ GITSETU_OS="unknown"
 
 # Helper: sets up a clean test environment with the config dir
 _keychain_setup() {
+    # Set OSTYPE *before* setup_test_home, which branches on it to choose
+    # pwd -W vs pwd -P. A previous case that exports OSTYPE=msys must not leak
+    # into this sandbox, or a POSIX host is handed an empty HOME and every
+    # later mkdir targets "/" instead of the sandbox.
+    export OSTYPE=linux-gnu
     setup_test_home
     source_gitsetu_libs
     GITSETU_OS="unknown"
     export GITSETU_CREDENTIAL_BACKEND=file
     # Use POSIX permission checks for ordinary cases. The dedicated ACL case
     # below restores an MSYS environment before invoking the DACL parser.
-    export OSTYPE=linux-gnu
 
     # Supply a test-only stat shim so mode/owner checks are deterministic on
     # Git Bash/NTFS as well as POSIX hosts.

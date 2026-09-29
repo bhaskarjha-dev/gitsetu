@@ -28,10 +28,27 @@ test_noninteractive_prompts_clear_stale_reply() {
     assert_equals "default-name" "$REPLY" "noninteractive ask clears stale REPLY and uses default" || return 1
 
     REPLY="stale"
-    local status=0
-    ask_required "Email" || status=$?
-    assert_equals "1" "$status" "required prompt fails in noninteractive mode" || return 1
-    assert_equals "" "$REPLY" "failed required prompt leaves no stale REPLY" || return 1
+    local status=0 refusal=""
+    # Capture the refusal instead of letting it reach the log: ask_required
+    # correctly reports a non-TTY refusal on stderr, and an unprompted error
+    # line in a CI log reads like a real failure. Redirect rather than use $( )
+    # because ask_required assigns REPLY, which must survive in this shell.
+    refusal=$(umask 077 && mktemp "${TMPDIR:-/tmp}/gitsetu-ui-refusal.XXXXXX") || return 1
+    ask_required "Email" 2>"$refusal" || status=$?
+    assert_equals "1" "$status" "required prompt fails in noninteractive mode" || {
+        rm -f "$refusal"
+        return 1
+    }
+    assert_equals "" "$REPLY" "failed required prompt leaves no stale REPLY" || {
+        rm -f "$refusal"
+        return 1
+    }
+    assert_file_contains "$refusal" "CI/non-TTY" \
+        "refused prompt explains the noninteractive cause" || {
+        rm -f "$refusal"
+        return 1
+    }
+    rm -f "$refusal"
 }
 
 test_choice_prompt_eof_returns_without_spinning() {
