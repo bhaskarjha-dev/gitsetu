@@ -32,26 +32,31 @@ _keychain_setup() {
     # Use POSIX permission checks for ordinary cases. The dedicated ACL case
     # below restores an MSYS environment before invoking the DACL parser.
 
-    # Supply a test-only stat shim so mode/owner checks are deterministic where
-    # the real filesystem cannot express POSIX modes at all (Git Bash/NTFS).
+    # Supply a test-only stat shim so mode/owner checks are deterministic on
+    # Git Bash/NTFS as well as POSIX hosts.
     #
-    # This shim must NOT be installed unconditionally. Installed always, it
-    # shadowed `stat` for the can_chmod_600 capability probe: the probe reads
-    # the mode of a .chmod_test.* file, and the shim answers a hardcoded 700 for
-    # every path that is not */.tokens. can_chmod_600 could therefore never
-    # return true inside this suite, which silently dropped three mode-600
-    # assertions about the plaintext credential file -- one reported as a SKIP
-    # that wrongly blamed the filesystem, and two reported as a PASS whose
-    # assertion never executed. On a POSIX host we want the real mode, so the
-    # shim is only installed once the probe has honestly reported that the
-    # filesystem cannot honour chmod 600.
+    # This shim must stay UNCONDITIONAL. Two separate reasons, both measured:
     #
-    # setup_test_home snapshots and restores PATH around every case, so no
-    # earlier test can leave a shim directory sitting in front of this probe.
-    if ! can_chmod_600; then
-        local mock_bin="$HOME/test-bin"
-        mkdir -p "$mock_bin"
-        cat > "$mock_bin/stat" <<'EOF'
+    #   1. _install_ntfs_acl_shim below writes icacls.exe/fsutil.exe into the
+    #      same directory, so the mkdir has to happen on every host.
+    #   2. Fixtures in this suite deliberately use non-600 modes and assert that
+    #      the product REFUSES them. The shim's answers (600 for .tokens, 700 for
+    #      everything else) are load-bearing for reaching those assertions:
+    #      without it the "from inception" fixture is stopped by the product's
+    #      directory-mode precheck, and the legacy-record fixture is stopped by
+    #      its own 0644 mode before legacy detection ever runs. Both are correct
+    #      product refusals, but they are not what those tests assert.
+    #
+    # The known cost is that this shim also shadows `stat` for the can_chmod_600
+    # capability probe, which answers a hardcoded 700 for the probe's .chmod_test
+    # file. can_chmod_600 therefore cannot return true here, so the three
+    # mode-600 assertions about the credential file record an explicit skip
+    # rather than silently claiming a PASS. Recovering real-mode coverage in this
+    # suite needs can_chmod_600 itself to resolve a shim-free stat; that is a
+    # separate change, not something to smuggle in here.
+    local mock_bin="$HOME/test-bin"
+    mkdir -p "$mock_bin"
+    cat > "$mock_bin/stat" <<'EOF'
 #!/usr/bin/env sh
 format=""
 path=""
@@ -73,16 +78,15 @@ case "$format" in
         ;;
 esac
 EOF
-        chmod +x "$mock_bin/stat"
-        local path_bin="$mock_bin"
-        if command -v cygpath >/dev/null 2>&1; then
-            path_bin=$(cygpath -u "$mock_bin" 2>/dev/null || printf '%s' "$mock_bin")
-        fi
-        case ":$PATH:" in
-            *":$path_bin:"*) ;;
-            *) export PATH="$path_bin:$PATH" ;;
-        esac
+    chmod +x "$mock_bin/stat"
+    local path_bin="$mock_bin"
+    if command -v cygpath >/dev/null 2>&1; then
+        path_bin=$(cygpath -u "$mock_bin" 2>/dev/null || printf '%s' "$mock_bin")
     fi
+    case ":$PATH:" in
+        *":$path_bin:"*) ;;
+        *) export PATH="$path_bin:$PATH" ;;
+    esac
 
     # keychain_store expects the config dir to exist (ensure_dirs creates it in production)
     mkdir -p "$HOME/.config/gitsetu"
