@@ -250,7 +250,7 @@ gitsetu teardown
 |---|:---:|:---:|:---:|:---:|:---:|
 | Zero runtime dependencies | ✓ | | | | ✓ |
 | Auto-discovery setup | ✓ | | | | |
-| SSH key generation | ✓ | ~ | | ~ | |
+| SSH key generation | ✓ | ~ | | ✓ | |
 | Pre-commit guard | ✓ | ~ | | ✓ | |
 | Credential broker | ✓ | ✓ | | ✓ | |
 | Authenticated v2 backup | ✓ | | | | |

@@ -22,7 +22,7 @@ Because GitSetu must remain fully executable natively on legacy macOS endpoints,
 ## 3. Strict Concurrency Integrity
 GitSetu is designed to support parallel headless CI/CD runners. All persistent filesystem mutations **must** remain atomic or fail closed where the platform permits.
 - **Zero Inline File Overwrites:** Never utilize blind regex replacers (e.g., `sed -i`) natively against global target configurations. This creates catastrophic mid-write destruction windows during sudden SIGTERM events.
-- **TMPDIR Swapping:** Always direct block modifications to heavily randomized temporary execution paths (`$TMPDIR/..._$$_${RANDOM}`), finalize validation, and subsequently apply them against primary targets utilizing single-cycle atomic `mv` replacements.
+- **Atomic Staging:** Write configuration updates to temporary files using `mktemp` (or isolated PID/random staging files where constrained), validate contents, and apply them to destination paths using atomic `mv` replacements.
 
 ## 4. The Telemetry Boundary
 We maintain a ruthless **Zero Telemetry** security posture.

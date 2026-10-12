@@ -61,7 +61,7 @@ The inaugural General Availability (GA) production release of GitSetu — a zero
 - **Fail-Closed Pre-Commit Guard (`gitsetu guard`):** Global pre-commit hook (`core.hooksPath`) that blocks commits if `user.email` diverges from the expected profile for the repository directory.
 - **Hook Proxying:** Transparently passes through to project-level hooks (`husky`, `lefthook`, `pre-commit`) when identity verification succeeds.
 - **Subshell-Free Environment Switching (`gitsetu run`):** Runs one-off commands under an explicit profile identity via environment variables without subshell overhead.
-- **Sub-2ms Shell Prompt Integration (`gitsetu prompt`):** Ultra-low-latency `$PS1` / Starship prompt context identifier implemented in pure Bash parameter expansion.
+- **Low-Latency Shell Prompt Integration (`gitsetu prompt`):** Low-overhead `$PS1` / Starship prompt context identifier implemented in pure Bash parameter expansion.
 - **Encrypted State Vault (`gitsetu backup` / `restore`):** The historical 1.0.0 implementation used an OpenSSL AES-256-CBC envelope (`-pbkdf2` / `-iter 100000`). Current v1.1.0 candidates use the authenticated v2 format documented above; the older format is rejected.
 - **Clean State Teardown (`gitsetu teardown`):** Completely purges GitSetu managed blocks, unsets `core.hooksPath`, and removes application directories while preserving generated SSH keys. Supports deep cleanup (`--deep`) of matched local repository overrides.
 

@@ -1,8 +1,8 @@
 # Troubleshooting & Diagnostics
 
-**A comprehensive guide to rapidly surfacing and resolving environmental configuration drift.**
+**Diagnose and resolve common Git, SSH, credential, and platform configuration issues.**
 
-GitSetu is engineered to self-heal and fail-closed natively, but localized Git configurations, OS keychain constraints, and complex virtualization bounds frequently introduce obscure connectivity issues. This reference provides immediate resolution paths for the most common errors.
+While GitSetu validates configuration and fails closed on integrity checks, host-level Git configs, SSH agents, OS keychains, and virtualization layers (such as WSL) can introduce connectivity or identity issues. This reference provides resolution paths for common failure modes.
 
 ---
 

@@ -32,14 +32,14 @@ What type of SSH key do you want to generate?
 1. Select option **`2`**.
 2. Connect your physical token directly into an available host USB interface.
 3. The terminal halts execution mid-flight. **Physically tap the capacitive contact** on your hardware key to confirm user presence.
-4. GitSetu compiles an isolated host pointer layout (`~/.ssh/id_ed25519_sk_<profile>`) containing reference hooks linking directly to your physical token.
+4. GitSetu writes a key handle file (`~/.ssh/id_ed25519_sk_<profile>`) containing the FIDO2 credential reference required to communicate with your physical token.
 5. The generated public key payload is available for provider registration, while the managed SSH configuration points OpenSSH to the hardware-backed identity.
 
 ---
 
 ## Runtime Verification Mechanics
 
-When executing code pushes or fetching protected upstream branches over SSH, OpenSSH reads the localized key hook pointer and streams an evaluation request to the attached physical device.
+When executing code pushes or fetching protected upstream branches over SSH, OpenSSH reads the key handle and requests user presence / authentication from the attached physical device.
 
 ```text
 $ git push origin main

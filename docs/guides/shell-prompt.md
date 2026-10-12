@@ -4,7 +4,7 @@
 
 Committing code using the wrong author context often occurs because developers lack instant visual feedback regarding which identity profile owns their current terminal workspace directory.
 
-GitSetu includes a specialized, high-speed **Prompt Engine** designed specifically to expose your active workspace context natively inside your command prompt (`$PS1`), Oh-My-Zsh themes, and cross-shell tools like Starship.
+GitSetu provides a lightweight `prompt` subcommand designed specifically to display your active Git identity inside your command prompt (`$PS1`), Oh-My-Zsh themes, and cross-shell tools like Starship.
 
 ---
 
