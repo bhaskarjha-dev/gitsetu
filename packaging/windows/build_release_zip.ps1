@@ -42,9 +42,9 @@ try {
             foreach ($member in $members) {
                 $entry = $archive.CreateEntry($member, [IO.Compression.CompressionLevel]::Optimal)
                 $entry.LastWriteTime = New-Object DateTimeOffset (1980, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
-                $input = [IO.File]::OpenRead([IO.Path]::GetFullPath((Join-Path $SourceDir $member.Replace('/', '\'))))
-                $output = $entry.Open()
-                try { $input.CopyTo($output) } finally { $output.Dispose(); $input.Dispose() }
+                $inStream = [IO.File]::OpenRead([IO.Path]::GetFullPath((Join-Path $SourceDir $member.Replace('/', '\'))))
+                $outStream = $entry.Open()
+                try { $inStream.CopyTo($outStream) } finally { $outStream.Dispose(); $inStream.Dispose() }
             }
         } finally { $archive.Dispose() }
     } finally { $stream.Dispose() }
