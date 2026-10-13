@@ -526,6 +526,11 @@ teardown_all() {
         teardown_deep || failed=1
     fi
 
+    if [[ "$acquired" -eq 1 ]]; then
+        release_lock || failed=1
+        acquired=0
+    fi
+
     # State removal is last and only occurs after all external configuration was
     # cleaned successfully.  A partial failure leaves the registry available for
     # diagnosis or a retry.
@@ -536,9 +541,6 @@ teardown_all() {
     fi
 
     list_orphaned_keys || failed=1
-    if [[ "$acquired" -eq 1 ]]; then
-        release_lock || failed=1
-    fi
 
     if [[ "$failed" -eq 0 ]]; then
         if [[ "${GITSETU_DRY_RUN:-0}" -eq 0 ]]; then

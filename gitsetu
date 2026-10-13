@@ -1342,9 +1342,13 @@ cmd_remove() {
         print_warning "SSH keys for '$profile' still exist:"
         print_info "  $key_file"
         print_info "  $key_file.pub"
-        if confirm "Delete these SSH keys permanently?" "n"; then
-            rm -f "$key_file" "$key_file.pub"
-            print_success "SSH keys deleted."
+        if [[ -z "$force_flag" ]]; then
+            if confirm "Delete these SSH keys permanently?" "n"; then
+                rm -f "$key_file" "$key_file.pub"
+                print_success "SSH keys deleted."
+            else
+                print_info "Keys kept. You can manually delete them later."
+            fi
         else
             print_info "Keys kept. You can manually delete them later."
         fi

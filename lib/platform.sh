@@ -230,19 +230,18 @@ canonicalize_path() {
             path="${drive}:${rest}"
         fi
     elif [[ "${GITSETU_OS:-}" == "wsl" ]]; then
-        local wsl_path=""
-        if command -v wslpath >/dev/null 2>&1 &&
-           [[ "$path" =~ ^([a-zA-Z]:|/([a-zA-Z])(/.*)?$) ]]; then
-            wsl_path=$(wslpath -u "$path" 2>/dev/null || true)
-            wsl_path=${wsl_path%$'\r'}
-        fi
-        if [[ -n "$wsl_path" && "$wsl_path" == /* ]]; then
-            path="$wsl_path"
-        elif [[ "$path" =~ ^/([a-zA-Z])(/.*)?$ ]]; then
+        if [[ "$path" =~ ^/([a-zA-Z])(/.*)?$ ]]; then
             local drive rest
             drive=$(printf '%s' "${BASH_REMATCH[1]-}" | tr '[:upper:]' '[:lower:]')
             rest="${BASH_REMATCH[2]-}"
             path="/mnt/${drive}${rest}"
+        elif command -v wslpath >/dev/null 2>&1 && [[ "$path" =~ ^[a-zA-Z]: ]]; then
+            local wsl_path=""
+            wsl_path=$(wslpath -u "$path" 2>/dev/null || true)
+            wsl_path=${wsl_path%$'\r'}
+            if [[ -n "$wsl_path" && "$wsl_path" == /* ]]; then
+                path="$wsl_path"
+            fi
         elif [[ "$path" =~ ^([a-zA-Z]):(/.*)?$ ]]; then
             local drive rest
             drive=$(printf '%s' "${BASH_REMATCH[1]-}" | tr '[:upper:]' '[:lower:]')

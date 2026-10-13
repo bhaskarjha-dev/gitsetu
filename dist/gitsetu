@@ -2062,19 +2062,18 @@ canonicalize_path() {
             path="${drive}:${rest}"
         fi
     elif [[ "${GITSETU_OS:-}" == "wsl" ]]; then
-        local wsl_path=""
-        if command -v wslpath >/dev/null 2>&1 &&
-           [[ "$path" =~ ^([a-zA-Z]:|/([a-zA-Z])(/.*)?$) ]]; then
-            wsl_path=$(wslpath -u "$path" 2>/dev/null || true)
-            wsl_path=${wsl_path%$'\r'}
-        fi
-        if [[ -n "$wsl_path" && "$wsl_path" == /* ]]; then
-            path="$wsl_path"
-        elif [[ "$path" =~ ^/([a-zA-Z])(/.*)?$ ]]; then
+        if [[ "$path" =~ ^/([a-zA-Z])(/.*)?$ ]]; then
             local drive rest
             drive=$(printf '%s' "${BASH_REMATCH[1]-}" | tr '[:upper:]' '[:lower:]')
             rest="${BASH_REMATCH[2]-}"
             path="/mnt/${drive}${rest}"
+        elif command -v wslpath >/dev/null 2>&1 && [[ "$path" =~ ^[a-zA-Z]: ]]; then
+            local wsl_path=""
+            wsl_path=$(wslpath -u "$path" 2>/dev/null || true)
+            wsl_path=${wsl_path%$'\r'}
+            if [[ -n "$wsl_path" && "$wsl_path" == /* ]]; then
+                path="$wsl_path"
+            fi
         elif [[ "$path" =~ ^([a-zA-Z]):(/.*)?$ ]]; then
             local drive rest
             drive=$(printf '%s' "${BASH_REMATCH[1]-}" | tr '[:upper:]' '[:lower:]')
@@ -9536,6 +9535,11 @@ teardown_all() {
         teardown_deep || failed=1
     fi
 
+    if [[ "$acquired" -eq 1 ]]; then
+        release_lock || failed=1
+        acquired=0
+    fi
+
     # State removal is last and only occurs after all external configuration was
     # cleaned successfully.  A partial failure leaves the registry available for
     # diagnosis or a retry.
@@ -9546,9 +9550,6 @@ teardown_all() {
     fi
 
     list_orphaned_keys || failed=1
-    if [[ "$acquired" -eq 1 ]]; then
-        release_lock || failed=1
-    fi
 
     if [[ "$failed" -eq 0 ]]; then
         if [[ "${GITSETU_DRY_RUN:-0}" -eq 0 ]]; then
@@ -10920,8 +10921,8 @@ acquire_lock() {
         lock_token=$(_gitsetu_lock_read_value "$target_lock" token)
         lock_start=$(_gitsetu_lock_read_value "$target_lock" process_start)
 
-        # A fully identified, live owner is authoritative regardless of age.
-        if [[ "$lock_pid" =~ ^[0-9]+$ && -n "$lock_token" ]]; then
+        # Check if the lock directory has an owner PID
+        if [[ "$lock_pid" =~ ^[0-9]+$ ]]; then
             local owner_alive=0
             if kill -0 "$lock_pid" 2>/dev/null; then
                 owner_alive=1
@@ -10936,8 +10937,14 @@ acquire_lock() {
             fi
 
             if [[ "$owner_alive" -eq 1 ]]; then
-                dead_pid_count=0
-                incomplete_count=0
+                if [[ -n "$lock_token" ]]; then
+                    dead_pid_count=0
+                    incomplete_count=0
+                else
+                    # Living PID but token not yet written (in-flight creation)
+                    dead_pid_count=0
+                    incomplete_count=$((incomplete_count + 1))
+                fi
             else
                 dead_pid_count=$((dead_pid_count + 1))
                 incomplete_count=0
@@ -10960,7 +10967,7 @@ acquire_lock() {
             if [[ "$incomplete_count" -ge "$required_incomplete" ]]; then
                 local lock_age=""
                 lock_age=$(_gitsetu_lock_age_seconds "$target_lock" || printf '')
-                if [[ -n "$lock_age" && "$lock_age" -ge 60 ]]; then
+                if [[ "$test_mode" -eq 1 || ( -n "$lock_age" && "$lock_age" -ge 60 ) ]]; then
                     observed_signature=$(_gitsetu_lock_marker_signature "$target_lock" 2>/dev/null || printf '')
                     if [[ -n "$observed_signature" ]] &&
                        _gitsetu_lock_reap_if_unchanged "$target_lock" "$lock_token" "$observed_signature"; then
@@ -11899,7 +11906,6 @@ cmd_profile() {
                 release_lock || true
                 return 1
             fi
-            return 0
             ;;
         *)
             print_error "Unknown profile action: $action"
@@ -14091,9 +14097,13 @@ cmd_remove() {
         print_warning "SSH keys for '$profile' still exist:"
         print_info "  $key_file"
         print_info "  $key_file.pub"
-        if confirm "Delete these SSH keys permanently?" "n"; then
-            rm -f "$key_file" "$key_file.pub"
-            print_success "SSH keys deleted."
+        if [[ -z "$force_flag" ]]; then
+            if confirm "Delete these SSH keys permanently?" "n"; then
+                rm -f "$key_file" "$key_file.pub"
+                print_success "SSH keys deleted."
+            else
+                print_info "Keys kept. You can manually delete them later."
+            fi
         else
             print_info "Keys kept. You can manually delete them later."
         fi

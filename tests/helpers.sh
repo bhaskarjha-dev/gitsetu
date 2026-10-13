@@ -174,15 +174,13 @@ _test_is_managed_env_name() {
         GITSETU_*|GIT_CONFIG_*|XDG_*)
             return 0
             ;;
-    esac
-
-    local fixed
-    for fixed in "${_TEST_MANAGED_ENV_NAMES[@]}"; do
-        if [[ "$name" == "$fixed" ]]; then
+        HOME|USERPROFILE|HOMEDRIVE|HOMEPATH|APPDATA|LOCALAPPDATA|XDG_CONFIG_HOME|XDG_DATA_HOME|XDG_STATE_HOME|XDG_CACHE_HOME|XDG_RUNTIME_DIR|GIT_CONFIG_GLOBAL|GIT_CONFIG_SYSTEM|GIT_CONFIG_NOSYSTEM|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_0|GIT_CONFIG_VALUE_0|GIT_AUTHOR_NAME|GIT_AUTHOR_EMAIL|GIT_COMMITTER_NAME|GIT_COMMITTER_EMAIL|GIT_NAME|GIT_EMAIL|GIT_CEILING_DIRECTORIES|GIT_DISCOVERY_ACROSS_FILESYSTEM|GIT_OBJECT_DIRECTORY|GIT_ALTERNATE_OBJECT_DIRECTORIES|GIT_INDEX_FILE|GIT_COMMON_DIR|GIT_NAMESPACE|GIT_OPTIONAL_LOCKS|GIT_PAGER|GIT_EDITOR|GIT_SEQUENCE_EDITOR|GIT_EXTERNAL_DIFF|GIT_DIFF_OPTS|GIT_ATTR_NOSYSTEM|GIT_ASKPASS|SSH_ASKPASS|SSH_AUTH_SOCK|SSH_AGENT_PID|GIT_SSH_COMMAND|GIT_SSH|GIT_PROXY_COMMAND|GIT_TERMINAL_PROMPT|GIT_DIR|GIT_WORK_TREE|CI|CONTINUOUS_INTEGRATION|GITHUB_ACTIONS|BUILD_BUILDID)
             return 0
-        fi
-    done
-    return 1
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 _test_ensure_latch_file() {
@@ -635,6 +633,108 @@ assert_exit_code() {
     return 1
 }
 
+# Check if two files are byte-for-byte identical without requiring external diffutils (cmp/diff).
+# Portable across minimal environments (Alpine, Fedora, Debian, macOS, BSD, Windows Git Bash).
+files_are_identical() {
+    local file1="$1"
+    local file2="$2"
+
+    if [[ ! -f "$file1" || ! -f "$file2" ]]; then
+        return 1
+    fi
+
+    # Fast path: cmp is POSIX standard when diffutils is installed
+    if command -v cmp >/dev/null 2>&1; then
+        cmp -s "$file1" "$file2"
+        return $?
+    fi
+
+    # Fast path: diff -q
+    if command -v diff >/dev/null 2>&1; then
+        diff -q "$file1" "$file2" >/dev/null 2>&1
+        return $?
+    fi
+
+    # Coreutils hashing tools (present in almost all minimal distributions including Fedora)
+    if command -v sha256sum >/dev/null 2>&1; then
+        local sum1 sum2
+        sum1=$(sha256sum "$file1" 2>/dev/null | awk '{print $1}')
+        sum2=$(sha256sum "$file2" 2>/dev/null | awk '{print $1}')
+        [[ -n "$sum1" && "$sum1" == "$sum2" ]]
+        return $?
+    fi
+
+    if command -v shasum >/dev/null 2>&1; then
+        local sum1 sum2
+        sum1=$(shasum "$file1" 2>/dev/null | awk '{print $1}')
+        sum2=$(shasum "$file2" 2>/dev/null | awk '{print $1}')
+        [[ -n "$sum1" && "$sum1" == "$sum2" ]]
+        return $?
+    fi
+
+    if command -v cksum >/dev/null 2>&1; then
+        local sum1 sum2
+        sum1=$(cksum "$file1" 2>/dev/null | awk '{print $1,$2}')
+        sum2=$(cksum "$file2" 2>/dev/null | awk '{print $1,$2}')
+        [[ -n "$sum1" && "$sum1" == "$sum2" ]]
+        return $?
+    fi
+
+    # Fallback byte size check
+    local size1 size2
+    size1=$(wc -c < "$file1" 2>/dev/null | tr -d '[:space:]')
+    size2=$(wc -c < "$file2" 2>/dev/null | tr -d '[:space:]')
+    if [[ "$size1" != "$size2" ]]; then
+        return 1
+    fi
+    if [[ "$size1" -eq 0 ]]; then
+        return 0
+    fi
+
+    # Line-by-line fallback
+    local line1 line2
+    while IFS= read -r line1 && IFS= read -r line2 <&3; do
+        if [[ "$line1" != "$line2" ]]; then
+            return 1
+        fi
+    done <"$file1" 3<"$file2"
+
+    return 0
+}
+
+# Assert two files are identical
+assert_files_equal() {
+    local file1="$1"
+    local file2="$2"
+    local msg="${3:-assert_files_equal}"
+
+    if [[ ! -f "$file1" ]]; then
+        printf '    FAIL: %s\n' "$msg"
+        printf '      First file not found: %s\n' "$file1"
+        _test_assertion_failed
+        return 1
+    fi
+
+    if [[ ! -f "$file2" ]]; then
+        printf '    FAIL: %s\n' "$msg"
+        printf '      Second file not found: %s\n' "$file2"
+        _test_assertion_failed
+        return 1
+    fi
+
+    if files_are_identical "$file1" "$file2"; then
+        return 0
+    fi
+
+    printf '    FAIL: %s\n' "$msg"
+    printf '      Files are not identical:\n'
+    printf '        File 1: %s\n' "$file1"
+    printf '        File 2: %s\n' "$file2"
+    _test_assertion_failed
+    return 1
+}
+
+
 # Locate a `stat` that the test harness does not own.
 #
 # test_keychain.sh and test_vault_cross_home.sh each install a mock `stat` in a
@@ -744,29 +844,28 @@ _test_snapshot_environment() {
         return 1
     fi
 
-    for name in "${_TEST_MANAGED_ENV_NAMES[@]}"; do
-        _test_snapshot_one_env "$snapshot" "$name"
+    local -a dyn_vars=()
+    local d
+    for d in $(compgen -v GITSETU_ 2>/dev/null) $(compgen -v GIT_CONFIG_ 2>/dev/null) $(compgen -v XDG_ 2>/dev/null); do
+        dyn_vars+=("$d")
     done
 
-    # Include dynamically introduced GitSetu/Git/XDG variables as well.  A
-    # duplicate fixed entry is harmless and keeps this Bash-3.2-safe.
-    while IFS= read -r name; do
-        case "$name" in
-            GITSETU_*|GIT_CONFIG_*|XDG_*)
-                _test_snapshot_one_env "$snapshot" "$name"
-                ;;
-        esac
-    done < <(compgen -v)
+    for name in "${_TEST_MANAGED_ENV_NAMES[@]}" "${dyn_vars[@]}"; do
+        _test_snapshot_one_env "$snapshot" "$name"
+    done
     return 0
 }
 
 _test_clear_managed_environment() {
     local name declaration
 
-    while IFS= read -r name; do
-        if ! _test_is_managed_env_name "$name"; then
-            continue
-        fi
+    local -a dyn_vars=()
+    local d
+    for d in $(compgen -v GITSETU_ 2>/dev/null) $(compgen -v GIT_CONFIG_ 2>/dev/null) $(compgen -v XDG_ 2>/dev/null); do
+        dyn_vars+=("$d")
+    done
+
+    for name in "${_TEST_MANAGED_ENV_NAMES[@]}" "${dyn_vars[@]}"; do
         if _test_is_internal_name "$name"; then
             continue
         fi
@@ -778,8 +877,8 @@ _test_clear_managed_environment() {
                     ;;
             esac
         fi
-        unset "$name"
-    done < <(compgen -v)
+        unset "$name" 2>/dev/null || true
+    done
     return 0
 }
 

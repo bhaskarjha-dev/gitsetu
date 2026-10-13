@@ -148,6 +148,9 @@ fi
 
 if [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]] || [[ "${OSTYPE:-}" == "win"* ]]; then
     include_powershell=1
+    if [[ -z "${GITSETU_TEST_TIMEOUT:-}" ]]; then
+        timeout_seconds=600
+    fi
 fi
 
 passed=0

@@ -289,7 +289,7 @@ test_cmd_backup_restore() {
     chmod 600 "$HOME/.ssh/id_ed25519_test"
     
     # 1. Test Backup
-    local vault_file="test_vault.enc"
+    local vault_file="$TEST_HOME/test_vault.enc"
     cmd_backup "$vault_file" || return 1
     
     if [[ ! -f "$vault_file" ]]; then
@@ -571,7 +571,7 @@ test_backup_vault_file_permissions_600() {
 
     export GITSETU_TEST_VAULT_MODE=1
     export GITSETU_TEST_VAULT_PASS="testpass"
-    local vault_out="secure_vault.enc"
+    local vault_out="$TEST_HOME/secure_vault.enc"
     cmd_backup "$vault_out" >/dev/null 2>&1
 
     assert_file_exists "$vault_out" "vault file created" || return 1
@@ -594,12 +594,13 @@ test_backup_vault_file_permissions_600() {
 # Verify cleanup on decryption failure
 # ==============================================================================
 test_backup_restore_cleanup_on_decryption_failure() {
-    echo "CORRUPTED_BINARY_DATA" > "corrupted_vault.enc"
+    local corrupted_vault="$TEST_HOME/corrupted_vault.enc"
+    echo "CORRUPTED_BINARY_DATA" > "$corrupted_vault"
 
     export GITSETU_TEST_VAULT_MODE=1
     export GITSETU_TEST_VAULT_PASS="wrongpass"
     local res=0
-    cmd_restore "corrupted_vault.enc" >/dev/null 2>&1 || res=$?
+    cmd_restore "$corrupted_vault" >/dev/null 2>&1 || res=$?
 
     assert_equals 1 "$res" "restore fails cleanly on bad vault" || return 1
 
@@ -610,7 +611,7 @@ test_backup_restore_cleanup_on_decryption_failure() {
     leaks=$(find "${TMPDIR:-/tmp}" -maxdepth 1 -name "*gitsetu_vault*" 2>/dev/null | wc -l | tr -d '[:space:]')
     assert_equals "0" "$leaks" "no temporary vault files leaked on restore failure"
 
-    rm -f "corrupted_vault.enc"
+    rm -f "$corrupted_vault"
     unset GITSETU_TEST_VAULT_MODE GITSETU_TEST_VAULT_PASS
 }
 

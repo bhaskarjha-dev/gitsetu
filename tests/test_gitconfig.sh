@@ -309,10 +309,7 @@ test_generated_gitconfig_is_deterministic_across_locales() {
     LC_ALL=C write_global_gitconfig >/dev/null
     cp "$HOME/.gitconfig" "$HOME/gitconfig-c-locale"
     LC_ALL=C.UTF-8 write_global_gitconfig >/dev/null
-    if ! cmp -s "$HOME/.gitconfig" "$HOME/gitconfig-c-locale"; then
-        printf '    FAIL: locale changed generated config ordering/content\n'
-        return 1
-    fi
+    assert_files_equal "$HOME/.gitconfig" "$HOME/gitconfig-c-locale" "locale changed generated config ordering/content" || return 1
     return 0
 }
 

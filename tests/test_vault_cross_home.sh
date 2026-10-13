@@ -221,7 +221,13 @@ _cross_checksum_file() {
 }
 
 _cross_mode() {
-    stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null
+    local real_stat
+    real_stat=$(_can_chmod_real_stat)
+    if [[ -n "$real_stat" && -x "$real_stat" ]]; then
+        "$real_stat" -c '%a' "$1" 2>/dev/null || "$real_stat" -f '%Lp' "$1" 2>/dev/null
+    else
+        stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null
+    fi
 }
 
 _cross_assert_no_transaction() {

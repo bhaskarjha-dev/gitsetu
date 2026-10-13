@@ -33,7 +33,7 @@ else
 fi
 
 bash -n "$EXT" && bash -n "$ALIAS" && pass "extension scripts pass Bash syntax" || fail "extension syntax"
-if diff -u <(tail -n +3 "$EXT") <(tail -n +3 "$ALIAS") >/dev/null; then
+if [[ "$(tail -n +3 "$EXT")" == "$(tail -n +3 "$ALIAS")" ]]; then
     pass "gh setu uses the same verified extension implementation"
 else
     fail "gh setu implementation drift"

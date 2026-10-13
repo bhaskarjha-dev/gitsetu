@@ -56,6 +56,8 @@ sandbox_results/
 dist/*.exe
 dist/*.zip
 dist/*.tar.gz
+dist/*.sha256
+gitsetu.exe
 
 # --- One-off & generated ---
 commit_plan.sh

@@ -28,10 +28,6 @@ detect_os
 # contract; use a test-only shim while retaining ordinary symlink checks.
 if [[ "${OSTYPE:-}" == "cygwin"* || "${OSTYPE:-}" == "msys"* || "${OSTYPE:-}" == "mingw"* ]]; then
     # shellcheck disable=SC2329  # invoked indirectly by platform helpers
-    cygpath() {
-        printf '%s' "${!#}"
-    }
-    # shellcheck disable=SC2329  # invoked indirectly by platform helpers
     fsutil.exe() {
         local path="${!#}"
         [[ -L "$path" ]] && return 0

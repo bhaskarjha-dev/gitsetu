@@ -3,9 +3,9 @@
   "name": "gitsetu",
   "version": "1.1.0",
   "releaseState": "development",
-  "sourceCommit": "3988bdbd9cb5f43a965f3a4434e68f9c0320d7f8",
-  "sourceDirty": "clean",
-  "bundleSha256": "306742b16043074aea72ba47669772ed68b84ac1f13e84440917616c9154e6b7",
+  "sourceCommit": "d647ae60af438afcb9aff03a589392b13d6c6fb5",
+  "sourceDirty": "dirty",
+  "bundleSha256": "8150795436f5ed0f878408472d7b0da7decffbf647f40d49ae9bbe8551e828eb",
   "modules": [
     {
       "path": "lib/core.sh",
@@ -13,7 +13,7 @@
     },
     {
       "path": "lib/platform.sh",
-      "sha256": "75c937bfc952cd496ac04bd5bd958a94c0757461d2f7766f6a12c4ddbc8719d8"
+      "sha256": "6fe536530f16d43b1f5795b76a2f3522b59a09ca4563c12d8415da0e1faa34f1"
     },
     {
       "path": "lib/ui.sh",
@@ -49,7 +49,7 @@
     },
     {
       "path": "lib/teardown.sh",
-      "sha256": "65c3b55bb0cbfd601dd773f5f3cbbd5e88ffd9bf1cc94820c28602b897207aa8"
+      "sha256": "2be066386508d6eecb75cb0bf08fd1ade72c279aee00b6edd151444f12545c62"
     },
     {
       "path": "lib/discovery.sh",
@@ -57,7 +57,7 @@
     },
     {
       "path": "lib/setup.sh",
-      "sha256": "9b5f22a661cfa33aecb3ab63b97058c79bca0d6165efa4231935e73e160d83fc"
+      "sha256": "09e643544024cd88bb525e17ffa089442a4b363fe4339eec23e5c1cd01fd2225"
     },
     {
       "path": "lib/keychain.sh",

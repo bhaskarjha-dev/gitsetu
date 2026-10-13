@@ -1,0 +1,2 @@
+FROM fedora:latest
+RUN dnf install -y -q git openssh openssh-clients openssl nodejs npm procps-ng diffutils which sudo && dnf clean all

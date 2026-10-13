@@ -169,9 +169,9 @@ _npm_e2e_run_command() {
     output_file=$(umask 077; mktemp "$SANDBOX_ROOT/.command-output.XXXXXX") || return 1
 
     if [ -n "$PACKAGE_JS" ]; then
-        node "$PACKAGE_JS" "$@" >"$output_file" 2>&1 &
+        node "$PACKAGE_JS" "$@" < /dev/null >"$output_file" 2>&1 &
     else
-        "$INSTALLED_BIN" "$@" >"$output_file" 2>&1 &
+        "$INSTALLED_BIN" "$@" < /dev/null >"$output_file" 2>&1 &
     fi
     command_pid=$!
     if wait "$command_pid"; then
@@ -195,14 +195,14 @@ RUN_CMD_BOUNDED() {
     local command_rc=0
     if command -v timeout >/dev/null 2>&1; then
         if [ -n "$PACKAGE_JS" ]; then
-            timeout --kill-after=10s 120s node "$PACKAGE_JS" "$@"
+            timeout --foreground --kill-after=10s 120s node "$PACKAGE_JS" "$@" < /dev/null
         else
-            timeout --kill-after=10s 120s "$INSTALLED_BIN" "$@"
+            timeout --foreground --kill-after=10s 120s "$INSTALLED_BIN" "$@" < /dev/null
         fi
     elif [ -n "$PACKAGE_JS" ]; then
-        node "$PACKAGE_JS" "$@"
+        node "$PACKAGE_JS" "$@" < /dev/null
     else
-        "$INSTALLED_BIN" "$@"
+        "$INSTALLED_BIN" "$@" < /dev/null
     fi
     command_rc=$?
     _npm_e2e_kill_descendants
@@ -302,22 +302,22 @@ else
 fi
 
 # F11: guard --install (installs globally via core.hooksPath)
-RUN_CMD guard --install >/dev/null 2>&1
+OUT_GUARD=$(RUN_CMD guard --install 2>&1 || true)
 HOOK_PATH="$CLEAN_HOME/.config/gitsetu/hooks/pre-commit"
 CORE_HOOKS=$(git config --global core.hooksPath 2>/dev/null || true)
 if [ -f "$HOOK_PATH" ] && grep -q "gitsetu" "$HOOK_PATH" && [[ "$CORE_HOOKS" == *".config/gitsetu/hooks"* ]]; then
     pass "Feature 11: guard --install configures global pre-commit hook"
 else
-    fail "Feature 11" "Hook missing or core.hooksPath not set ($CORE_HOOKS)"
+    fail "Feature 11" "Hook missing or core.hooksPath not set ($CORE_HOOKS). Output: $OUT_GUARD"
 fi
 
 # F12: guard --uninstall
-RUN_CMD guard --uninstall >/dev/null 2>&1
+OUT_GUARD_UN=$(RUN_CMD guard --uninstall 2>&1 || true)
 CORE_HOOKS_UNSET=$(git config --global core.hooksPath 2>/dev/null || true)
 if [ -z "$CORE_HOOKS_UNSET" ] && [ ! -f "$HOOK_PATH" ]; then
     pass "Feature 12: guard --uninstall cleanly unsets core.hooksPath and removes hook"
 else
-    fail "Feature 12" "Hook still present or core.hooksPath not cleared ($CORE_HOOKS_UNSET)"
+    fail "Feature 12" "Hook still present or core.hooksPath not cleared ($CORE_HOOKS_UNSET). Output: $OUT_GUARD_UN"
 fi
 
 # F13: backup
@@ -400,7 +400,7 @@ else
 fi
 
 # F17: Clean uninstallation via npm
-npm uninstall -g gitsetu --prefix "$NPM_PREFIX" --silent >/dev/null 2>&1
+npm uninstall -g gitsetu --prefix "$NPM_PREFIX" --silent >/dev/null 2>&1 || true
 if [ ! -d "$NPM_PREFIX/node_modules/gitsetu" ] && [ ! -d "$NPM_PREFIX/lib/node_modules/gitsetu" ]; then
     pass "Feature 17: npm uninstall -g removes package cleanly"
 else
@@ -425,3 +425,5 @@ echo "=================================================================="
 if [ "$failed" -gt 0 ]; then
     exit 1
 fi
+
+exit 0

@@ -100,8 +100,7 @@ EOF
 }
 
 setup_run_fixture() {
-    export GITSETU_OS=gitbash
-    local external_dir="$REPO_DIR/.gitsetu-test-external-$$"
+    local external_dir="$TEST_STATE_DIR/gitsetu-test-external-$$"
     local work_dir="$HOME/work"
     if command -v cygpath >/dev/null 2>&1; then
         external_dir=$(cygpath -w "$external_dir")
@@ -111,12 +110,7 @@ setup_run_fixture() {
     fi
     rm -rf "$external_dir"
     mkdir -p "$external_dir" "$GITSETU_PROFILES_DIR" "$HOME/.ssh" "$work_dir"
-    if ! chmod 700 "$external_dir" 2>/dev/null; then
-        printf '    FAIL: could not secure the external-key fixture directory\n'
-        return 1
-    fi
-    mkdir -p "$GITSETU_CONFIG_DIR"
-    printf 'gitbash\n' > "$GITSETU_CONFIG_DIR/.test_os"
+    chmod 700 "$external_dir" 2>/dev/null || true
     ssh-keygen -q -t ed25519 -N '' -f "$external_dir/identity"
     test_v2_profile_config global "Global User" "global@example.com"
     test_v2_profile_config work "Work User" "work@example.com"
@@ -133,17 +127,17 @@ test_cli_run_uses_strict_external_key_field() {
     output=$(bash "$GITSETU_EXE" run work -- bash -c 'printf "%s|%s" "$GIT_AUTHOR_EMAIL" "$GIT_COMMITTER_EMAIL"' 2>&1) || rc=$?
     assert_equals "0" "$rc" "run succeeds with a validated external v2 key" || return 1
     assert_equals "work@example.com|work@example.com" "$output" "run exports the strict profile identity" || return 1
-    rm -rf "$REPO_DIR/.gitsetu-test-external-$$"
+    rm -rf "$TEST_STATE_DIR/gitsetu-test-external-$$"
 }
 
 test_cli_run_missing_key_never_defaults() {
     setup_run_fixture
-    rm -f "$REPO_DIR/.gitsetu-test-external-$$/identity" "$REPO_DIR/.gitsetu-test-external-$$/identity.pub"
+    rm -f "$TEST_STATE_DIR/gitsetu-test-external-$$/identity" "$TEST_STATE_DIR/gitsetu-test-external-$$/identity.pub"
     local output rc=0
     output=$(bash "$GITSETU_EXE" run work -- true 2>&1) || rc=$?
     assert_equals "1" "$rc" "run fails when the v2 key field is missing" || return 1
     assert_contains "$output" "missing, unsafe, or non-canonical SSH key path" "run reports the missing strict key" || return 1
-    rm -rf "$REPO_DIR/.gitsetu-test-external-$$"
+    rm -rf "$TEST_STATE_DIR/gitsetu-test-external-$$"
 }
 
 # Regression: the initial blueprint deliberately stores the global profile's

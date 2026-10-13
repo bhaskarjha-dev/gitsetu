@@ -10,6 +10,10 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$SCRIPT_DIR/helpers.sh"
 
+if [[ "${1:-}" == "--bundle" ]]; then
+    shift
+fi
+
 if [[ $# -ne 1 || -z "${1:-}" ]]; then
     printf '  [SKIP] bundle contract requires an explicit artifact path (use --bundle PATH)\n'
     exit 77
@@ -77,7 +81,7 @@ copy_exact_artifact() {
     cp "$BUNDLE_PATH" "$BUNDLE_COPY"
     chmod 700 "$BUNDLE_COPY"
     assert_file_exists "$BUNDLE_COPY" "bundle is copied into an isolated run directory"
-    assert_exit_code 0 cmp -s "$BUNDLE_PATH" "$BUNDLE_COPY"
+    assert_files_equal "$BUNDLE_PATH" "$BUNDLE_COPY"
     assert_file_contains "$BUNDLE_COPY" "GITSETU_STANDALONE=1" "copied artifact identifies standalone mode" || return 1
     assert_dir_not_exists "$BUNDLE_RUN_DIR/lib" "bundle test directory has no source lib/ tree"
 }
@@ -990,7 +994,7 @@ bundle_concurrent_registry_mutations_serialize() {
 
 bundle_artifact_remains_exact() {
     assert_file_exists "$BUNDLE_COPY" "the copied bundle still exists after all invocations" || return 1
-    assert_exit_code 0 cmp -s "$BUNDLE_PATH" "$BUNDLE_COPY"
+    assert_files_equal "$BUNDLE_PATH" "$BUNDLE_COPY"
     assert_dir_not_exists "$BUNDLE_RUN_DIR/lib" "all invocations remained standalone" || return 1
 }
 

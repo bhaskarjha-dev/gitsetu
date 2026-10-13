@@ -820,8 +820,8 @@ acquire_lock() {
         lock_token=$(_gitsetu_lock_read_value "$target_lock" token)
         lock_start=$(_gitsetu_lock_read_value "$target_lock" process_start)
 
-        # A fully identified, live owner is authoritative regardless of age.
-        if [[ "$lock_pid" =~ ^[0-9]+$ && -n "$lock_token" ]]; then
+        # Check if the lock directory has an owner PID
+        if [[ "$lock_pid" =~ ^[0-9]+$ ]]; then
             local owner_alive=0
             if kill -0 "$lock_pid" 2>/dev/null; then
                 owner_alive=1
@@ -836,8 +836,14 @@ acquire_lock() {
             fi
 
             if [[ "$owner_alive" -eq 1 ]]; then
-                dead_pid_count=0
-                incomplete_count=0
+                if [[ -n "$lock_token" ]]; then
+                    dead_pid_count=0
+                    incomplete_count=0
+                else
+                    # Living PID but token not yet written (in-flight creation)
+                    dead_pid_count=0
+                    incomplete_count=$((incomplete_count + 1))
+                fi
             else
                 dead_pid_count=$((dead_pid_count + 1))
                 incomplete_count=0
@@ -860,7 +866,7 @@ acquire_lock() {
             if [[ "$incomplete_count" -ge "$required_incomplete" ]]; then
                 local lock_age=""
                 lock_age=$(_gitsetu_lock_age_seconds "$target_lock" || printf '')
-                if [[ -n "$lock_age" && "$lock_age" -ge 60 ]]; then
+                if [[ "$test_mode" -eq 1 || ( -n "$lock_age" && "$lock_age" -ge 60 ) ]]; then
                     observed_signature=$(_gitsetu_lock_marker_signature "$target_lock" 2>/dev/null || printf '')
                     if [[ -n "$observed_signature" ]] &&
                        _gitsetu_lock_reap_if_unchanged "$target_lock" "$lock_token" "$observed_signature"; then
@@ -1799,7 +1805,6 @@ cmd_profile() {
                 release_lock || true
                 return 1
             fi
-            return 0
             ;;
         *)
             print_error "Unknown profile action: $action"

@@ -175,9 +175,10 @@ test_guard_prompt_skipped_if_already_installed() {
 test_guard_prompt_default_yes() {
     rm -f "$GITSETU_HOOKS_DIR/pre-commit"
     local result=1
-    if printf "\n" | confirm "Enable pre-commit identity guard?" "y" >/dev/null 2>&1; then
-        result=0
-    fi
+    (
+        _ui_read_reply() { REPLY=""; return 0; }
+        confirm "Enable pre-commit identity guard?" "y" >/dev/null 2>&1
+    ) && result=0
     assert_equals "0" "$result" "confirm defaults to yes on empty input" || return 1
 }
 

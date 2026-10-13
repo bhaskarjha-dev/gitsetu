@@ -25,16 +25,12 @@ fi
 # the shim still recognizes ordinary symlinks and is used only by this suite.
 if [[ "${OSTYPE:-}" == "cygwin"* || "${OSTYPE:-}" == "msys"* ]]; then
     # shellcheck disable=SC2329  # invoked indirectly by platform helpers
-    cygpath() {
-        printf '%s' "${!#}"
-    }
-    # shellcheck disable=SC2329  # invoked indirectly by platform helpers
     fsutil.exe() {
         local path="${!#}"
         [[ -L "$path" ]] && return 0
         return 1
     }
-    export -f cygpath fsutil.exe
+    export -f fsutil.exe
 fi
 
 ADVERSARIAL_LOCK_TIMEOUT_WAS_SET=0

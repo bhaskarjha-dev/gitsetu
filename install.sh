@@ -180,9 +180,9 @@ DOWNLOADER=""
 COSIGN_TOOL=""
 GIT_TOOL=""
 if [[ "$LOCAL_DEVELOPMENT" -eq 1 ]]; then
-    GIT_TOOL="$(find_trusted_tool git /usr/bin/git /bin/git /mingw64/bin/git /usr/local/bin/git)" || error "A trusted Git executable is required for local-development mode"
+    GIT_TOOL="$(find_trusted_tool git /usr/bin/git /bin/git /ucrt64/bin/git /mingw64/bin/git /cmd/git /cmd/git.exe /ucrt64/bin/git.exe /mingw64/bin/git.exe /usr/local/bin/git)" || error "A trusted Git executable is required for local-development mode"
 elif ! is_test_mode; then
-    DOWNLOADER="$(find_trusted_tool downloader /usr/bin/curl /bin/curl /usr/local/bin/curl /usr/bin/wget /bin/wget)" || error "No trusted HTTPS downloader was found"
+    DOWNLOADER="$(find_trusted_tool downloader /usr/bin/curl /bin/curl /usr/local/bin/curl /ucrt64/bin/curl /mingw64/bin/curl /usr/bin/wget /bin/wget)" || error "No trusted HTTPS downloader was found"
     COSIGN_TOOL="$(find_trusted_tool cosign /usr/local/bin/cosign /usr/bin/cosign /bin/cosign)" || error "A trusted cosign executable is required"
 fi
 
