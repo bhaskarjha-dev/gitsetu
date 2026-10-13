@@ -664,7 +664,7 @@ test_backup_rejects_path_traversal() {
     local ssl_args=("-aes-256-cbc" "-salt")
     local -a extra_ssl_args=()
     read -r -a extra_ssl_args <<< "$(get_openssl_args)"
-    ssl_args+=("${extra_ssl_args[@]}")
+    ssl_args+=(${extra_ssl_args[@]+"${extra_ssl_args[@]}"})
     printf '%s\n' "testpass" | openssl enc "${ssl_args[@]}" -in "$bad_tar" -out "$bad_vault" -pass stdin 2>/dev/null
     rm -f "$bad_tar"
 

@@ -844,14 +844,14 @@ _test_snapshot_environment() {
         return 1
     fi
 
-    local -a dyn_vars=()
-    local d
-    for d in $(compgen -v GITSETU_ 2>/dev/null) $(compgen -v GIT_CONFIG_ 2>/dev/null) $(compgen -v XDG_ 2>/dev/null); do
-        dyn_vars+=("$d")
+    for name in "${_TEST_MANAGED_ENV_NAMES[@]}"; do
+        _test_snapshot_one_env "$snapshot" "$name"
     done
 
-    for name in "${_TEST_MANAGED_ENV_NAMES[@]}" "${dyn_vars[@]}"; do
-        _test_snapshot_one_env "$snapshot" "$name"
+    local d
+    for d in $(compgen -v GITSETU_ 2>/dev/null) $(compgen -v GIT_CONFIG_ 2>/dev/null) $(compgen -v XDG_ 2>/dev/null); do
+        [[ -n "$d" ]] || continue
+        _test_snapshot_one_env "$snapshot" "$d"
     done
     return 0
 }
@@ -859,13 +859,24 @@ _test_snapshot_environment() {
 _test_clear_managed_environment() {
     local name declaration
 
-    local -a dyn_vars=()
     local d
     for d in $(compgen -v GITSETU_ 2>/dev/null) $(compgen -v GIT_CONFIG_ 2>/dev/null) $(compgen -v XDG_ 2>/dev/null); do
-        dyn_vars+=("$d")
+        [[ -n "$d" ]] || continue
+        if _test_is_internal_name "$d"; then
+            continue
+        fi
+
+        if declaration=$(declare -p "$d" 2>/dev/null); then
+            case "$declaration" in
+                declare\ -[aArR]*|typeset\ -[aArR]*)
+                    continue
+                    ;;
+            esac
+        fi
+        unset "$d" 2>/dev/null || true
     done
 
-    for name in "${_TEST_MANAGED_ENV_NAMES[@]}" "${dyn_vars[@]}"; do
+    for name in "${_TEST_MANAGED_ENV_NAMES[@]}"; do
         if _test_is_internal_name "$name"; then
             continue
         fi
