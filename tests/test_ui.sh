@@ -96,6 +96,23 @@ test_confirmation_defaults_are_explicit() {
     assert_equals "no" "$REPLY" "negative confirmation remains negative" || return 1
 }
 
+test_print_key_box_provider_urls() {
+    local dummy_key="$TEST_HOME/dummy_key.pub"
+    printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI mock-key\n' > "$dummy_key"
+
+    local out_gh out_gl out_bb
+    out_gh=$(print_key_box "github_profile" "user@gh.com" "$dummy_key" "github.com" 2>&1)
+    assert_contains "$out_gh" "https://github.com/settings/ssh/new" "GitHub key box displays GitHub URL" || return 1
+
+    out_gl=$(print_key_box "gitlab_profile" "user@gl.com" "$dummy_key" "gitlab.com" 2>&1)
+    assert_contains "$out_gl" "https://gitlab.com/-/user_settings/ssh_keys" "GitLab key box displays GitLab URL" || return 1
+
+    out_bb=$(print_key_box "bitbucket_profile" "user@bb.com" "$dummy_key" "bitbucket.org" 2>&1)
+    assert_contains "$out_bb" "https://bitbucket.org/account/settings/ssh-keys/" "Bitbucket key box displays Bitbucket URL" || return 1
+
+    rm -f "$dummy_key"
+}
+
 printf '\n%btest_ui.sh%b\n' "$T_BOLD" "$T_RESET"
 run_test "terminal controls are escaped to inert text" test_escape_terminal_text_is_inert
 run_test "UI output functions sanitize hostile messages" test_print_functions_escape_control_bytes
@@ -103,4 +120,6 @@ run_test "noninteractive prompts clear stale REPLY" test_noninteractive_prompts_
 run_test "choice prompt handles EOF without spinning" test_choice_prompt_eof_returns_without_spinning
 run_test "password entry preserves whitespace and restores termios" test_password_preserves_whitespace_and_restores_termios
 run_test "confirmation defaults are deterministic" test_confirmation_defaults_are_explicit
+run_test "print_key_box adapts URL by provider" test_print_key_box_provider_urls
 print_results "UI tests"
+

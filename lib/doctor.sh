@@ -116,6 +116,91 @@ _doctor_active_profile() {
 }
 
 # ------------------------------------------------------------------------------
+# Diagnostic Environment Check Helpers
+# ------------------------------------------------------------------------------
+
+doctor_check_clipboard() {
+    local tool="None"
+    if command -v pbcopy >/dev/null 2>&1; then
+        tool="pbcopy"
+    elif command -v clip.exe >/dev/null 2>&1; then
+        tool="clip.exe"
+    elif [[ -n "${WAYLAND_DISPLAY:-}" ]] && command -v wl-copy >/dev/null 2>&1; then
+        tool="wl-copy"
+    elif command -v xclip >/dev/null 2>&1; then
+        tool="xclip"
+    elif command -v xsel >/dev/null 2>&1; then
+        tool="xsel"
+    fi
+    printf '%s' "$tool"
+}
+
+doctor_check_known_hosts() {
+    local kh="$HOME/.ssh/known_hosts"
+    if [[ ! -f "$kh" || ! -s "$kh" ]]; then
+        printf 'missing'
+        return 1
+    fi
+    local found=()
+    if grep -q "github\.com" "$kh" 2>/dev/null; then
+        found+=("github.com")
+    fi
+    if grep -q "gitlab\.com" "$kh" 2>/dev/null; then
+        found+=("gitlab.com")
+    fi
+    if grep -q "bitbucket\.org" "$kh" 2>/dev/null; then
+        found+=("bitbucket.org")
+    fi
+    if grep -q "^|1|" "$kh" 2>/dev/null; then
+        found+=("hashed")
+    fi
+    if [[ ${#found[@]} -eq 0 ]]; then
+        printf 'no-major-hosts'
+        return 1
+    fi
+    local IFS=", "
+    printf '%s' "${found[*]}"
+    return 0
+}
+
+doctor_check_git_version() {
+    if ! command -v git >/dev/null 2>&1; then
+        printf 'missing'
+        return 1
+    fi
+    local ver_str major minor
+    ver_str=$(git --version 2>/dev/null || true)
+    if [[ "$ver_str" =~ ([0-9]+)\.([0-9]+) ]]; then
+        major="${BASH_REMATCH[1]}"
+        minor="${BASH_REMATCH[2]}"
+        if [[ "$major" -gt 2 || ( "$major" -eq 2 && "$minor" -ge 36 ) ]]; then
+            printf '%s' "$ver_str"
+            return 0
+        else
+            printf '%s (< 2.36)' "$ver_str"
+            return 2
+        fi
+    fi
+    printf '%s' "${ver_str:-unknown}"
+    return 0
+}
+
+doctor_check_openssl() {
+    if ! command -v openssl >/dev/null 2>&1; then
+        printf 'missing'
+        return 1
+    fi
+    local ver
+    ver=$(openssl version 2>/dev/null || true)
+    if ! openssl enc -ciphers 2>/dev/null | grep -qi "aes-256-ctr" && ! openssl enc -aes-256-ctr -help >/dev/null 2>&1; then
+        printf '%s (missing aes-256-ctr)' "$ver"
+        return 1
+    fi
+    printf '%s' "$ver"
+    return 0
+}
+
+# ------------------------------------------------------------------------------
 # run_doctor — required offline checks determine the exit status
 # ------------------------------------------------------------------------------
 
@@ -147,6 +232,43 @@ run_doctor() {
         printf >&2 "    Matched Rule: No mapped profile directory; using global fallback.\n"
     else
         printf >&2 "    Matched Rule: %s\n" "$(_doctor_safe_display "$ACTIVE_DOCTOR_DIR")"
+    fi
+    printf >&2 '\n'
+
+    printf >&2 "  %bSystem & Cryptographic Environment:%b\n" "$BOLD" "$RESET"
+    local git_ver git_ver_status=0
+    git_ver=$(doctor_check_git_version) || git_ver_status=$?
+    if [[ "$git_ver_status" -eq 1 ]]; then
+        printf >&2 "    Git Version: %bERROR (not installed or in PATH)%b\n" "$RED" "$RESET"
+        issues_found=1
+    elif [[ "$git_ver_status" -eq 2 ]]; then
+        printf >&2 "    Git Version: %bWARNING (%s; version >= 2.36 recommended)%b\n" "$YELLOW" "$git_ver" "$RESET"
+    else
+        printf >&2 "    Git Version: OK (%s)\n" "$git_ver"
+    fi
+
+    local openssl_ver openssl_status=0
+    openssl_ver=$(doctor_check_openssl) || openssl_status=$?
+    if [[ "$openssl_status" -ne 0 ]]; then
+        printf >&2 "    OpenSSL / Ciphers: %bWARNING (%s)%b\n" "$YELLOW" "$openssl_ver" "$RESET"
+    else
+        printf >&2 "    OpenSSL / Ciphers: OK (%s)\n" "$openssl_ver"
+    fi
+
+    local clip_tool
+    clip_tool=$(doctor_check_clipboard)
+    if [[ "$clip_tool" == "None" ]]; then
+        printf >&2 "    Clipboard Tool: None (auto-copy disabled)\n"
+    else
+        printf >&2 "    Clipboard Tool: OK (%s)\n" "$clip_tool"
+    fi
+
+    local kh_status=0 kh_info
+    kh_info=$(doctor_check_known_hosts) || kh_status=$?
+    if [[ "$kh_status" -ne 0 ]]; then
+        printf >&2 "    Known Hosts: %bWARNING (%s)%b\n" "$YELLOW" "$kh_info" "$RESET"
+    else
+        printf >&2 "    Known Hosts: OK (%s)\n" "$kh_info"
     fi
     printf >&2 '\n'
 
@@ -347,6 +469,120 @@ run_doctor() {
     fi
 
     print_success "All required offline diagnostics passed."
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# run_doctor_json — Machine-readable diagnostics in JSON format
+# ------------------------------------------------------------------------------
+run_doctor_json() {
+    local issues=0
+    local checks=()
+
+    # 1. git_version
+    local git_ver git_status="pass" git_ver_rc=0
+    git_ver=$(doctor_check_git_version) || git_ver_rc=$?
+    if [[ "$git_ver_rc" -eq 1 ]]; then
+        git_status="fail"
+        issues=$((issues + 1))
+    elif [[ "$git_ver_rc" -eq 2 ]]; then
+        git_status="warn"
+    fi
+    checks+=("{\"name\": \"git_version\", \"status\": \"$git_status\", \"details\": \"$git_ver\"}")
+
+    # 2. openssl
+    local openssl_ver openssl_status="pass" openssl_rc=0
+    openssl_ver=$(doctor_check_openssl) || openssl_rc=$?
+    if [[ "$openssl_rc" -ne 0 ]]; then
+        openssl_status="warn"
+    fi
+    checks+=("{\"name\": \"openssl\", \"status\": \"$openssl_status\", \"details\": \"$openssl_ver\"}")
+
+    # 3. clipboard
+    local clip_tool clip_status="pass"
+    clip_tool=$(doctor_check_clipboard)
+    if [[ "$clip_tool" == "None" ]]; then
+        clip_status="warn"
+    fi
+    checks+=("{\"name\": \"clipboard\", \"status\": \"$clip_status\", \"details\": \"$clip_tool\"}")
+
+    # 4. known_hosts
+    local kh_info kh_status="pass" kh_rc=0
+    kh_info=$(doctor_check_known_hosts) || kh_rc=$?
+    if [[ "$kh_rc" -ne 0 ]]; then
+        kh_status="warn"
+    fi
+    checks+=("{\"name\": \"known_hosts\", \"status\": \"$kh_status\", \"details\": \"$kh_info\"}")
+
+    # 5. profiles_registry
+    local reg_status="pass" reg_details="v2 registry valid (${PROFILE_COUNT:-0} profiles)"
+    if [[ ! -f "$GITSETU_PROFILES_CONF" || -L "$GITSETU_PROFILES_CONF" ]]; then
+        reg_status="fail"
+        reg_details="registry missing or unsafe"
+        issues=$((issues + 1))
+    elif [[ "$(head -n 1 "$GITSETU_PROFILES_CONF" 2>/dev/null || true)" != "# gitsetu-registry-v2" ]]; then
+        reg_status="fail"
+        reg_details="registry header missing or unsupported"
+        issues=$((issues + 1))
+    elif [[ "${PROFILE_COUNT:-0}" -eq 0 ]]; then
+        reg_status="fail"
+        reg_details="registry contains no complete profiles"
+        issues=$((issues + 1))
+    fi
+    checks+=("{\"name\": \"profiles_registry\", \"status\": \"$reg_status\", \"details\": \"$reg_details\"}")
+
+    # 6. gitconfig
+    local gc_status="pass" gc_details="managed blocks valid"
+    if [[ ! -f "$HOME/.gitconfig" || -L "$HOME/.gitconfig" ]]; then
+        gc_status="fail"
+        gc_details="gitconfig missing or unsafe"
+        issues=$((issues + 1))
+    else
+        local head_start head_end tail_start tail_end
+        head_start=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_HEAD_START:-# [gitsetu:managed:head:start]}")
+        head_end=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_HEAD_END:-# [gitsetu:managed:head:end]}")
+        tail_start=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_START:-# [gitsetu:managed:start]}")
+        tail_end=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_END:-# [gitsetu:managed:end]}")
+        if ! [[ "$tail_start" == "1" && "$tail_end" == "1" && ( ( "$head_start" == "1" && "$head_end" == "1" ) || ( "$head_start" == "0" && "$head_end" == "0" ) ) ]]; then
+            gc_status="fail"
+            gc_details="managed markers missing or duplicated"
+            issues=$((issues + 1))
+        fi
+    fi
+    checks+=("{\"name\": \"gitconfig\", \"status\": \"$gc_status\", \"details\": \"$gc_details\"}")
+
+    # 7. ssh_config
+    local sc_status="pass" sc_details="gitsetu include present"
+    if [[ ! -f "$HOME/.ssh/config" || -L "$HOME/.ssh/config" ]] || ! _doctor_ssh_include_present || ! _doctor_ssh_config_valid; then
+        sc_status="fail"
+        sc_details="gitsetu include missing or invalid"
+        issues=$((issues + 1))
+    fi
+    checks+=("{\"name\": \"ssh_config\", \"status\": \"$sc_status\", \"details\": \"$sc_details\"}")
+
+    local overall_status="healthy"
+    if [[ "$issues" -gt 0 ]]; then
+        overall_status="unhealthy"
+    fi
+
+    printf '{\n'
+    printf '  "status": "%s",\n' "$overall_status"
+    printf '  "issuesFound": %d,\n' "$issues"
+    printf '  "checks": [\n'
+    local ci
+    for (( ci=0; ci<${#checks[@]}; ci++ )); do
+        if [[ "$ci" -lt $((${#checks[@]} - 1)) ]]; then
+            printf '    %s,\n' "${checks[$ci]}"
+        else
+            printf '    %s\n' "${checks[$ci]}"
+        fi
+    done
+    printf '  ]\n'
+    printf '}\n'
+
+    if [[ "$issues" -gt 0 ]]; then
+        return 1
+    fi
     return 0
 }
 

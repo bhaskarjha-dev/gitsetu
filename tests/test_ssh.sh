@@ -343,6 +343,48 @@ test_ssh_host_block_port443_exact_host_policy() {
     unset GITSETU_PORT443_NEEDED
 }
 
+test_ssh_preseed_known_hosts() {
+    local known_hosts="$HOME/.ssh/known_hosts"
+    rm -rf "$HOME/.ssh"
+
+    # Default in test environment: no-op without explicit opt-in
+    _ssh_preseed_known_hosts "gitlab.com"
+    assert_file_not_exists "$known_hosts" "preseed is skipped by default during tests" || return 1
+
+    # With opt-in and mock ssh-keyscan
+    local mock_bin="$TEST_HOME/mock_bin"
+    mkdir -p "$mock_bin"
+    cat << 'EOF' > "$mock_bin/ssh-keyscan"
+#!/usr/bin/env bash
+echo "$2 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAImockknownhost"
+EOF
+    chmod +x "$mock_bin/ssh-keyscan"
+
+    local old_path="$PATH"
+    export PATH="$mock_bin:$PATH"
+    export GITSETU_TEST_SSH_PRESEED=1
+
+    _ssh_preseed_known_hosts "gitlab.com"
+    assert_file_exists "$known_hosts" "preseed creates known_hosts when opt-in enabled" || {
+        export PATH="$old_path"
+        unset GITSETU_TEST_SSH_PRESEED
+        return 1
+    }
+    assert_file_contains "$known_hosts" "gitlab.com ssh-ed25519" "preseed writes host key" || {
+        export PATH="$old_path"
+        unset GITSETU_TEST_SSH_PRESEED
+        return 1
+    }
+
+    # Second call should be idempotent (mock ssh-keyscan won't be called if host exists)
+    rm -f "$mock_bin/ssh-keyscan"
+    _ssh_preseed_known_hosts "gitlab.com"
+
+    export PATH="$old_path"
+    unset GITSETU_TEST_SSH_PRESEED
+    rm -rf "$mock_bin"
+}
+
 # --- Run ---
 
 printf '\n%btest_ssh.sh%b\n' "$T_BOLD" "$T_RESET"
@@ -363,4 +405,5 @@ run_test "write SSH config rejects symlink components" test_write_ssh_config_rej
 run_test "write SSH config rejects symlinked profiles directory" test_write_ssh_config_rejects_symlink_profiles_directory
 run_test "Git Bash reparse cache is bounded and fast" test_ssh_reparse_cache_is_bounded_and_fast_on_gitbash
 run_test "FIDO2 failure never downgrades to software" test_generate_key_fido2_no_software_fallback
+run_test "_ssh_preseed_known_hosts populates known_hosts safely" test_ssh_preseed_known_hosts
 print_results "SSH tests"

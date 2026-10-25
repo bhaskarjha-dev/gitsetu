@@ -214,12 +214,52 @@ test_guard_fails_closed_for_corrupt_managed_registry() {
     assert_contains "$output" "BLOCKING COMMIT" "corrupt managed state fails closed" || return 1
 }
 
+test_guard_pass_through_subdirectory_monorepo() {
+    GITSETU_DRY_RUN=0
+    seed_v2_work_profile "$HOME/work" "Test" "work@example.com"
+    install_guard 2>/dev/null
+
+    setup_repo "$HOME/work"
+    git -C "$HOME/work" config user.email "work@example.com"
+    git -C "$HOME/work" config user.name "Test"
+
+    # Configure local core.hooksPath to a relative folder (e.g. .husky)
+    git -C "$HOME/work" config --local core.hooksPath ".husky"
+    mkdir -p "$HOME/work/.husky"
+    cat > "$HOME/work/.husky/pre-commit" <<'EOF'
+#!/bin/bash
+echo "HUSKY MONOREPO PASSTHROUGH SUCCESS"
+exit 0
+EOF
+    chmod +x "$HOME/work/.husky/pre-commit"
+
+    # Reinstall guard so it generates stub with local hook observed
+    install_guard 2>/dev/null
+
+    # Create a nested subdirectory
+    mkdir -p "$HOME/work/packages/frontend"
+    touch "$HOME/work/packages/frontend/component.js"
+    git -C "$HOME/work/packages/frontend" add component.js
+
+    # Commit from inside the subdirectory
+    local output
+    output=$(GIT_AUTHOR_NAME="Test" GIT_AUTHOR_EMAIL="work@example.com" \
+             GIT_COMMITTER_NAME="Test" GIT_COMMITTER_EMAIL="work@example.com" \
+             git -C "$HOME/work/packages/frontend" commit -m "Subdirectory commit" 2>&1 || echo "FAILED")
+
+    assert_contains "$output" "HUSKY MONOREPO PASSTHROUGH SUCCESS" "relative displaced hook ran from subdirectory" || return 1
+
+    git -C "$HOME/work" config --local --unset core.hooksPath 2>/dev/null || true
+    rm -rf "$HOME/work/.husky" "$HOME/work/packages"
+}
+
 printf '\n%btest_guard.sh%b\n' "$T_BOLD" "$T_RESET"
 run_test "install_guard links hook" test_install_guard
 run_test "guard blocks mismatched email" test_guard_blocks_mismatch
 run_test "guard allows matched email" test_guard_allows_match
 run_test "missing registry is unmanaged and fails open" test_guard_missing_registry_is_unmanaged_fail_open
 run_test "guard passes through to local hooks" test_guard_pass_through
+run_test "guard passes through to relative local hooks from subdirectory" test_guard_pass_through_subdirectory_monorepo
 run_test "guard reads identity from v2 profile config" test_guard_reads_v2_profile_identity
 run_test "guard prompt bypassed in test mode" test_guard_prompt_bypassed_in_test_mode
 run_test "guard prompt skipped if already installed" test_guard_prompt_skipped_if_already_installed

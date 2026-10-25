@@ -177,6 +177,59 @@ test_cli_sequential_headless_add_with_empty_global_directory() {
     array_contains "beta" "${PROFILE_LABELS[@]}" || return 1
 }
 
+test_cli_audit_command() {
+    # 1. Non-git directory
+    local output rc=0
+    output=$(cd "$TEST_HOME" && bash "$GITSETU_EXE" audit 2>&1) || rc=$?
+    assert_equals "1" "$rc" "audit outside repo exits 1" || return 1
+    assert_contains "$output" "Not inside a git repository" "audit diagnoses non-git directory" || return 1
+
+    # Setup strict v2 registry with global and work profiles
+    test_v2_profile_config global "Global User" "global@example.com"
+    test_v2_profile_config work "Work User" "work@corp.com"
+    local work_dir="$TEST_HOME/work"
+    local work_repo="$work_dir/audit-repo"
+    mkdir -p "$work_repo"
+    {
+        test_v2_registry_header
+        test_v2_registry_line global "" "github.com" "0" "$HOME/.ssh/id_ed25519_global" ""
+        test_v2_registry_line work "$work_dir" "github.com" "0" "$HOME/.ssh/id_ed25519_work" ""
+    } > "$GITSETU_PROFILES_CONF"
+
+    # 2. Unmanaged repository
+    local unmanaged_repo="$TEST_HOME/unmanaged/repo"
+    mkdir -p "$unmanaged_repo"
+    git -C "$unmanaged_repo" init -q
+    git -C "$unmanaged_repo" commit --allow-empty -m "init" -q 2>/dev/null || true
+    rc=0
+    output=$(cd "$unmanaged_repo" && bash "$GITSETU_EXE" audit 2>&1) || rc=$?
+    assert_equals "0" "$rc" "audit in unmanaged repo exits 0" || return 1
+    assert_contains "$output" "is not managed by GitSetu" "audit reports unmanaged repo" || return 1
+
+    # 3. Managed repository with matching commits
+    git -C "$work_repo" init -q
+    GIT_AUTHOR_NAME="Work User" GIT_AUTHOR_EMAIL="work@corp.com" \
+    GIT_COMMITTER_NAME="Work User" GIT_COMMITTER_EMAIL="work@corp.com" \
+    git -C "$work_repo" commit --allow-empty -m "good commit" -q
+
+    rc=0
+    output=$(cd "$work_repo" && bash "$GITSETU_EXE" audit 2>&1) || rc=$?
+    assert_equals "0" "$rc" "audit with matching identity exits 0" || return 1
+    assert_contains "$output" "Audit Result: PASSED" "audit passes matching commit" || return 1
+
+    # 4. Managed repository with mismatched commit
+    GIT_AUTHOR_NAME="Leaked" GIT_AUTHOR_EMAIL="leaked@personal.com" \
+    GIT_COMMITTER_NAME="Leaked" GIT_COMMITTER_EMAIL="leaked@personal.com" \
+    git -C "$work_repo" commit --allow-empty -m "bad commit" -q
+
+    rc=0
+    output=$(cd "$work_repo" && bash "$GITSETU_EXE" audit 2>&1) || rc=$?
+    assert_equals "1" "$rc" "audit with mismatched identity exits 1" || return 1
+    assert_contains "$output" "Audit Result: FAILED" "audit flags mismatched commit" || return 1
+    assert_contains "$output" "leaked@personal.com" "audit shows mismatched email" || return 1
+    assert_contains "$output" "git commit --amend --reset-author" "audit provides fix command" || return 1
+}
+
 printf '\n%btest_cli.sh%b\n' "$T_BOLD" "$T_RESET"
 run_test "no arguments shows help" test_cli_no_args_shows_help
 run_test "invalid command caught" test_cli_invalid_command
@@ -190,4 +243,5 @@ run_test "legacy seven-field registry rejected" test_cli_legacy_registry_rejecte
 run_test "run uses the strict external v2 key field" test_cli_run_uses_strict_external_key_field
 run_test "run never defaults a missing v2 key path" test_cli_run_missing_key_never_defaults
 run_test "sequential headless add handles the empty global directory" test_cli_sequential_headless_add_with_empty_global_directory
+run_test "gitsetu audit checks retrospective commit history" test_cli_audit_command
 print_results "CLI tests"

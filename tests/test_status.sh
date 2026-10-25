@@ -132,6 +132,45 @@ test_status_global_profile_display() {
 }
 
 # ------------------------------------------------------------------------------
+# Test 6: cmd_status --json produces structured machine-readable JSON
+# ------------------------------------------------------------------------------
+test_status_json_output() {
+    local work_dir="$TEST_HOME/json-work"
+    local work_repo="$work_dir/repo"
+    mkdir -p "$work_repo"
+    git -C "$work_repo" init -q
+    git -C "$work_repo" config user.email "alice@corp.com"
+
+    test_v2_profile_config global "Global User" "global@example.com"
+    test_v2_profile_config work "Alice Work" "alice@corp.com"
+    test_v2_profile_config personal "Alice Personal" "alice@me.dev"
+    {
+        test_v2_registry_header
+        test_v2_registry_line global "" "github.com" "0" "$HOME/.ssh/id_ed25519_global" ""
+        test_v2_registry_line work "$work_dir" "github.com" "0" "$HOME/.ssh/id_ed25519_work" ""
+        test_v2_registry_line personal "$TEST_HOME/personal" "github.com" "0" "$HOME/.ssh/id_ed25519_personal" ""
+    } > "$GITSETU_PROFILES_CONF"
+
+    local output status=0
+    output=$(cd "$work_repo" && bash "$GITSETU_EXE" status --json) || status=$?
+    assert_equals "0" "$status" "status --json exits 0" || return 1
+    assert_contains "$output" '"managed": true' "json reports managed true" || return 1
+    assert_contains "$output" '"profile": "work"' "json reports active profile" || return 1
+    assert_contains "$output" '"expectedEmail": "alice@corp.com"' "json reports expected email" || return 1
+    assert_contains "$output" '"actualEmail": "alice@corp.com"' "json reports actual email" || return 1
+    assert_contains "$output" '"active": true' "json reports active true" || return 1
+    assert_contains "$output" '"profiles": [' "json reports profiles array" || return 1
+    assert_contains "$output" '"work"' "json lists work in profiles" || return 1
+    assert_contains "$output" '"personal"' "json lists personal in profiles" || return 1
+
+    # Outside repository
+    output=$(cd "$TEST_HOME" && bash "$GITSETU_EXE" status --json) || status=$?
+    assert_equals "0" "$status" "status --json outside repo exits 0" || return 1
+    assert_contains "$output" '"managed": false' "json reports unmanaged outside workspace" || return 1
+    assert_contains "$output" '"active": false' "json reports inactive outside workspace" || return 1
+}
+
+# ------------------------------------------------------------------------------
 # Run all tests
 # ------------------------------------------------------------------------------
 printf '\n%btest_status.sh%b\n' "$T_BOLD" "$T_RESET"
@@ -140,4 +179,5 @@ run_test "cmd_status displays active identity when set in repo" test_status_repo
 run_test "cmd_status reports local core.hooksPath override policy" test_status_reports_local_hooks_override
 run_test "cmd_status displays profiles and active checkmark" test_status_displays_profiles_and_active_check
 run_test "cmd_status displays configured global profile" test_status_global_profile_display
+run_test "cmd_status --json produces structured telemetry" test_status_json_output
 print_results "Status tests"

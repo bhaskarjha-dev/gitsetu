@@ -768,9 +768,11 @@ ${BOLD}USAGE${RESET}
     gitsetu credential <get|store|erase>
                                      Git credential-helper protocol
     gitsetu remove <label>           Remove a profile
-    gitsetu status                   Show current identity configuration
+    gitsetu status [--porcelain] [--json]
+                                     Show current identity configuration
+    gitsetu audit [count]            Audit last N commits for identity mismatches
     gitsetu verify                   Test SSH keys and git config
-    gitsetu doctor [--repair] [--dry-run]
+    gitsetu doctor [--repair] [--dry-run] [--json]
                                      Run diagnostic checks or auto-heal configuration
     gitsetu update --development     Verify a clean local development checkout
     gitsetu prompt                   Print active profile for \$PS1
@@ -887,6 +889,50 @@ cmd_status() {
         printf 'email=%s\n' "$current_email"
         printf 'key=%s\n' "$key_val"
         printf 'guard=%s\n' "$guard_val"
+        return 0
+    fi
+
+    if [[ "${2:-0}" -eq 1 ]]; then
+        local is_managed=false is_active=false
+        local exp_email="" act_email=""
+        local prof_name="null"
+        if [[ -n "$active_context" ]]; then
+            is_managed=true
+            prof_name="\"$active_context\""
+            local pconf="$GITSETU_PROFILES_DIR/${active_context}.gitconfig"
+            if [[ -f "$pconf" ]]; then
+                exp_email=$(git config --file "$pconf" user.email 2>/dev/null || true)
+            fi
+        fi
+        if [[ -n "$current_email" ]]; then
+            act_email="$current_email"
+        fi
+        if [[ "$is_managed" = true && -n "$exp_email" && "$exp_email" == "$act_email" ]]; then
+            is_active=true
+        fi
+        printf '{\n'
+        printf '  "managed": %s,\n' "$is_managed"
+        printf '  "profile": %s,\n' "$prof_name"
+        printf '  "directory": "%s",\n' "$cwd"
+        if [[ -n "$exp_email" ]]; then
+            printf '  "expectedEmail": "%s",\n' "$exp_email"
+        else
+            printf '  "expectedEmail": null,\n'
+        fi
+        if [[ -n "$act_email" ]]; then
+            printf '  "actualEmail": "%s",\n' "$act_email"
+        else
+            printf '  "actualEmail": null,\n'
+        fi
+        printf '  "active": %s,\n' "$is_active"
+        printf '  "profiles": ['
+        local pi
+        for (( pi=0; pi<${PROFILE_COUNT:-0}; pi++ )); do
+            if [[ "$pi" -gt 0 ]]; then printf ', '; fi
+            printf '"%s"' "${PROFILE_LABELS[$pi]}"
+        done
+        printf ']\n'
+        printf '}\n'
         return 0
     fi
 
@@ -1527,18 +1573,126 @@ cmd_credential() {
 }
 
 # ------------------------------------------------------------------------------
+# cmd_audit — Retrospectively audit recent commit author/committer identities
+# Usage: gitsetu audit [count]
+# ------------------------------------------------------------------------------
+cmd_audit() {
+    local count="${1:-10}"
+    if [[ ! "$count" =~ ^[1-9][0-9]*$ ]]; then
+        print_error "Invalid commit count: $count (must be a positive integer)"
+        return 1
+    fi
+
+    detect_os
+    if ! load_profiles; then
+        print_error "The profile registry is invalid or uses an unsupported format."
+        return 1
+    fi
+
+    if ! command -v git >/dev/null 2>&1; then
+        print_error "Git is not installed or not in PATH."
+        return 1
+    fi
+
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        print_error "Not inside a git repository."
+        return 1
+    fi
+
+    if ! git rev-parse HEAD >/dev/null 2>&1; then
+        print_info "Repository has no commits to audit."
+        return 0
+    fi
+
+    local toplevel
+    toplevel=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+
+    local guard_status=0
+    _guard_managed_profile_for_path "$toplevel" || guard_status=$?
+
+    if [[ "$guard_status" -ne 0 || -z "${GUARD_PROFILE_LABEL:-}" ]]; then
+        print_info "Repository at $toplevel is not managed by GitSetu."
+        return 0
+    fi
+
+    local profile_label="$GUARD_PROFILE_LABEL"
+    local profile_config="$GUARD_PROFILE_CONFIG"
+    local expected_email="" expected_name=""
+    if [[ -f "$profile_config" ]]; then
+        expected_email=$(git config --file "$profile_config" user.email 2>/dev/null || true)
+        expected_name=$(git config --file "$profile_config" user.name 2>/dev/null || true)
+    fi
+
+    if [[ -z "$expected_email" ]]; then
+        print_error "Managed profile '$profile_label' has no configured email in $profile_config"
+        return 1
+    fi
+
+    local log_lines
+    log_lines=$(git log -n "$count" --format='%H%x09%an%x09%ae%x09%cn%x09%ce%x09%s' 2>/dev/null || true)
+    if [[ -z "$log_lines" ]]; then
+        print_info "No commits found to audit."
+        return 0
+    fi
+
+    print_section "GitSetu Commit History Identity Audit"
+    printf >&2 "  Repository:       %s\n" "$toplevel"
+    printf >&2 "  Managed Profile:  %s\n" "$profile_label"
+    printf >&2 "  Expected Email:   %s\n" "$expected_email"
+    printf >&2 "  Auditing last %d commit(s)...\n\n" "$count"
+
+    local mismatches=0 total=0
+    local hash an ae cn ce subj short_hash commit_ok
+    while IFS=$'\t' read -r hash an ae cn ce subj || [[ -n "$hash" ]]; do
+        [[ -n "$hash" ]] || continue
+        total=$((total + 1))
+        short_hash="${hash:0:8}"
+        commit_ok=1
+
+        if [[ "$ae" != "$expected_email" || "$ce" != "$expected_email" ]]; then
+            commit_ok=0
+            mismatches=$((mismatches + 1))
+        fi
+
+        if [[ "$commit_ok" -eq 1 ]]; then
+            printf >&2 "  %b%s%b %s - %s (%s)\n" "$GREEN" "$SYM_CHECK" "$RESET" "$short_hash" "$subj" "$ae"
+        else
+            printf >&2 "  %b%s%b %s - %s\n" "$RED" "$SYM_CROSS" "$RESET" "$short_hash" "$subj"
+            if [[ "$ae" != "$expected_email" ]]; then
+                printf >&2 "      %bAuthor:%b    %s <%s> %b(expected: <%s>)%b\n" "$RED" "$RESET" "$an" "$ae" "$YELLOW" "$expected_email" "$RESET"
+            fi
+            if [[ "$ce" != "$expected_email" ]]; then
+                printf >&2 "      %bCommitter:%b %s <%s> %b(expected: <%s>)%b\n" "$RED" "$RESET" "$cn" "$ce" "$YELLOW" "$expected_email" "$RESET"
+            fi
+        fi
+    done <<< "$log_lines"
+
+    printf >&2 '\n'
+    if [[ "$mismatches" -gt 0 ]]; then
+        printf >&2 "  %bAudit Result: FAILED (%d of %d commit(s) contain identity mismatches)%b\n\n" "$RED" "$mismatches" "$total" "$RESET"
+        printf >&2 "  To fix author/committer identity on the most recent commit:\n"
+        printf >&2 "    git commit --amend --reset-author --no-edit\n\n"
+        return 1
+    else
+        printf >&2 "  %bAudit Result: PASSED (All %d commit(s) match profile '%s' <%s>)%b\n\n" "$GREEN" "$total" "$profile_label" "$expected_email" "$RESET"
+        return 0
+    fi
+}
+
+# ------------------------------------------------------------------------------
 # cmd_doctor — Run diagnostics or repair configuration
 # ------------------------------------------------------------------------------
 cmd_doctor() {
-    local repair=0
+    local repair=0 json_mode=0
     local arg
     for arg in "$@"; do
         case "$arg" in
             --repair) repair=1 ;;
             --dry-run) GITSETU_DRY_RUN=1 ;;
+            --json) json_mode=1 ;;
             *)
                 print_error "Unknown doctor option: $arg"
-                printf >&2 'Usage: gitsetu doctor [--repair] [--dry-run]\n'
+                printf >&2 'Usage: gitsetu doctor [--repair] [--dry-run] [--json]\n'
                 return 1
                 ;;
         esac
@@ -1551,6 +1705,8 @@ cmd_doctor() {
     fi
     if [[ "$repair" -eq 1 ]]; then
         run_doctor_repair
+    elif [[ "$json_mode" -eq 1 ]]; then
+        run_doctor_json
     else
         run_doctor
     fi
@@ -1563,7 +1719,8 @@ show_brief_usage() {
     printf >&2 '%bgitsetu%b v%s — One command. All identities. Every machine.\n\n' \
         "$BOLD" "$RESET" "$GITSETU_VERSION"
     printf >&2 'Usage: gitsetu setup [--auto] [--dry-run]    Start the setup wizard\n'
-    printf >&2 '       gitsetu status               Show current identity\n'
+    printf >&2 '       gitsetu status [--json]      Show current identity\n'
+    printf >&2 '       gitsetu audit [count]        Audit recent commits for identity\n'
     printf >&2 '       gitsetu profile <action>     Manage v2 profiles\n'
     printf >&2 '       gitsetu credential <action>  Git credential helper protocol\n'
     printf >&2 '       gitsetu verify               Test SSH and git config\n'
@@ -1633,19 +1790,23 @@ main() {
             cmd_add "$@"
             ;;
         status)
-            local porcelain=0
+            local porcelain=0 json_mode=0
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --porcelain) porcelain=1 ;;
+                    --json) json_mode=1 ;;
                     *)
                         print_error "Unknown status option: $1"
-                        printf >&2 'Usage: gitsetu status [--porcelain]\n'
+                        printf >&2 'Usage: gitsetu status [--porcelain] [--json]\n'
                         return 1
                         ;;
                 esac
                 shift
             done
-            cmd_status "$porcelain"
+            cmd_status "$porcelain" "$json_mode"
+            ;;
+        audit)
+            cmd_audit "$@"
             ;;
         verify)
             while [[ $# -gt 0 ]]; do

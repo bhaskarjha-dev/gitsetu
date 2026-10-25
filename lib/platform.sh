@@ -538,6 +538,11 @@ copy_to_clipboard() {
             return 0
         fi
         return 1
+    elif [[ -n "${WAYLAND_DISPLAY:-}" ]] && command -v wl-copy >/dev/null 2>&1; then
+        if printf "%s" "$text" | wl-copy >/dev/null 2>&1; then
+            return 0
+        fi
+        return 1
     elif command -v xclip >/dev/null 2>&1; then
         if printf "%s" "$text" | xclip -selection clipboard >/dev/null 2>&1; then
             return 0

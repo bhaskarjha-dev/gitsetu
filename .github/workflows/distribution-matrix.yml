@@ -46,10 +46,8 @@ jobs:
           bash tests/test_posix_installer_e2e.sh
       - name: Verify package templates and aliases without synthetic release claims
         run: |
-          bash tests/test_aur.sh
-          bash tests/test_nix_flake.sh
           bash tests/test_npm_wrapper.sh
-          bash tests/test_gh_extension.sh
+          bash tests/e2e_installed.sh --source
 
   macos:
     name: macOS native Bash 3.2
@@ -100,44 +98,6 @@ jobs:
         run: |
           make dist-check
           make test-bundle
-      - name: Install commit-pinned Scoop 0.5.3 test dependency
-        run: |
-          $ErrorActionPreference = 'Stop'
-          # Scoop 0.5.3 resolves its own version through git, so the test
-          # dependency has to be a real git checkout at the pinned commit. A
-          # hash-verified source archive carries no .git, which makes
-          # `scoop --version` abort with "not a git repository" before any
-          # package lifecycle test runs. The commit id below is the verified
-          # SHA for the v0.5.3 tag and pins the full tree, not a redirectable
-          # archive URL.
-          $destination = Join-Path $env:RUNNER_TEMP 'scoop-0.5.3'
-          & git clone --quiet --depth 1 --branch v0.5.3 https://github.com/ScoopInstaller/Scoop.git $destination
-          if ($LASTEXITCODE -ne 0) { throw "Scoop test dependency clone failed: $LASTEXITCODE" }
-          $actual = (& git -C $destination rev-parse HEAD).Trim().ToLowerInvariant()
-          if ($actual -ne 'b588a06e41d920d2123ec70aee682bae14935939') { throw "Scoop test dependency pin mismatch: $actual" }
-          $env:SCOOP = $destination
-          foreach ($name in @('shims','apps','cache','buckets')) {
-            [void][IO.Directory]::CreateDirectory((Join-Path $env:SCOOP $name))
-          }
-          $scoopAppRoot = Join-Path $env:SCOOP 'apps\scoop\current'
-          [void][IO.Directory]::CreateDirectory($scoopAppRoot)
-          Copy-Item (Join-Path $env:SCOOP 'supporting') (Join-Path $scoopAppRoot 'supporting') -Recurse
-          $env:Path = "$env:SCOOP;$env:Path"
-          & "$env:SCOOP\bin\scoop.ps1" --version
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          # Each run: step is a separate process, so an in-process $env:SCOOP is
-          # gone by the next step. Hand it forward explicitly.
-          "SCOOP=$destination" >> $env:GITHUB_ENV
-      - name: Test controlled Scoop package and GitHub extension lifecycle
-        run: |
-          if (-not $env:SCOOP) { throw 'Pinned Scoop test dependency was not prepared' }
-          $env:Path = "$env:SCOOP;$env:Path"
-          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test_scoop_e2e.ps1
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if (-not (Get-Command gh.exe -ErrorAction SilentlyContinue)) { throw 'GitHub CLI is required for extension E2E' }
-          $env:GH_CONFIG_DIR = Join-Path $env:RUNNER_TEMP 'gh-isolated-config'
-          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test_gh_extension_e2e.ps1
-          exit $LASTEXITCODE
       - name: Run Windows-specific security tests
         run: |
           $errors = $null

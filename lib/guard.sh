@@ -379,9 +379,18 @@ $raw_hooks
 RAW_EOF
     fi
 
+    if [[ -n "$DISPLACED" && "$DISPLACED" != /* && ! "$DISPLACED" =~ ^[a-zA-Z]:[/\\] ]]; then
+        TOP_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+        DISPLACED="$TOP_DIR/$DISPLACED"
+    fi
+
     if [[ -z "$DISPLACED" ]]; then
         COMMON_DIR="$(git rev-parse --git-common-dir 2>/dev/null || true)"
         if [[ -n "$COMMON_DIR" ]]; then
+            if [[ "$COMMON_DIR" != /* && ! "$COMMON_DIR" =~ ^[a-zA-Z]:[/\\] ]]; then
+                TOP_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+                COMMON_DIR="$TOP_DIR/$COMMON_DIR"
+            fi
             DISPLACED="$COMMON_DIR/hooks"
         fi
     fi

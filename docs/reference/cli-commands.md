@@ -79,9 +79,9 @@ such policy exists does it add its exact, shell-quoted canonical
 
 ## Diagnostics and verification
 
-### `gitsetu status`
+### `gitsetu status [--porcelain] [--json]`
 
-Writes a diagnostic report to stderr. It shows the canonical current directory,
+Writes a diagnostic report to stderr (or structured key-value lines with `--porcelain`, or machine-readable telemetry JSON with `--json` on stdout). It shows the canonical current directory,
 active Git identity (name, email, and `core.sshCommand` inside a repository),
 the guard policy and hook-path state, configured profiles with their email,
 provider, and path, and selected environment details. The active marker is the
@@ -89,11 +89,17 @@ longest matching mapped profile; otherwise status shows the unmanaged/global
 fallback context. It does not enumerate OpenSSH aliases, and an unmanaged
 repository is not treated as a managed profile.
 
-### `gitsetu doctor [--repair] [--dry-run]`
+### `gitsetu audit [count]`
+
+Audits the last `N` commits (default: 10) in the current repository against the managed profile's expected identity. It inspects commit author and committer emails to ensure neither diverges from the configured profile. Returns exit code `0` when all evaluated commits match the expected profile (or when run in an unmanaged repository), and returns exit code `1` if any commit contains mismatched author or committer identities, providing immediate fix instructions (`git commit --amend --reset-author --no-edit`).
+
+### `gitsetu doctor [--repair] [--dry-run] [--json]`
 
 Runs required offline checks for the strict v2 registry, managed Git markers,
 profile identity/configuration, referenced SSH key files and permissions, and
-the managed SSH `Include`/configuration. SSH-agent availability is reported
+the managed SSH `Include`/configuration. Also inspects system and cryptographic
+environment health (Git version >= 2.36, OpenSSL AES-256 cipher support, clipboard tool,
+and SSH known hosts). With `--json`, outputs a machine-readable JSON status object on stdout. SSH-agent availability is reported
 as informational; doctor does not make a network request. It exits nonzero
 when a required check fails. `--repair` regenerates recognized managed Git/SSH
 state and registers missing keys under the mutation lock, with rollback on a

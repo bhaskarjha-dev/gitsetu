@@ -12,6 +12,19 @@ param(
     [string]$TestInstallDir
 )
 
+# Self-healing execution policy bypass for restricted environments
+if ($PSVersionTable.PSVersion.Major -ge 3 -and -not $env:GITSETU_EXECUTION_POLICY_BYPASSED) {
+    $scopePolicy = Get-ExecutionPolicy -Scope Process
+    if ($scopePolicy -eq 'Restricted' -or $scopePolicy -eq 'Undefined') {
+        $effectivePolicy = Get-ExecutionPolicy
+        if ($effectivePolicy -eq 'Restricted') {
+            $env:GITSETU_EXECUTION_POLICY_BYPASSED = "1"
+            & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath @args
+            exit $LASTEXITCODE
+        }
+    }
+}
+
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12

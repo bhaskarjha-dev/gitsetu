@@ -104,7 +104,7 @@ _gitsetu() {
     prev="${COMP_WORDS[COMP_CWORD-1]:-}"
     command="${COMP_WORDS[1]:-}"
     subcommand="${COMP_WORDS[2]:-}"
-    opts="setup init add remove status verify doctor run teardown guard profile backup restore credential prompt update --help --version -h -v"
+    opts="setup init add remove status audit verify doctor run teardown guard profile backup restore credential prompt update --help --version -h -v"
 
     if [[ ${COMP_CWORD:-0} -eq 1 ]]; then
         # shellcheck disable=SC2207
@@ -116,6 +116,13 @@ _gitsetu() {
         setup|init)
             # shellcheck disable=SC2207
             COMPREPLY=( $(compgen -W "--auto --yes --dry-run" -- "$cur") )
+            ;;
+        status)
+            # shellcheck disable=SC2207
+            COMPREPLY=( $(compgen -W "--porcelain --json" -- "$cur") )
+            ;;
+        audit)
+            COMPREPLY=()
             ;;
         profile)
             if [[ ${COMP_CWORD:-0} -eq 2 ]]; then
@@ -162,7 +169,7 @@ _gitsetu() {
             ;;
         doctor)
             # shellcheck disable=SC2207
-            COMPREPLY=( $(compgen -W "--repair --dry-run" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--repair --dry-run --json" -- "$cur") )
             ;;
         update)
             # shellcheck disable=SC2207

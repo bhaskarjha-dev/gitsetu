@@ -147,7 +147,16 @@ print_key_box() {
     local label="${1:-}"
     local email="${2:-}"
     local pubkey_path="${3:-}"
+    local provider="${4:-}"
     local safe_label safe_email key_content
+    local add_url="https://github.com/settings/ssh/new"
+    local lower_provider
+    lower_provider=$(printf '%s' "$provider" | tr '[:upper:]' '[:lower:]')
+    if [[ "$lower_provider" == *"gitlab"* ]]; then
+        add_url="https://gitlab.com/-/user_settings/ssh_keys"
+    elif [[ "$lower_provider" == *"bitbucket"* ]]; then
+        add_url="https://bitbucket.org/account/settings/ssh-keys/"
+    fi
 
     if [[ ! -f "$pubkey_path" ]]; then
         print_error "Key file not found: $pubkey_path"
@@ -166,11 +175,11 @@ print_key_box() {
     printf >&2 '  %b└──────────────────────────────────────────┘%b\n' "$DIM" "$RESET"
 
     if copy_to_clipboard "$key_content"; then
-        printf >&2 '  %b%s%b %bCOPIED TO CLIPBOARD!%b Add it here: %bhttps://github.com/settings/ssh/new%b\n' \
-            "$GREEN" "$SYM_CHECK" "$RESET" "$BOLD" "$RESET" "$CYAN" "$RESET"
+        printf >&2 '  %b%s%b %bCOPIED TO CLIPBOARD!%b Add it here: %b%s%b\n' \
+            "$GREEN" "$SYM_CHECK" "$RESET" "$BOLD" "$RESET" "$CYAN" "$add_url" "$RESET"
     else
-        printf >&2 '  %b%s%b Copy and add at: %bhttps://github.com/settings/ssh/new%b\n' \
-            "$BLUE" "$SYM_INFO" "$RESET" "$BOLD" "$RESET"
+        printf >&2 '  %b%s%b Copy and add at: %b%s%b\n' \
+            "$BLUE" "$SYM_INFO" "$RESET" "$BOLD" "$add_url" "$RESET"
     fi
     printf >&2 '\n'
 }

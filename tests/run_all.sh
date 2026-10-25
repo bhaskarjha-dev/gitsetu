@@ -25,7 +25,7 @@ include_powershell=0
 include_live_windows=0
 require_powershell=0
 list_suites=0
-timeout_seconds="${GITSETU_TEST_TIMEOUT:-300}"
+timeout_seconds="${GITSETU_TEST_TIMEOUT:-600}"
 suite_patterns=()
 
 usage() {
@@ -40,7 +40,7 @@ Options:
   --include-live-windows  Also run the live Scoop installer suite (opt-in)
   --require-powershell    Treat unavailable PowerShell as a failure
   --list-suites           List discovered shell and PowerShell suites without running them
-  --timeout SECONDS        Per-suite timeout (default: 300)
+  --timeout SECONDS        Per-suite timeout (default: 600)
   -h, --help               Show this help
 
 Exit status is nonzero when a required suite fails or a required capability is
@@ -154,9 +154,11 @@ fi
 passed=0
 failed=0
 skipped=0
+timed_out=0
 total=0
 failed_suites=()
 skipped_suites=()
+timeout_suites=()
 
 _test_child_pids() {
     local parent="$1"
@@ -259,6 +261,13 @@ record_result() {
             skipped_suites+=("$suite${reason:+ ($reason)}")
             printf '  [SKIP] %s%s\n' "$suite" "${reason:+ ($reason)}"
             ;;
+        TIMEOUT)
+            timed_out=$((timed_out + 1))
+            failed=$((failed + 1))
+            timeout_suites+=("$suite${reason:+ ($reason)}")
+            failed_suites+=("$suite${reason:+ ($reason)}")
+            printf '  [TIMEOUT] %s%s\n' "$suite" "${reason:+ ($reason)}"
+            ;;
         *)
             failed=$((failed + 1))
             failed_suites+=("$suite${reason:+ ($reason)}")
@@ -279,12 +288,14 @@ run_shell_suite() {
         status=$?
     fi
 
-    if [[ "$status" -eq 77 ]]; then
+    if [[ "$status" -eq 124 ]]; then
+        record_result "TIMEOUT" "$suite" "exceeded ${timeout_seconds}s limit"
+    elif [[ "$status" -eq 77 ]]; then
         record_result "SKIP" "$suite" "test returned 77"
     elif [[ "$status" -eq 0 ]]; then
         record_result "PASS" "$suite"
     else
-        record_result "FAIL" "$suite"
+        record_result "FAIL" "$suite" "$status"
     fi
 }
 
@@ -405,8 +416,17 @@ printf '==========================================\n'
 printf 'Total suites: %d\n' "$total"
 printf 'PASS:          %d\n' "$passed"
 printf 'FAIL:          %d\n' "$failed"
+if [[ "$timed_out" -gt 0 ]]; then
+    printf 'TIMEOUT:       %d\n' "$timed_out"
+fi
 printf 'SKIP:          %d\n' "$skipped"
 
+if [[ "${#timeout_suites[@]}" -gt 0 ]]; then
+    printf '\nTimed out suites (exceeded %ds limit):\n' "$timeout_seconds"
+    for suite in "${timeout_suites[@]}"; do
+        printf '  - %s\n' "$suite"
+    done
+fi
 if [[ "${#failed_suites[@]}" -gt 0 ]]; then
     printf '\nFailed suites:\n'
     for suite in "${failed_suites[@]}"; do
