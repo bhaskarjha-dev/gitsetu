@@ -272,6 +272,8 @@ case_fut01_remote() {
 case_fut02_greeting() {
   new_home fut02-greeting || return
   add_work || return
+  mkdir -p "$HOME/.ssh"
+  printf 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLzapDVasmAcS9le6AHbqMW/\n' >> "$HOME/.ssh/known_hosts"
   printf '#!/bin/sh\nprintf "Hi wronguser! You have successfully authenticated.\n" >&2\nexit 1\n' > "$T/bin/ssh"
   chmod +x "$T/bin/ssh"
   notty "$GS" verify --network >> "$T/out" 2>&1

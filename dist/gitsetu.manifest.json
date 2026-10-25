@@ -3,8 +3,8 @@
   "name": "gitsetu",
   "version": "1.1.0",
   "releaseState": "development",
-  "sourceCommit": "1bbd8f6d69dc548fe8c396670c9a9d82728504e1",
-  "sourceDirty": "clean",
+  "sourceCommit": "61f01eb1b39ea5c5ba67f6f725067da88dc8590e",
+  "sourceDirty": "dirty",
   "bundleSha256": "13803874f2fc1941e41ff1de166f72442d6ffcda19cc2f1bf4cad60b76735ffa",
   "modules": [
     {
