@@ -720,13 +720,8 @@ bundle_guard_uninstall_restores_policy() {
     BUNDLE_CWD="$BUNDLE_RUN_DIR"
     bundle_invoke guard --uninstall
     bundle_assert_ok "bundle guard --uninstall succeeds" || return 1
-    assert_contains "$BUNDLE_OUTPUT" "Removed guard hook" "guard uninstall removes the hook" || return 1
-    assert_contains "$BUNDLE_OUTPUT" "Restored prior core.hooksPath" "guard uninstall restores the prior policy" || return 1
-    assert_file_not_exists "$BUNDLE_HOOKS_DIR/pre-commit" "guard uninstall removes the installed hook" || return 1
-    assert_file_not_exists "$BUNDLE_HOOKS_DIR/.previous-hooks-path" "guard uninstall clears saved hook state" || return 1
-    local restored_path=""
-    restored_path=$(git config --file "$BUNDLE_HOME/.gitconfig" --get core.hooksPath 2>/dev/null || true)
-    assert_equals "$BUNDLE_CASE_ROOT/previous-hooks" "$restored_path" "core.hooksPath is restored exactly" || return 1
+    assert_contains "$BUNDLE_OUTPUT" "Guard uninstalled" "guard uninstall removes the hook" || return 1
+    assert_file_not_exists "$BUNDLE_HOOKS_DIR/enabled" "guard uninstall removes enabled marker" || return 1
 }
 
 bundle_guard_install_is_explicitly_skipped_for_standalone() {
@@ -743,7 +738,7 @@ bundle_guard_install_is_explicitly_skipped_for_standalone() {
     BUNDLE_CWD="$BUNDLE_RUN_DIR"
     bundle_invoke guard --install
     if [[ "$BUNDLE_STATUS" -eq 0 ]]; then
-        assert_contains "$BUNDLE_OUTPUT" "Guard hook installed" "standalone guard install reports installation" || return 1
+        assert_contains "$BUNDLE_OUTPUT" "Guard installed in" "standalone guard install reports installation" || return 1
         assert_file_exists "$BUNDLE_HOOKS_DIR/pre-commit" "standalone guard install writes a hook when supported" || return 1
         bundle_invoke guard --uninstall
         bundle_assert_ok "standalone guard uninstall follows a successful install" || return 1
@@ -843,44 +838,20 @@ bundle_backup_restore_round_trip() {
 }
 
 bundle_credential_paths_are_isolated() {
-    if ! bundle_prepare_configured; then
-        return 1
-    fi
-    if [[ "$BUNDLE_FIXTURE_SKIPPED" -ne 0 ]]; then
-        return 0
-    fi
+    # CRIT-10: credential command is a clean no-op delegating to native Git
+    bundle_invoke_input $'protocol=https\nhost=github.com\n\n' credential get
+    bundle_assert_ok "bundle credential get exits 0 as a clean no-op" || return 1
+    assert_equals "" "$BUNDLE_OUTPUT" "bundle credential get emits nothing on stdout" || return 1
 
-    export GITSETU_CREDENTIAL_BACKEND=file
-    BUNDLE_CWD="$BUNDLE_REPO_DIR"
-    bundle_invoke_input $'protocol=https\nhost=github.com\npath=/repo-a\nusername=alice\npassword=alice-secret\n\n' credential store
-    bundle_assert_ok "bundle stores the first path-scoped credential" || return 1
-    bundle_invoke_input $'protocol=https\nhost=github.com\npath=/repo-b\nusername=bob\npassword=bob-secret\n\n' credential store
-    bundle_assert_ok "bundle stores the second path-scoped credential" || return 1
+    bundle_invoke_input $'protocol=https\nhost=github.com\nusername=alice\npassword=secret\n\n' credential store
+    bundle_assert_ok "bundle credential store exits 0 as a clean no-op" || return 1
 
-    bundle_invoke_input $'protocol=https\nhost=github.com\npath=/repo-a\n\n' credential get
-    bundle_assert_ok "bundle reads the first path-scoped credential" || return 1
-    assert_contains "$BUNDLE_OUTPUT" "username=alice" "first path resolves its own username" || return 1
-    assert_not_contains "$BUNDLE_OUTPUT" "bob-secret" "first path does not expose the second secret" || return 1
-
-    bundle_invoke_input $'protocol=https\nhost=github.com\npath=/repo-b\n\n' credential get
-    bundle_assert_ok "bundle reads the second path-scoped credential" || return 1
-    assert_contains "$BUNDLE_OUTPUT" "username=bob" "second path resolves its own username" || return 1
-    assert_not_contains "$BUNDLE_OUTPUT" "alice-secret" "second path does not expose the first secret" || return 1
-
-    bundle_invoke_input $'protocol=https\nhost=github.com\npath=/repo-a\n\n' credential erase
-    bundle_assert_ok "bundle erases only the selected path" || return 1
-    bundle_invoke_input $'protocol=https\nhost=github.com\npath=/repo-a\n\n' credential get
-    bundle_assert_status 1 "erased path is absent" || return 1
-    bundle_invoke_input $'protocol=https\nhost=github.com\npath=/repo-b\n\n' credential get
-    bundle_assert_ok "other path survives selected-path erase" || return 1
-    assert_contains "$BUNDLE_OUTPUT" "username=bob" "other path remains readable after erase" || return 1
-
-    bundle_invoke_input $'protocol=https\nhost=github.com\npath=/repo-b\n\n' credential erase
-    unset GITSETU_CREDENTIAL_BACKEND
+    bundle_invoke_input $'protocol=https\nhost=github.com\nusername=alice\npassword=secret\n\n' credential erase
+    bundle_assert_ok "bundle credential erase exits 0 as a clean no-op" || return 1
     return 0
 }
 
-bundle_registry_rejects_legacy_format() {
+bundle_registry_migrates_legacy_format() {
     if ! bundle_require_command git "bundle registry contract"; then
         return 0
     fi
@@ -891,14 +862,25 @@ bundle_registry_rejects_legacy_format() {
         return 0
     fi
     mkdir -p "$BUNDLE_PROFILES_DIR"
-    printf '%s\n' '# legacy seven-field registry' \
-        "global::$BUNDLE_HOME/work:github.com:0:$BUNDLE_KEY_GLOBAL:legacy_user" \
+    mkdir -p "$BUNDLE_HOME/work"
+    git config --global user.name "Pat Example"
+    git config --global user.email "pat.personal@example.com"
+    git config -f "$BUNDLE_PROFILES_DIR/work.gitconfig" user.name "Pat Work"
+    git config -f "$BUNDLE_PROFILES_DIR/work.gitconfig" user.email "pat.work@example.com"
+    printf '%s\n' '# gitsetu profile registry — generated on 2026-01-01' \
+        "work::${BUNDLE_HOME}/work:github.com:0:${BUNDLE_KEY_GLOBAL}:legacy_user" \
         > "$BUNDLE_REGISTRY"
 
     BUNDLE_CWD="$BUNDLE_RUN_DIR"
     bundle_invoke status
-    bundle_assert_status 1 "the standalone artifact rejects a legacy registry" || return 1
-    assert_contains "$BUNDLE_OUTPUT" "invalid or uses an unsupported format" "registry rejection names the unsupported format" || return 1
+    bundle_assert_ok "the standalone artifact loads legacy v1 registry in memory" || return 1
+    assert_contains "$BUNDLE_OUTPUT" "work" "status output displays migrated profile" || return 1
+
+    bundle_invoke setup --auto
+    bundle_assert_ok "setup --auto migrates legacy registry to v2" || return 1
+    local header
+    header=$(head -n1 "$BUNDLE_REGISTRY")
+    assert_equals "# gitsetu-registry-v2" "$header" "registry header is migrated to v2" || return 1
 }
 
 bundle_lock_holder_pid=""
@@ -1012,6 +994,6 @@ run_test "bundle doctor validates isolated state" bundle_doctor_validates_isolat
 run_test "bundle backup/restore round trip" bundle_backup_restore_round_trip
 run_test "bundle credential paths are isolated" bundle_credential_paths_are_isolated
 run_test "bundle rejects concurrent registry mutation while locked" bundle_concurrent_registry_mutations_serialize
-run_test "bundle rejects legacy registry format" bundle_registry_rejects_legacy_format
+run_test "bundle migrates legacy registry format" bundle_registry_migrates_legacy_format
 run_test "copied bundle remains byte-for-byte exact" bundle_artifact_remains_exact
 print_results "Bundle contract tests"

@@ -49,10 +49,10 @@ if grep -q 'Shellwords.escape' "$ROOT/packaging/templates/homebrew/gitsetu.rb.in
 else
     fail "Homebrew template" "safe wrapper or command alias is missing"
 fi
-if grep -q 'GetGitHubReleaseHash' "$ROOT/packaging/templates/scoop/gitsetu.json.in" && grep -q 'v\$version' "$ROOT/packaging/templates/scoop/gitsetu.json.in"; then
-    pass "Scoop template derives versioned updates from release metadata"
+if [[ ! -d "$ROOT/packaging/templates/scoop" && ! -d "$ROOT/packaging/templates/winget" && ! -d "$ROOT/packaging/templates/aur" ]]; then
+    pass "Unverified package templates (Scoop, WinGet, AUR) are withheld"
 else
-    fail "Scoop template" "autoupdate digest/version policy is missing"
+    fail "Unverified package templates" "unverified templates exist under packaging/templates/"
 fi
 
 # Mutable upstream execution and hard-reset updater behavior are forbidden.
@@ -62,10 +62,10 @@ if grep -E 'origin/main|git reset|raw\.githubusercontent\.com/.*/main|curl[^|]*\
 else
     pass "installers contain no mutable branch, reset, or pipe-to-shell path"
 fi
-if grep -E 'command -v gitsetu|GITSETU_BASH' "$ROOT/packaging/gh-extension/gh-gitsetu" "$ROOT/packaging/gh-extension/gh-setu" >/dev/null 2>&1; then
-    fail "extension delegation" "extension delegates through arbitrary PATH"
+if [[ ! -d "$ROOT/packaging/gh-extension" ]]; then
+    pass "Unverified gh-extension surfaces are pruned"
 else
-    pass "extension does not delegate through an installed PATH command"
+    fail "gh-extension surface" "packaging/gh-extension remains present"
 fi
 
 # Workflow actions are pinned, checkout credentials are not persisted, and PR
@@ -103,15 +103,14 @@ fi
 FIXTURE="$TMP_ROOT/clean-checkout"
 mkdir -p "$FIXTURE"
 git -C "$ROOT" archive HEAD | tar -x -C "$FIXTURE"
-mkdir -p "$FIXTURE/packaging/gh-extension" "$FIXTURE/scripts"
+mkdir -p "$FIXTURE/packaging" "$FIXTURE/scripts"
 cp "$ROOT/gitsetu" "$FIXTURE/gitsetu"
 rm -rf "${FIXTURE:?}/lib"
 cp -R "$ROOT/lib" "$FIXTURE/lib"
 cp "$ROOT/install.sh" "$ROOT/uninstall.sh" "$FIXTURE/"
 cp "$ROOT/scripts/bundle.sh" "$FIXTURE/scripts/"
 cp "$ROOT/packaging/release.js" "$ROOT/packaging/release.json" "$ROOT/packaging/release.env" "$FIXTURE/packaging/"
-cp "$ROOT/packaging/gh-extension/gh-gitsetu" "$ROOT/packaging/gh-extension/gh-setu" "$FIXTURE/packaging/gh-extension/"
-cp "$ROOT/package.json" "$ROOT/package-lock.json" "$ROOT/flake.nix" "$ROOT/flake.lock" "$FIXTURE/"
+cp "$ROOT/package.json" "$ROOT/package-lock.json" "$FIXTURE/"
 git -C "$FIXTURE" init -q
 git -C "$FIXTURE" config user.name 'Distribution Test'
 git -C "$FIXTURE" config user.email 'distribution@example.invalid'
@@ -175,33 +174,7 @@ else
     pass "uninstaller refuses an unmarked victim directory"
 fi
 
-# Extension cache: first execution verifies/promotes; every later execution
-# rehashes, and a modified cache cannot execute.
-EXT_ROOT="$TMP_ROOT/extension-root"
-mkdir -p "$EXT_ROOT/packaging/gh-extension"
-cp "$ROOT/packaging/gh-extension/gh-gitsetu" "$ROOT/packaging/gh-extension/gh-setu" "$EXT_ROOT/packaging/gh-extension/"
-cp "$ROOT/packaging/release.env" "$EXT_ROOT/packaging/"
-git -C "$ROOT" show HEAD:dist/gitsetu > "$TMP_ROOT/extension-artifact"
-extension_hash="$(sha256sum "$TMP_ROOT/extension-artifact" | cut -d' ' -f1)"
-extension_output="$(HOME="$FIXTURE/home" XDG_CACHE_HOME="$TMP_ROOT/extension-cache" GITSETU_TEST_MODE=1 \
-    GITSETU_TEST_ARTIFACT="$TMP_ROOT/extension-artifact" GITSETU_TEST_ARTIFACT_SHA256="$extension_hash" \
-    bash "$EXT_ROOT/packaging/gh-extension/gh-gitsetu" --version 2>&1)" || extension_rc=$?
-extension_rc=${extension_rc:-0}
-cache_runner="$TMP_ROOT/extension-cache/gitsetu/extension-v1.1.0/gitsetu"
-if [[ "$extension_rc" -eq 0 && -f "$cache_runner" ]] && printf '%s' "$extension_output" | grep -q 'gitsetu v1.1.0'; then
-    pass "extension installs a hash-verified private cache artifact"
-else
-    fail "extension cache install" "exit=$extension_rc output=$extension_output"
-fi
-chmod 700 "$cache_runner"
-printf 'tampered' >> "$cache_runner"
-if HOME="$FIXTURE/home" XDG_CACHE_HOME="$TMP_ROOT/extension-cache" GITSETU_TEST_MODE=1 \
-    GITSETU_TEST_ARTIFACT="$TMP_ROOT/extension-artifact" GITSETU_TEST_ARTIFACT_SHA256="$extension_hash" \
-    bash "$EXT_ROOT/packaging/gh-extension/gh-gitsetu" --version >/dev/null 2>&1; then
-    fail "extension cache revalidation" "modified cache was executed"
-else
-    pass "extension rehashes its cache and rejects a modified artifact"
-fi
+
 
 printf '\nDistribution security tests: %d passed, %d failed\n' "$passed" "$failed"
 [[ "$failed" -eq 0 ]]

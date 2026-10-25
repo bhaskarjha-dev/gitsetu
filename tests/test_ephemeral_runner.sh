@@ -90,8 +90,8 @@ test_auto_runner_adopts_existing_blueprint() {
 
     assert_equals "0" "$rc" "auto_setup_runner exits 0 on existing blueprint" || return 1
     assert_file_exists "$HOME/.gitconfig" "creates .gitconfig" || return 1
-    assert_file_contains "$GITSETU_PROFILES_DIR/ssh_config" "Host github-work" "generates work ssh host" || return 1
-    assert_file_contains "$GITSETU_PROFILES_DIR/ssh_config" "Host github-personal" "generates personal ssh host" || return 1
+    assert_file_contains "$GITSETU_PROFILES_DIR/ssh_config" "Host gitsetu-work" "generates work ssh host" || return 1
+    assert_file_contains "$GITSETU_PROFILES_DIR/ssh_config" "Host gitsetu-personal" "generates personal ssh host" || return 1
 }
 
 # ------------------------------------------------------------------------------

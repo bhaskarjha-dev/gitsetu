@@ -166,9 +166,7 @@ _cross_seed_source_home() {
     write_global_gitconfig >/dev/null || return 1
     write_ssh_config >/dev/null || return 1
     install_guard >/dev/null || return 1
-    keychain_store work github.com fixture-user "$_CROSS_SOURCE_TOKEN" \
-        >/dev/null 2>&1 || return 1
-    [[ -f "$GITSETU_HOOKS_DIR/pre-commit" && -f "$GITSETU_CONFIG_DIR/.tokens" ]]
+    [[ -f "$GITSETU_HOOKS_DIR/pre-commit" ]]
 }
 
 _cross_seed_target_home() {
@@ -209,8 +207,6 @@ EOF
 printf '%s\n' 'target-hook-must-be-restored-on-rollback'
 EOF
     chmod 700 "$GITSETU_HOOKS_DIR/pre-commit" || return 1
-    keychain_store target github.com target-user target-token-before-restore \
-        >/dev/null 2>&1 || return 1
     load_profiles "$GITSETU_PROFILES_CONF" || return 1
 }
 
@@ -258,7 +254,7 @@ _cross_assert_no_sidecars() {
 }
 
 _cross_restore_vault() {
-    cmd_restore "$_CROSS_VAULT" >/dev/null 2>&1
+    cmd_restore "$_CROSS_VAULT" --force >/dev/null 2>&1
 }
 
 # Build the source through the real backup command. This is the sole expensive
@@ -354,17 +350,11 @@ test_cross_home_restore_maps_paths_and_preserves_user_config() {
     assert_file_not_exists "$GITSETU_PROFILES_DIR/target.gitconfig" \
         "target-only managed profile is replaced by the source registry" || return 1
 
-    assert_file_contains "$GITSETU_HOOKS_DIR/pre-commit" "[gitsetu:managed] v2 pre-commit identity guard" \
+    assert_file_contains "$GITSETU_HOOKS_DIR/pre-commit" "[gitsetu:managed]" \
         "source hook presence causes a fresh target guard to be installed" || return 1
-    hooks_path=$(git config --global --get core.hooksPath 2>/dev/null) || return 1
+    hooks_path=$(git config -f "$GITSETU_PROFILES_DIR/work.gitconfig" core.hooksPath 2>/dev/null) || return 1
     assert_contains "$hooks_path" "$GITSETU_HOOKS_DIR" \
         "restored guard configures the target XDG hook directory" || return 1
-
-    token_output=$(keychain_get work github.com 2>/dev/null) || return 1
-    assert_contains "$token_output" "password=$_CROSS_SOURCE_TOKEN" \
-        "file-backend token is restored without contacting a native/network backend" || return 1
-    assert_not_contains "$GITSETU_CONFIG_DIR/.tokens" "target-token-before-restore" \
-        "explicit target token state is replaced, not ambiguously merged" || return 1
 
     mkdir -p "$HOME/work/repo" || return 1
     git -C "$HOME/work/repo" init -q >/dev/null 2>&1 || return 1
@@ -375,8 +365,6 @@ test_cross_home_restore_maps_paths_and_preserves_user_config() {
     if can_chmod_600; then
         assert_equals "600" "$(_cross_mode "$HOME/.ssh/id_ed25519_global")" \
             "restored private key is mode 0600" || return 1
-        assert_equals "600" "$(_cross_mode "$GITSETU_CONFIG_DIR/.tokens")" \
-            "restored token store is mode 0600" || return 1
         assert_equals "700" "$(_cross_mode "$GITSETU_HOOKS_DIR/pre-commit")" \
             "restored guard hook is mode 0700" || return 1
     else
@@ -406,7 +394,7 @@ test_cross_home_post_commit_cleanup_failure_preserves_commit() {
             done
             command rm "$@"
         }
-        cmd_restore "$_CROSS_VAULT"
+        cmd_restore "$_CROSS_VAULT" --force
     ) >"$output_file" 2>&1; then
         status=0
     else
@@ -427,8 +415,6 @@ test_cross_home_post_commit_cleanup_failure_preserves_commit() {
         "committed private key remains installed after cleanup failure" || return 1
     assert_file_not_exists "$GITSETU_PROFILES_DIR/target.gitconfig" \
         "cleanup failure does not roll back the committed profile set" || return 1
-    assert_file_not_contains "$GITSETU_CONFIG_DIR/.tokens" "target-token-before-restore" \
-        "cleanup failure does not roll back committed token state" || return 1
 
     for candidate in "$(dirname "$GITSETU_CONFIG_DIR")"/.gitsetu-restore.*; do
         if [[ -d "$candidate" && ! -L "$candidate" ]]; then
@@ -450,8 +436,8 @@ test_cross_home_post_commit_cleanup_failure_preserves_commit() {
 
 test_cross_home_failed_commit_rolls_back_without_marker() {
     local status=0 output=""
-    local before_registry before_profile before_key before_hook before_token
-    local before_git before_ssh after_registry after_profile after_key after_hook after_token
+    local before_registry before_profile before_key before_hook
+    local before_git before_ssh after_registry after_profile after_key after_hook
     local after_git after_ssh
 
     _cross_seed_target_home || return 1
@@ -459,14 +445,13 @@ test_cross_home_failed_commit_rolls_back_without_marker() {
     before_profile=$(_cross_checksum_file "$GITSETU_PROFILES_DIR/target.gitconfig") || return 1
     before_key=$(_cross_checksum_file "$HOME/.ssh/id_ed25519_global") || return 1
     before_hook=$(_cross_checksum_file "$GITSETU_HOOKS_DIR/pre-commit") || return 1
-    before_token=$(_cross_checksum_file "$GITSETU_CONFIG_DIR/.tokens") || return 1
     before_git=$(_cross_checksum_file "$HOME/.gitconfig") || return 1
     before_ssh=$(_cross_checksum_file "$HOME/.ssh/config") || return 1
 
     if (
         # shellcheck disable=SC2329  # invoked indirectly by cmd_restore
         write_profile_gitconfig() { return 1; }
-        cmd_restore "$_CROSS_VAULT"
+        cmd_restore "$_CROSS_VAULT" --force
     ) >/dev/null 2>&1; then
         status=0
     else
@@ -478,20 +463,18 @@ test_cross_home_failed_commit_rolls_back_without_marker() {
     after_profile=$(_cross_checksum_file "$GITSETU_PROFILES_DIR/target.gitconfig") || return 1
     after_key=$(_cross_checksum_file "$HOME/.ssh/id_ed25519_global") || return 1
     after_hook=$(_cross_checksum_file "$GITSETU_HOOKS_DIR/pre-commit") || return 1
-    after_token=$(_cross_checksum_file "$GITSETU_CONFIG_DIR/.tokens") || return 1
     after_git=$(_cross_checksum_file "$HOME/.gitconfig") || return 1
     after_ssh=$(_cross_checksum_file "$HOME/.ssh/config") || return 1
     assert_equals "$before_registry" "$after_registry" "rollback restores registry bytes" || return 1
     assert_equals "$before_profile" "$after_profile" "rollback restores profile files" || return 1
     assert_equals "$before_key" "$after_key" "rollback restores colliding private keys" || return 1
     assert_equals "$before_hook" "$after_hook" "rollback restores the target hook" || return 1
-    assert_equals "$before_token" "$after_token" "rollback restores target token state" || return 1
     assert_equals "$before_git" "$after_git" "rollback restores global Git config bytes" || return 1
     assert_equals "$before_ssh" "$after_ssh" "rollback restores global SSH config bytes" || return 1
     _cross_assert_no_transaction "successful rollback" || return 1
     _cross_assert_no_sidecars "successful rollback"
 
-    output=$(cmd_restore "$_CROSS_VAULT" 2>&1 || true)
+    output=$(cmd_restore "$_CROSS_VAULT" --force 2>&1 || true)
     assert_contains "$output" "Authenticated v2 vault restored successfully" \
         "sanity check: shared source vault remains reusable after rollback" || return 1
 }
@@ -511,7 +494,7 @@ test_cross_home_incomplete_rollback_leaves_recovery_marker() {
         write_profile_gitconfig() { return 1; }
         # shellcheck disable=SC2329  # invoked indirectly by abort helper
         _vault_rollback_transaction() { return 1; }
-        cmd_restore "$_CROSS_VAULT"
+        cmd_restore "$_CROSS_VAULT" --force
     ) >"$TEST_HOME/incomplete-restore.out" 2>&1; then
         status=0
     else

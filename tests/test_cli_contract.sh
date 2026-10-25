@@ -163,11 +163,9 @@ test_teardown_guard_and_update_option_contracts() {
     invoke_cli guard --install extra
     assert_cli_status 1 "guard rejects extra arguments"
 
-    invoke_cli update
-    assert_cli_status 1 "bare update is refused"
-    assert_cli_contains "Usage: gitsetu update --development" "update explains development-only mode"
-    invoke_cli update --unknown
-    assert_cli_status 1 "update rejects unknown modes"
+    invoke_cli update extra
+    assert_cli_status 1 "update with extra arguments is refused"
+    assert_cli_contains "Usage: gitsetu update" "update explains usage"
 }
 
 test_doctor_unknown_option_and_status_without_registry() {
@@ -179,6 +177,12 @@ test_doctor_unknown_option_and_status_without_registry() {
     invoke_cli status
     assert_cli_status 0 "status is an informational success without a registry"
     assert_cli_contains "No complete profiles configured" "status explains the unconfigured state"
+
+    invoke_cli status --porcelain
+    assert_cli_status 0 "status --porcelain succeeds"
+    assert_cli_contains "profile=none" "porcelain output includes profile=none"
+    assert_cli_contains "guard=off" "porcelain output includes guard=off"
+
     invoke_cli verify
     assert_cli_status 1 "verify fails clearly without a valid registry"
     assert_cli_contains "No profiles configured" "verify explains the missing setup"

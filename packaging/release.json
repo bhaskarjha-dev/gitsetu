@@ -15,10 +15,6 @@
     "commands": [
       "gitsetu",
       "git-setu"
-    ],
-    "githubExtensions": [
-      "gh-gitsetu",
-      "gh-setu"
     ]
   },
   "runtime": {

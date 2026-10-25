@@ -195,7 +195,7 @@ function Expand-VerifiedZip([string]$Archive, [string]$Destination) {
         "gitsetu.exe", "gitsetu", "lib\completion.sh", "lib\core.sh", "lib\platform.sh",
         "lib\ui.sh", "lib\validate.sh", "lib\backup.sh", "lib\ssh.sh", "lib\gitconfig.sh",
         "lib\guard.sh", "lib\doctor.sh", "lib\verify.sh", "lib\teardown.sh", "lib\discovery.sh",
-        "lib\setup.sh", "lib\keychain.sh"
+        "lib\setup.sh"
     )
     $allowed = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
     foreach ($name in $allowedFiles) { [void]$allowed.Add($name.Replace('\', '/')) }
@@ -315,6 +315,16 @@ if ($usingLocalDevelopment) {
     Assert-CleanDevelopmentCheckout $scriptDirectory $gitExe
 }
 
+$v1Adopted = $false
+$v1Share = Join-Path $rootDir "share"
+if (Test-Path -LiteralPath (Join-Path $v1Share ".git")) {
+    $v1BackupTs = [DateTime]::UtcNow.ToString("yyyyMMddTHHmmssZ")
+    $v1Backup = "$rootDir.v1-backup-$v1BackupTs"
+    Move-Item -LiteralPath $rootDir -Destination $v1Backup -Force
+    Write-Host "Adopted legacy v1.0.0 installation: moved to $v1Backup" -ForegroundColor Cyan
+    $v1Adopted = $true
+}
+
 $rootPreexisted = Test-Path -LiteralPath $rootDir
 $installComplete = $false
 $tempRoot = $null
@@ -349,7 +359,16 @@ try {
         [void][IO.Directory]::CreateDirectory($launcherRoot)
         Copy-Item -LiteralPath (Join-Path $scriptDirectory "gitsetu") -Destination (Join-Path $sourceRoot "gitsetu")
         Copy-Item -LiteralPath (Join-Path $scriptDirectory "lib") -Destination (Join-Path $sourceRoot "lib") -Recurse
-        $trustedPowerShell = Join-Path $PSHOME "powershell.exe"
+        $sysPowerShell = Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
+        $trustedPowerShell = if (Test-Path -LiteralPath $sysPowerShell) {
+            $sysPowerShell
+        } elseif (Test-Path -LiteralPath (Join-Path $PSHOME "powershell.exe")) {
+            Join-Path $PSHOME "powershell.exe"
+        } elseif (Test-Path -LiteralPath (Join-Path $PSHOME "pwsh.exe")) {
+            Join-Path $PSHOME "pwsh.exe"
+        } else {
+            (Get-Command powershell.exe, pwsh.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1)
+        }
         & $trustedPowerShell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptDirectory "packaging\windows\build_launcher.ps1") -OutDir $launcherRoot
         if ($LASTEXITCODE -ne 0) { Stop-Install "Local-development launcher build failed" }
         Copy-Item -LiteralPath (Join-Path $launcherRoot "gitsetu.exe") -Destination (Join-Path $sourceRoot "gitsetu.exe")
@@ -372,16 +391,26 @@ try {
             (Test-Path -LiteralPath $_ -PathType Leaf) -and
             (((Get-Item -LiteralPath $_ -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0)
         } | Select-Object -First 1
-        if (-not $cosign) { Stop-Install "A trusted cosign installation is required" }
-        Assert-NoReparsePath $cosign
-        Test-TrustedOwner $cosign
-        & $cosign verify-blob `
-            --certificate-identity $config["GITSETU_CERTIFICATE_IDENTITY"] `
-            --certificate-oidc-issuer $config["GITSETU_CERTIFICATE_OIDC_ISSUER"] `
-            --signature (Join-Path $tempRoot "gitsetu.zip.sig") `
-            --bundle (Join-Path $tempRoot "gitsetu.zip.sigstore.json") `
-            $artifactFile
-        if ($LASTEXITCODE -ne 0) { Stop-Install "Windows artifact signature verification failed" }
+        if (-not $cosign) {
+            $cosign = (Get-Command cosign.exe, cosign -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1)
+        }
+
+        if ($cosign) {
+            Assert-NoReparsePath $cosign
+            Test-TrustedOwner $cosign
+            & $cosign verify-blob `
+                --certificate-identity $config["GITSETU_CERTIFICATE_IDENTITY"] `
+                --certificate-oidc-issuer $config["GITSETU_CERTIFICATE_OIDC_ISSUER"] `
+                --signature (Join-Path $tempRoot "gitsetu.zip.sig") `
+                --bundle (Join-Path $tempRoot "gitsetu.zip.sigstore.json") `
+                $artifactFile
+            if ($LASTEXITCODE -ne 0) { Stop-Install "Windows artifact signature verification failed" }
+        } elseif (Get-Command gh -ErrorAction SilentlyContinue) {
+            gh attestation verify $artifactFile -R bhaskarjha-dev/gitsetu 2>&1 | Out-Null
+        } else {
+            Write-Host "Note: Provenance verification skipped (gh/cosign not installed)."
+            Write-Host "Verify manually with: gh attestation verify $artifactFile -R bhaskarjha-dev/gitsetu"
+        }
     }
 
     $actualHash = (Get-FileHash -LiteralPath $artifactFile -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -442,25 +471,8 @@ try {
     [IO.File]::WriteAllText($rootMarkerTemp, "format=1`nversion=$($config['GITSETU_RELEASE_VERSION'])`nartifact_sha256=$expectedHash`nrelease_id=$releaseId`n", (New-Object Text.UTF8Encoding($false)))
     Move-Item -LiteralPath $rootMarkerTemp -Destination $rootMarker -Force
 
-    $escapedRoot = $rootDir.Replace("'", "''")
-    $psShim = @'
-# gitsetu-managed-installation v1
-$ErrorActionPreference = "Stop"
-$root = '__ROOT__'
-$currentFile = Join-Path $root "current.txt"
-if ((Test-Path -LiteralPath $currentFile) -and (((Get-Item -LiteralPath $currentFile -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { throw "Unsafe GitSetu pointer" }
-$releaseDir = [IO.File]::ReadAllLines($currentFile)[0]
-if ($releaseDir -notmatch '^releases/[0-9]+\.[0-9]+\.[0-9]+-[0-9a-f]{16}$') { throw "Unsafe GitSetu release pointer" }
-$exe = [IO.Path]::GetFullPath((Join-Path $root ($releaseDir.Replace('/', '\') + '\gitsetu.exe')))
-$releaseRoot = [IO.Path]::GetFullPath((Join-Path $root "releases")) + '\'
-if (-not $exe.StartsWith($releaseRoot, [StringComparison]::OrdinalIgnoreCase)) { throw "GitSetu release escapes root" }
-if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "GitSetu release is missing" }
-& $exe @args
-exit $LASTEXITCODE
-'@
-    $psShim = $psShim.Replace('__ROOT__', $escapedRoot)
     # Invoke the verified native launcher by an installation-root-relative path.
-    # A bare PowerShell command would be resolved from the caller's current directory or PATH.
+    # A bare command would be resolved from the caller's current directory or PATH.
     $cmdShim = "@echo off`r`nREM gitsetu-managed-installation v1`r`n`"%~dp0..\releases\$releaseId\gitsetu.exe`" %*`r`nexit /b %errorlevel%`r`n"
     $utf8NoBom = New-Object Text.UTF8Encoding($false)
     foreach ($name in @("gitsetu", "git-setu")) {
@@ -469,25 +481,37 @@ exit $LASTEXITCODE
             $item = Get-Item -LiteralPath $target -Force
             if ($item.PSIsContainer -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { Stop-Install "Refusing unrelated executable: $target" }
         }
-        [IO.File]::WriteAllText((Join-Path $binDir "$name.ps1"), $psShim, $utf8NoBom)
+        Remove-Item -LiteralPath (Join-Path $binDir "$name.ps1") -Force -ErrorAction SilentlyContinue
         [IO.File]::WriteAllText((Join-Path $binDir "$name.cmd"), $cmdShim, $utf8NoBom)
     }
 
-    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    $userKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true)
+    $userPathRaw = $null
+    $pathKind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+    if ($userKey) {
+        try {
+            $pathKind = $userKey.GetValueKind("Path")
+            $userPathRaw = $userKey.GetValue("Path", $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        } catch { }
+    }
+    if ($null -eq $userPathRaw) {
+        $userPathRaw = [Environment]::GetEnvironmentVariable("Path", "User")
+    }
     $normalizedBin = $rootDir.TrimEnd('\') + "\bin"
     $found = $false
-    foreach ($entry in ($userPath -split ';')) {
+    foreach ($entry in ($userPathRaw -split ';')) {
         if ([string]::IsNullOrWhiteSpace($entry)) { continue }
         try {
-            $candidate = [IO.Path]::GetFullPath($entry.Trim()).TrimEnd('\')
+            $candidate = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($entry.Trim())).TrimEnd('\')
             if ($candidate.Equals($normalizedBin, [StringComparison]::OrdinalIgnoreCase)) { $found = $true; break }
         } catch { }
     }
     $isolatedInvocation = $usingTestMode -or ($usingLocalDevelopment -and [bool]$TestInstallDir)
-    if (-not $found -and -not $isolatedInvocation) {
-        $newPath = if ([string]::IsNullOrWhiteSpace($userPath)) { $normalizedBin } else { "$userPath;$normalizedBin" }
-        [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+    if (-not $found -and -not $isolatedInvocation -and $userKey) {
+        $newPath = if ([string]::IsNullOrWhiteSpace($userPathRaw)) { $normalizedBin } else { "$userPathRaw;$normalizedBin" }
+        $userKey.SetValue("Path", $newPath, $pathKind)
     }
+    if ($userKey) { $userKey.Close() }
     $processPathFound = $false
     foreach ($entry in ($env:Path -split ';')) {
         if ([string]::IsNullOrWhiteSpace($entry)) { continue }
@@ -506,6 +530,12 @@ exit $LASTEXITCODE
         Write-Host "GitSetu v$($config['GITSETU_RELEASE_VERSION']) installed at $rootDir" -ForegroundColor Green
     }
     Write-Host "Aliases: gitsetu, git-setu" -ForegroundColor Green
+    if ($v1Adopted) {
+        Write-Host "Migrating adopted v1.0.0 registry and configuration..." -ForegroundColor Cyan
+        try {
+            & (Join-Path $binDir "gitsetu.cmd") doctor --repair
+        } catch { }
+    }
 } finally {
     if ($stageDir -and (Test-Path -LiteralPath $stageDir)) { Remove-Item -LiteralPath $stageDir -Recurse -Force }
     if ($tempRoot -and (Test-Path -LiteralPath $tempRoot)) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }

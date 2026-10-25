@@ -30,9 +30,11 @@ jobs:
         run: |
           node packaging/release.js validate-source
           node scripts/check-docs.mjs
-          if node packaging/release.js render "$RUNNER_TEMP/rendered" >/dev/null 2>&1; then
-            echo "Development metadata must not render installable manifests" >&2
-            exit 1
+          if [ "$(node -p "require('./packaging/release.json').release.state")" = "development" ]; then
+            if node packaging/release.js render "$RUNNER_TEMP/rendered" >/dev/null 2>&1; then
+              echo "Development metadata must not render installable manifests" >&2
+              exit 1
+            fi
           fi
       - name: Build and run the actual standalone bundle
         run: |

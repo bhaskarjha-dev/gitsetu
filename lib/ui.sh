@@ -219,6 +219,8 @@ ui_restore_terminal() {
 # Return success only when a controlling terminal can be opened for both reading
 # and termios operations. This intentionally does not trust redirected stdin.
 _ui_tty_available() {
+    [[ -t 0 ]] || return 1
+    [[ -t 1 || -t 2 ]] || return 1
     [[ -r /dev/tty && -w /dev/tty ]] || return 1
     ( : </dev/tty ) 2>/dev/null || return 1
 }

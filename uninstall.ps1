@@ -3,6 +3,7 @@
 [CmdletBinding()]
 param(
     [switch]$Force,
+    [switch]$KeepConfig,
     [switch]$Teardown
 )
 
@@ -52,64 +53,84 @@ if (-not $rootItem.PSIsContainer -or (($rootItem.Attributes -band [IO.FileAttrib
     Stop-Uninstall "Installation root is not a real directory"
 }
 
-$markerPath = Join-Path $rootDir "install.marker"
-if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf)) {
-    Stop-Uninstall "Refusing to remove an unmarked directory: $rootDir"
-}
-$markerItem = Get-Item -LiteralPath $markerPath -Force
-if (($markerItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-    Stop-Uninstall "Refusing a reparse-point installation marker"
-}
-
-$marker = @{}
-foreach ($line in [IO.File]::ReadAllLines($markerPath)) {
-    $separator = $line.IndexOf("=")
-    if ($separator -le 0) { Stop-Uninstall "Invalid installation marker" }
-    $key = $line.Substring(0, $separator)
-    $value = $line.Substring($separator + 1)
-    if ($key -notin @("format", "version", "artifact_sha256", "release_id")) {
-        Stop-Uninstall "Invalid installation marker"
+$isV1 = $false
+$v1Share = Join-Path $rootDir "share"
+if (Test-Path -LiteralPath (Join-Path $v1Share ".git")) {
+    $isV1 = $true
+    $version = "1.0.0"
+    $exePath = Join-Path $rootDir "bin\gitsetu.cmd"
+} else {
+    $markerPath = Join-Path $rootDir "install.marker"
+    if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf)) {
+        Stop-Uninstall "Refusing to remove an unmarked directory: $rootDir"
     }
-    if ($marker.ContainsKey($key)) { Stop-Uninstall "Duplicate installation marker key" }
-    $marker[$key] = $value
-}
-if ($marker.Count -ne 4 -or $marker["format"] -ne "1" -or
-    $marker["version"] -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$' -or
-    $marker["artifact_sha256"] -notmatch '^[0-9a-f]{64}$') {
-    Stop-Uninstall "Installation marker is incomplete or invalid"
-}
-$expectedReleaseId = "$($marker['version'])-$($marker['artifact_sha256'].Substring(0, 16))"
-if ($marker["release_id"] -ne $expectedReleaseId) { Stop-Uninstall "Installation marker release ID is inconsistent" }
+    $markerItem = Get-Item -LiteralPath $markerPath -Force
+    if (($markerItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        Stop-Uninstall "Refusing a reparse-point installation marker"
+    }
 
-$currentPath = Join-Path $rootDir "current.txt"
-if (-not (Test-Path -LiteralPath $currentPath -PathType Leaf)) { Stop-Uninstall "Current release pointer is missing" }
-$currentItem = Get-Item -LiteralPath $currentPath -Force
-if ($currentItem.PSIsContainer -or (($currentItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
-    Stop-Uninstall "Current release pointer is not a regular file"
-}
-$currentLines = [IO.File]::ReadAllLines($currentPath)
-if ($currentLines.Count -ne 1 -or $currentLines[0] -ne "releases/$expectedReleaseId") {
-    Stop-Uninstall "Current release pointer does not match the installation marker"
-}
-$releaseDir = Join-Path $rootDir ("releases\" + $expectedReleaseId)
-$exePath = Join-Path $releaseDir "gitsetu.exe"
-if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) { Stop-Uninstall "Current GitSetu executable is missing" }
-$exeItem = Get-Item -LiteralPath $exePath -Force
-if (($exeItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { Stop-Uninstall "Current GitSetu executable is redirected" }
+    $marker = @{}
+    foreach ($line in [IO.File]::ReadAllLines($markerPath)) {
+        $separator = $line.IndexOf("=")
+        if ($separator -le 0) { Stop-Uninstall "Invalid installation marker" }
+        $key = $line.Substring(0, $separator)
+        $value = $line.Substring($separator + 1)
+        if ($key -notin @("format", "version", "artifact_sha256", "release_id")) {
+            Stop-Uninstall "Invalid installation marker"
+        }
+        if ($marker.ContainsKey($key)) { Stop-Uninstall "Duplicate installation marker key" }
+        $marker[$key] = $value
+    }
+    if ($marker.Count -ne 4 -or $marker["format"] -ne "1" -or
+        $marker["version"] -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$' -or
+        $marker["artifact_sha256"] -notmatch '^[0-9a-f]{64}$') {
+        Stop-Uninstall "Installation marker is incomplete or invalid"
+    }
+    $expectedReleaseId = "$($marker['version'])-$($marker['artifact_sha256'].Substring(0, 16))"
+    if ($marker["release_id"] -ne $expectedReleaseId) { Stop-Uninstall "Installation marker release ID is inconsistent" }
 
-Write-Host "GitSetu v$($marker['version']) is installed at $rootDir"
-Write-Host "Generated SSH keys and Git identity configuration are preserved by default." -ForegroundColor Gray
-if ($Teardown) {
-    Write-Host "Running explicit managed-state teardown..."
-    & $exePath teardown --deep --force
-    if ($LASTEXITCODE -ne 0) { Stop-Uninstall "Managed-state teardown failed; installation was not removed" }
+    $currentPath = Join-Path $rootDir "current.txt"
+    if (-not (Test-Path -LiteralPath $currentPath -PathType Leaf)) { Stop-Uninstall "Current release pointer is missing" }
+    $currentItem = Get-Item -LiteralPath $currentPath -Force
+    if ($currentItem.PSIsContainer -or (($currentItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
+        Stop-Uninstall "Current release pointer is not a regular file"
+    }
+    $currentLines = [IO.File]::ReadAllLines($currentPath)
+    if ($currentLines.Count -ne 1 -or $currentLines[0] -ne "releases/$expectedReleaseId") {
+        Stop-Uninstall "Current release pointer does not match the installation marker"
+    }
+    $releaseDir = Join-Path $rootDir ("releases\" + $expectedReleaseId)
+    $exePath = Join-Path $releaseDir "gitsetu.exe"
+    if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) { Stop-Uninstall "Current GitSetu executable is missing" }
+    $exeItem = Get-Item -LiteralPath $exePath -Force
+    if (($exeItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { Stop-Uninstall "Current GitSetu executable is redirected" }
+    $version = $marker["version"]
+}
+
+Write-Host "GitSetu v$version is installed at $rootDir"
+if ($KeepConfig) {
+    Write-Host "Generated SSH keys and Git identity configuration are preserved." -ForegroundColor Gray
+} else {
+    Write-Host "Running managed-state teardown..."
+    if (Test-Path -LiteralPath $exePath) {
+        try { & $exePath teardown --force } catch { }
+    }
 }
 
 if (-not $Force) {
-    $confirmation = Read-Host "Remove the GitSetu executables and versioned installation? [y/N]"
+    $canPrompt = [Environment]::UserInteractive
+    if ($canPrompt) {
+        try {
+            $confirmation = Read-Host "Remove the GitSetu executables and versioned installation? [y/N]"
+        } catch {
+            $confirmation = ""
+        }
+    } else {
+        $confirmation = ""
+    }
     if ($confirmation -notmatch '^[Yy]$') {
-        Write-Host "Uninstallation aborted."
-        exit 0
+        [Console]::Error.WriteLine("confirmation required; pass -Force")
+        exit 3
     }
 }
 
@@ -131,22 +152,31 @@ foreach ($name in @("gitsetu", "git-setu")) {
 }
 if ($removeStatus -ne 0) { Stop-Uninstall "One or more GitSetu wrappers could not be removed; installation was preserved." }
 
-$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-if ($userPath) {
-    $normalizedBin = $binDir.TrimEnd('\')
-    $kept = New-Object 'System.Collections.Generic.List[string]'
-    foreach ($entry in ($userPath -split ';')) {
-        if ([string]::IsNullOrWhiteSpace($entry)) { continue }
-        $remove = $false
-        try {
-            $candidate = [IO.Path]::GetFullPath($entry.Trim()).TrimEnd('\')
-            $remove = $candidate.Equals($normalizedBin, [StringComparison]::OrdinalIgnoreCase)
-        } catch { }
-        if (-not $remove) { $kept.Add($entry) }
-    }
-    $newPath = [string]::Join(";", $kept)
-    if ($newPath -ne $userPath -and -not $usingTestMode) {
-        [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+$userKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true)
+if ($userKey) {
+    try {
+        $pathKind = $userKey.GetValueKind("Path")
+        $userPathRaw = $userKey.GetValue("Path", $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        if ($userPathRaw) {
+            $normalizedBin = $binDir.TrimEnd('\')
+            $kept = New-Object 'System.Collections.Generic.List[string]'
+            foreach ($entry in ($userPathRaw -split ';')) {
+                if ([string]::IsNullOrWhiteSpace($entry)) { continue }
+                $remove = $false
+                try {
+                    $expanded = [Environment]::ExpandEnvironmentVariables($entry.Trim())
+                    $candidate = [IO.Path]::GetFullPath($expanded).TrimEnd('\')
+                    $remove = $candidate.Equals($normalizedBin, [StringComparison]::OrdinalIgnoreCase)
+                } catch { }
+                if (-not $remove) { $kept.Add($entry) }
+            }
+            $newPath = [string]::Join(";", $kept)
+            if ($newPath -ne $userPathRaw -and -not $usingTestMode) {
+                $userKey.SetValue("Path", $newPath, $pathKind)
+            }
+        }
+    } finally {
+        $userKey.Close()
     }
 }
 

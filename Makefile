@@ -29,12 +29,12 @@ docs:
 	@node scripts/check-docs.mjs
 
 lint:
-	@shellcheck gitsetu install.sh uninstall.sh scripts/*.sh lib/*.sh sandbox/*.sh packaging/gh-extension/gh-gitsetu packaging/gh-extension/gh-setu tests/*.sh
+	@shellcheck gitsetu install.sh uninstall.sh scripts/*.sh lib/*.sh sandbox/*.sh tests/*.sh
 	@node --check bin/gitsetu.js
 	@node --check packaging/release.js
 	@node --check packaging/release-manifest.js
 	@node --check scripts/check-docs.mjs
-	@node -e "for (const f of ['package.json','package-lock.json','packaging/release.json','packaging/scoop/gitsetu.json.in']) { const s=require('fs').readFileSync(f,'utf8').replace(/\{\{[A-Z0-9_]+\}\}/g,'null'); if (f.endsWith('.json')) JSON.parse(s); }"
+	@node -e "for (const f of ['package.json','package-lock.json','packaging/release.json']) { const s=require('fs').readFileSync(f,'utf8').replace(/\{\{[A-Z0-9_]+\}\}/g,'null'); if (f.endsWith('.json')) JSON.parse(s); }"
 	@if command -v powershell.exe >/dev/null 2>&1; then powershell.exe -NoLogo -NoProfile -Command '$$errors=$$null; foreach($$f in @("install.ps1","uninstall.ps1","packaging/windows/build_launcher.ps1","packaging/windows/build_release_zip.ps1")){[Management.Automation.Language.Parser]::ParseFile((Resolve-Path $$f),[ref]$$null,[ref]$$errors)|Out-Null}; if($$errors.Count){$$errors|ForEach-Object{Write-Error $$_};exit 1}' ; fi
 
 test:
@@ -54,8 +54,6 @@ test-bundle: dist
 
 package-check:
 	@node packaging/release.js validate-source
-	@bash packaging/gh-extension/gh-gitsetu --version >/dev/null
-	@bash packaging/gh-extension/gh-setu --version >/dev/null
 
 install:
 	@bash install.sh

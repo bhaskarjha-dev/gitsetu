@@ -1,29 +1,62 @@
 ---
 name: gitsetu
-description: Enforces Git identity safety, multi-account routing, and SSH key management using GitSetu. Use whenever performing git operations, commits, pushes, clones, or troubleshooting authentication.
+description: Enforces Git identity safety, multi-account routing, and SSH key management using GitSetu. Activate when command -v gitsetu succeeds or when the user mentions GitSetu.
 ---
 
 # GitSetu AI Agent Skill
 
-You may be operating on a workstation where GitSetu manages some Git and SSH identities. Verify the active profile and managed state before relying on it.
+You are operating in an environment where GitSetu manages Git identities, SSH key routing, and commit safety.
 
-## The 4 Golden Directives for AI Agents
+## Provisioning Identities Without Prompts (Scriptable)
+
+To provision a profile autonomously without interactive TTY prompts:
+1. Ensure a global fallback identity is configured (`git config --global user.name` and `user.email`).
+2. Run headless provisioning:
+   ```bash
+   gitsetu add <label> "<name>" <email> <dir> --no-guard </dev/null
+   # or with remote routing:
+   gitsetu profile add <label> --name="<name>" --email="<email>" --dir="<dir>" --remote="<pattern>" --no-guard </dev/null
+   ```
+3. Verification: Command exits 0, and in any repo inside `<dir>`:
+   ```bash
+   git -C <dir>/<repo> config user.email
+   ```
+   equals the provisioned `<email>`.
+
+**Human Steps Required**:
+- **SSH Key Upload**: Upload the generated public key (`~/.ssh/id_ed25519_<label>.pub`) to GitHub/GitLab settings.
+- **Guard Activation Consent**: The pre-commit identity guard is opt-in per profile. Activate explicitly with `gitsetu guard --install`.
+
+## Core Directives for AI Agents
 
 1. **Verify Identity Before Committing**:
-   - Before executing `git commit` in any repository, verify the active identity:
+   - Check the effective identity for the current directory:
      ```bash
-     gitsetu status
-     # or inspect git config user.email
+     gitsetu prompt
+     # or inspect effective git config
+     git config user.email
      ```
-   - Ensure the resolved email matches the intended workspace (e.g., corporate email for work repos, personal email for personal repos).
+   - Ensure the resolved email matches the intended workspace (corporate for work, personal for personal).
 
-2. **Guard Respect (Opt-In)**:
-   - When explicitly installed, GitSetu's `guard` pre-commit hook is active for repositories classified as managed.
-   - If your commit halts with an `[Identity mismatch detected!]` warning, do not bypass it with `git commit --no-verify` or `-n`; investigate the effective identity and correct the managed state.
-   - The guard is client-side: a local `core.hooksPath`, `--no-verify`, direct writes, and history rewrites can bypass it.
+2. **Diagnose Identity Routing Origins**:
+   - Trace the exact file and scope defining any identity setting:
+     ```bash
+     gitsetu explain [path]
+     ```
+   - Displays the effective values for `user.name`, `user.email`, `core.sshCommand`, and `core.hooksPath` alongside their source files.
 
-3. **Explicit Identity Execution**:
-   - `gitsetu run <profile> -- <command>` exports Git identity variables and `GIT_SSH_COMMAND` for the child process. It does not change directory, select a profile-specific credential helper, or alter persistent Git configuration; run it from the intended workspace and verify the resulting context.
+3. **Guard Enforcement (`GitSetu Guard: BLOCKING COMMIT`)**:
+   - When the guard is enabled and detects an email mismatch, it blocks the commit with:
+     `GitSetu Guard: BLOCKING COMMIT`
+   - **Do NOT bypass** with `git commit --no-verify` or `-n`. Investigate why the author email differs from the matched profile with `gitsetu explain` and correct the configuration.
 
-4. **Network Diagnostics**:
-   - If `git push` or `ssh -T` hangs or fails, inspect the effective Git/SSH configuration with `gitsetu doctor` and `gitsetu verify`; these are primarily offline diagnostics and do not test provider connectivity. Use an explicit SSH test or provider tooling for network diagnosis, and review Port 443/host-key consent settings separately.
+4. **Explicit Identity Execution**:
+   - To run a single command under a specific profile identity:
+     ```bash
+     gitsetu run <profile> -- <command>
+     ```
+   - This sets `GIT_AUTHOR_*`, `GIT_COMMITTER_*`, and `GIT_SSH_COMMAND` with `-o IdentitiesOnly=yes` for the duration of the command.
+
+5. **Diagnostic Verification**:
+   - Run `gitsetu status` (or `gitsetu status --porcelain` for machine-readable output).
+   - Run `gitsetu verify` for offline verification, or `GITSETU_VERIFY_NETWORK=1 gitsetu verify` to test SSH network connectivity.

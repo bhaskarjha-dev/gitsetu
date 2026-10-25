@@ -7,23 +7,34 @@
 # wall-clock time. Bash 3.2 compatible.
 
 # ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # _teardown_managed_markers_valid — Reject ambiguous managed blocks
 # ------------------------------------------------------------------------------
 _teardown_managed_markers_valid() {
     local source_file="$1"
     awk '
+        /\[gitsetu:managed:head:start\]/ {
+            if (in_head) { exit 3 }
+            in_head=1
+            next
+        }
+        /\[gitsetu:managed:head:end\]/ {
+            if (!in_head) { exit 4 }
+            in_head=0
+            next
+        }
         /\[gitsetu:managed:start\]/ {
-            if (inside) { exit 3 }
-            inside=1
+            if (in_tail) { exit 3 }
+            in_tail=1
             next
         }
         /\[gitsetu:managed:end\]/ {
-            if (!inside) { exit 4 }
-            inside=0
+            if (!in_tail) { exit 4 }
+            in_tail=0
             next
         }
         END {
-            if (inside) { exit 5 }
+            if (in_head || in_tail) { exit 5 }
         }
     ' "$source_file"
 }
@@ -44,46 +55,58 @@ _teardown_replace_file() {
 }
 
 # ------------------------------------------------------------------------------
-# teardown_gitconfig — Remove the managed block from ~/.gitconfig
+# teardown_gitconfig — Remove the managed blocks from ~/.gitconfig
 # ------------------------------------------------------------------------------
 teardown_gitconfig() {
     local gitconfig="$HOME/.gitconfig"
+    local target="$gitconfig"
 
-    if [[ ! -f "$gitconfig" || -L "$gitconfig" ]]; then
+    if [[ -L "$gitconfig" ]]; then
+        if declare -f _gitconfig_resolve_symlink_target >/dev/null 2>&1; then
+            target=$(_gitconfig_resolve_symlink_target "$gitconfig") || {
+                print_error "Cannot resolve ~/.gitconfig symlink target."
+                return 1
+            }
+        fi
+    fi
+
+    if [[ ! -f "$target" ]]; then
         print_info "No regular ~/.gitconfig found, skipping."
         return 0
     fi
-    if ! grep -q "\[gitsetu:managed:start\]" "$gitconfig" 2>/dev/null; then
+    if ! grep -q "\[gitsetu:managed" "$target" 2>/dev/null; then
         print_info "No gitsetu managed block found in ~/.gitconfig, skipping."
         return 0
     fi
-    if ! _teardown_managed_markers_valid "$gitconfig"; then
+    if ! _teardown_managed_markers_valid "$target"; then
         print_error "Refusing to edit ~/.gitconfig: managed block markers are unbalanced."
         return 1
     fi
     if [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
-        print_info "[DRY RUN] Would remove managed block from: $gitconfig"
+        print_info "[DRY RUN] Would remove managed blocks from: $gitconfig"
         return 0
     fi
 
     ensure_dirs || return 1
-    backup_file "$gitconfig" || {
+    backup_file "$target" || {
         print_error "Could not back up ~/.gitconfig; teardown stopped."
         return 1
     }
 
     local tmp_file
-    tmp_file=$(umask 077 && mktemp "${gitconfig}.tmp.XXXXXX" 2>/dev/null) || {
+    tmp_file=$(umask 077 && mktemp "${target}.tmp.XXXXXX" 2>/dev/null) || {
         print_error "Could not create a private staging file for ~/.gitconfig."
         return 1
     }
     GITSETU_CLEANUP_FILES+=("$tmp_file")
 
     if ! awk '
-        /\[gitsetu:managed:start\]/ { skip=1; next }
-        /\[gitsetu:managed:end\]/   { skip=0; next }
-        !skip                      { print }
-    ' "$gitconfig" > "$tmp_file"; then
+        /\[gitsetu:managed:head:start\]/ { skip_head=1; next }
+        /\[gitsetu:managed:head:end\]/   { skip_head=0; next }
+        /\[gitsetu:managed:start\]/      { skip_tail=1; next }
+        /\[gitsetu:managed:end\]/        { skip_tail=0; next }
+        !skip_head && !skip_tail         { print }
+    ' "$target" > "$tmp_file"; then
         rm -f "$tmp_file"
         print_error "Failed to stage ~/.gitconfig cleanup; original was not changed."
         return 1
@@ -91,7 +114,7 @@ teardown_gitconfig() {
 
     if ! grep -q '[^[:space:]]' "$tmp_file" 2>/dev/null; then
         rm -f "$tmp_file"
-        if ! rm -f "$gitconfig"; then
+        if ! rm -f "$target"; then
             print_error "Failed to remove empty ~/.gitconfig."
             return 1
         fi
@@ -99,12 +122,12 @@ teardown_gitconfig() {
         return 0
     fi
 
-    if ! _teardown_replace_file "$tmp_file" "$gitconfig"; then
+    if ! _teardown_replace_file "$tmp_file" "$target"; then
         rm -f "$tmp_file"
         print_error "Failed to install cleaned ~/.gitconfig; original was preserved."
         return 1
     fi
-    print_success "Removed managed block from: $gitconfig"
+    print_success "Removed managed blocks from: $gitconfig"
 }
 
 # ------------------------------------------------------------------------------
@@ -112,8 +135,18 @@ teardown_gitconfig() {
 # ------------------------------------------------------------------------------
 teardown_sshconfig() {
     local ssh_config="$HOME/.ssh/config"
+    local target_ssh="$ssh_config"
     local isolated_config="$GITSETU_PROFILES_DIR/ssh_config"
     local include_path="$isolated_config"
+
+    if [[ -L "$ssh_config" ]]; then
+        if declare -f _gitconfig_resolve_symlink_target >/dev/null 2>&1; then
+            target_ssh=$(_gitconfig_resolve_symlink_target "$ssh_config") || {
+                print_error "Cannot resolve ~/.ssh/config symlink target."
+                return 1
+            }
+        fi
+    fi
 
     if [[ "$isolated_config" == "$HOME/"* ]]; then
         include_path="~/${isolated_config#"$HOME"/}"
@@ -122,26 +155,26 @@ teardown_sshconfig() {
     fi
     local include_directive="Include ${include_path}"
 
-    if [[ -f "$ssh_config" && ! -L "$ssh_config" ]] && \
-       grep -q -F -x "$include_directive" "$ssh_config" 2>/dev/null; then
+    if [[ -f "$target_ssh" ]] && \
+       grep -q -F -x "$include_directive" "$target_ssh" 2>/dev/null; then
         if [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
             print_info "[DRY RUN] Would remove Include directive from: $ssh_config"
         else
             ensure_dirs || return 1
-            backup_file "$ssh_config" || {
+            backup_file "$target_ssh" || {
                 print_error "Could not back up ~/.ssh/config; teardown stopped."
                 return 1
             }
 
             local tmp_file
-            tmp_file=$(umask 077 && mktemp "${ssh_config}.tmp.XXXXXX" 2>/dev/null) || {
+            tmp_file=$(umask 077 && mktemp "${target_ssh}.tmp.XXXXXX" 2>/dev/null) || {
                 print_error "Could not create a private staging file for ~/.ssh/config."
                 return 1
             }
             GITSETU_CLEANUP_FILES+=("$tmp_file")
 
             local filter_rc=0
-            grep -v -F -x "$include_directive" "$ssh_config" > "$tmp_file" || filter_rc=$?
+            grep -v -F -x "$include_directive" "$target_ssh" > "$tmp_file" || filter_rc=$?
             if [[ "$filter_rc" -gt 1 ]]; then
                 rm -f "$tmp_file"
                 print_error "Failed to stage ~/.ssh/config cleanup; original was preserved."
@@ -150,12 +183,12 @@ teardown_sshconfig() {
 
             if ! grep -q '[^[:space:]]' "$tmp_file" 2>/dev/null; then
                 rm -f "$tmp_file"
-                if ! rm -f "$ssh_config"; then
+                if ! rm -f "$target_ssh"; then
                     print_error "Failed to remove empty ~/.ssh/config."
                     return 1
                 fi
                 print_success "Removed ~/.ssh/config (it was empty after cleanup)"
-            elif ! _teardown_replace_file "$tmp_file" "$ssh_config"; then
+            elif ! _teardown_replace_file "$tmp_file" "$target_ssh"; then
                 rm -f "$tmp_file"
                 print_error "Failed to install cleaned ~/.ssh/config; original was preserved."
                 return 1
@@ -163,9 +196,9 @@ teardown_sshconfig() {
                 print_success "Removed Include directive from: $ssh_config"
             fi
         fi
-    elif [[ -f "$ssh_config" && ! -L "$ssh_config" ]]; then
+    elif [[ -f "$target_ssh" ]]; then
         print_info "No gitsetu Include directive found in ~/.ssh/config, skipping."
-    elif [[ -e "$ssh_config" || -L "$ssh_config" ]]; then
+    elif [[ -e "$ssh_config" ]]; then
         print_warning "Refusing to edit non-regular ~/.ssh/config; leaving it unchanged."
         return 1
     else

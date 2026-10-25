@@ -53,9 +53,8 @@ test_global_block_has_safe_directories() {
     local block
     block=$(build_global_gitconfig_block)
 
-    assert_contains "$block" "[safe]" "has safe block header" &&
-    assert_contains "$block" "directory = \"/dev/pro/*\"" "has safe directory for pro" &&
-    assert_contains "$block" "directory = \"/dev/work/*\"" "has safe directory for work"
+    # HIGH-01: safe.directory is omitted from global gitconfig
+    assert_not_contains "$block" "[safe]" "safe block is omitted under HIGH-01"
 }
 
 test_global_block_has_trailing_slash() {
@@ -206,10 +205,6 @@ test_path_escaping() {
     keyword=$(get_gitdir_keyword)
 
     assert_contains "$block" "[includeIf \"${keyword}${expected_escaped_dir}\"]" "path is properly escaped in includeIf" || return 1
-
-    # Check that [safe] directory is also escaped
-    local expected_safe_dir="${HOME}/John\\\" Doe/work/*"
-    assert_contains "$block" "directory = \"${expected_safe_dir}\"" "path is properly escaped in safe directory" || return 1
 
     # Windows drive-letter input keeps its own escaping contract: backslashes are
     # doubled and the embedded quote is escaped, independent of whether the path

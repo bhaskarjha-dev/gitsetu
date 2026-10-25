@@ -136,11 +136,9 @@ if [[ "$list_suites" -eq 1 ]]; then
         printf '%s\n' "$suite"
     done
     for suite in \
-        "$TEST_DIR/test_gh_extension_e2e.ps1" \
         "$TEST_DIR/test_powershell_installer_e2e.ps1" \
         "$TEST_DIR/test_windows_launcher.ps1" \
-        "$TEST_DIR/test_windows_cli_dispatch.ps1" \
-        "$TEST_DIR/test_scoop_e2e.ps1"; do
+        "$TEST_DIR/test_windows_cli_dispatch.ps1"; do
         [[ -f "$suite" ]] && printf '%s\n' "$suite"
     done
     exit 0
@@ -352,24 +350,14 @@ run_default_mode() {
 
     local ps_suite
     for ps_suite in \
-        "$TEST_DIR/test_gh_extension_e2e.ps1" \
         "$TEST_DIR/test_powershell_installer_e2e.ps1" \
         "$TEST_DIR/test_windows_launcher.ps1" \
-        "$TEST_DIR/test_windows_cli_dispatch.ps1" \
-        "$TEST_DIR/test_scoop_e2e.ps1"; do
+        "$TEST_DIR/test_windows_cli_dispatch.ps1"; do
         [[ -f "$ps_suite" ]] || continue
         if ! matches_suite_filter "$ps_suite"; then
             continue
         fi
         matched=1
-        if [[ "$ps_suite" == *test_scoop_e2e.ps1 && "$include_live_windows" -eq 0 ]]; then
-            if [[ "$require_powershell" -eq 1 ]]; then
-                record_result "FAIL" "$ps_suite" "live Windows suite was required but not explicitly enabled"
-            else
-                record_result "SKIP" "$ps_suite" "live installer test requires --include-live-windows"
-            fi
-            continue
-        fi
         if [[ -z "$ps_bin" ]]; then
             if [[ "$require_powershell" -eq 1 ]]; then
                 record_result "FAIL" "$ps_suite" "PowerShell is required but unavailable"

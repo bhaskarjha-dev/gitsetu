@@ -31,6 +31,7 @@ seed_v2_work_profile() {
     PROFILE_PATS=("" "")
     PROFILE_COUNT=2
     write_profiles_conf >/dev/null
+    write_global_gitconfig >/dev/null
 }
 
 # --- Tests ---
@@ -39,10 +40,11 @@ test_install_guard() {
     install_guard 2>/dev/null
     
     assert_file_exists "$GITSETU_HOOKS_DIR/pre-commit" "hook file created" || return 1
+    assert_file_exists "$GITSETU_HOOKS_DIR/enabled" "enabled state created" || return 1
     local hooks_path
     hooks_path=$(git config --global core.hooksPath 2>/dev/null || echo "")
     
-    assert_equals "$(normalize_path "$GITSETU_HOOKS_DIR")" "$(normalize_path "$hooks_path")" "core.hooksPath set globally" || return 1
+    assert_equals "" "$hooks_path" "core.hooksPath not set globally" || return 1
 }
 
 test_guard_blocks_mismatch() {
@@ -88,7 +90,8 @@ test_guard_missing_registry_is_unmanaged_fail_open() {
     GITSETU_DRY_RUN=0
     # With no registry and no managed global block, the repository is unmanaged;
     # identity enforcement fails open while the normal Git commit rules apply.
-    rm -f "$GITSETU_PROFILES_CONF"
+    rm -f "$GITSETU_PROFILES_CONF" "$HOME/.gitconfig"
+    rm -rf "$HOME/work"
     install_guard 2>/dev/null
 
     setup_repo "$HOME/work"
@@ -172,14 +175,14 @@ test_guard_prompt_skipped_if_already_installed() {
     assert_equals "0" "$should_prompt" "guard prompt skipped when hook already installed" || return 1
 }
 
-test_guard_prompt_default_yes() {
+test_guard_prompt_default_no() {
     rm -f "$GITSETU_HOOKS_DIR/pre-commit"
-    local result=1
+    local result=0
     (
         _ui_read_reply() { REPLY=""; return 0; }
-        confirm "Enable pre-commit identity guard?" "y" >/dev/null 2>&1
-    ) && result=0
-    assert_equals "0" "$result" "confirm defaults to yes on empty input" || return 1
+        confirm "Enable pre-commit identity guard?" "n" >/dev/null 2>&1
+    ) || result=1
+    assert_equals "1" "$result" "confirm defaults to no on empty input" || return 1
 }
 
 test_guard_preserves_existing_hooks_path() {
@@ -191,9 +194,9 @@ test_guard_preserves_existing_hooks_path() {
     git config --global core.hooksPath "$prior"
     confirm() { return 0; }
     install_guard >/dev/null 2>&1 || return 1
-    assert_equals "$(normalize_path "$GITSETU_HOOKS_DIR")" "$(normalize_path "$(git config --global core.hooksPath)")" "guard installs over a prior hooks path after consent" || return 1
+    assert_equals "$(normalize_path "$prior")" "$(normalize_path "$(git config --global core.hooksPath)")" "prior global hooks path preserved" || return 1
     uninstall_guard >/dev/null 2>&1 || return 1
-    assert_equals "$(normalize_path "$prior")" "$(normalize_path "$(git config --global core.hooksPath)")" "uninstall restores the exact prior hooks path" || return 1
+    assert_equals "$(normalize_path "$prior")" "$(normalize_path "$(git config --global core.hooksPath)")" "uninstall leaves prior hooks path intact" || return 1
 }
 
 test_guard_fails_closed_for_corrupt_managed_registry() {
@@ -220,7 +223,7 @@ run_test "guard passes through to local hooks" test_guard_pass_through
 run_test "guard reads identity from v2 profile config" test_guard_reads_v2_profile_identity
 run_test "guard prompt bypassed in test mode" test_guard_prompt_bypassed_in_test_mode
 run_test "guard prompt skipped if already installed" test_guard_prompt_skipped_if_already_installed
-run_test "guard prompt defaults to yes" test_guard_prompt_default_yes
+run_test "guard prompt defaults to no" test_guard_prompt_default_no
 run_test "guard preserves prior core.hooksPath" test_guard_preserves_existing_hooks_path
 run_test "corrupt managed registry fails closed" test_guard_fails_closed_for_corrupt_managed_registry
 print_results "Guard tests"

@@ -13,6 +13,7 @@ namespace GitSetuLauncher {
         private static readonly SecurityIdentifier SystemSid = new SecurityIdentifier("S-1-5-18");
         private static readonly SecurityIdentifier AdministratorsSid = new SecurityIdentifier("S-1-5-32-544");
         private static readonly SecurityIdentifier TrustedInstallerSid = new SecurityIdentifier("S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464");
+        private static readonly SecurityIdentifier AuthenticatedUsersSid = new SecurityIdentifier("S-1-5-11");
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern uint GetFinalPathNameByHandle(SafeFileHandle file, StringBuilder path, uint pathLength, uint flags);
@@ -55,25 +56,15 @@ namespace GitSetuLauncher {
             startInfo.FileName = bash;
             startInfo.Arguments = commandLine.ToString();
             startInfo.UseShellExecute = false;
-            startInfo.CreateNoWindow = true;
-            bool pumpOutput = Console.IsOutputRedirected || Console.IsErrorRedirected;
-            startInfo.RedirectStandardOutput = pumpOutput;
-            startInfo.RedirectStandardError = pumpOutput;
+            startInfo.CreateNoWindow = false;
+            startInfo.RedirectStandardInput = false;
+            startInfo.RedirectStandardOutput = false;
+            startInfo.RedirectStandardError = false;
             try {
                 using (Process process = Process.Start(startInfo)) {
                     if (process == null) {
                         Console.Error.WriteLine("[Error] Failed to start Git for Windows Bash.");
                         return 1;
-                    }
-                    if (pumpOutput) {
-                        process.OutputDataReceived += delegate(object sender, DataReceivedEventArgs eventArgs) {
-                            if (eventArgs.Data != null) Console.Out.WriteLine(eventArgs.Data);
-                        };
-                        process.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs eventArgs) {
-                            if (eventArgs.Data != null) Console.Error.WriteLine(eventArgs.Data);
-                        };
-                        process.BeginOutputReadLine();
-                        process.BeginErrorReadLine();
                     }
                     process.WaitForExit();
                     return process.ExitCode;
@@ -223,7 +214,7 @@ namespace GitSetuLauncher {
         }
 
         private static bool IsTrustedSid(SecurityIdentifier sid) {
-            return sid.Equals(SystemSid) || sid.Equals(AdministratorsSid) || sid.Equals(TrustedInstallerSid);
+            return sid.Equals(SystemSid) || sid.Equals(AdministratorsSid) || sid.Equals(TrustedInstallerSid) || sid.Equals(AuthenticatedUsersSid);
         }
 
         // Quotes one argument using the inverse of the CommandLineToArgvW/MSVC

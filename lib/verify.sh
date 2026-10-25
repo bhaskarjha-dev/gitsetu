@@ -200,11 +200,13 @@ verify_git_config() {
         issues=$((issues + 1))
     fi
 
-    local start_count end_count
-    start_count=$(grep -F -c "${GITSETU_MANAGED_START:-# [gitsetu:managed:start]}" "$HOME/.gitconfig" 2>/dev/null || printf '0')
-    end_count=$(grep -F -c "${GITSETU_MANAGED_END:-# [gitsetu:managed:end]}" "$HOME/.gitconfig" 2>/dev/null || printf '0')
-    if [[ "$start_count" != "1" || "$end_count" != "1" ]]; then
-        print_error "Global gitconfig must contain exactly one complete GitSetu managed block."
+    local head_start head_end tail_start tail_end
+    head_start=$(grep -F -c "${GITSETU_MANAGED_HEAD_START:-# [gitsetu:managed:head:start]}" "$HOME/.gitconfig" 2>/dev/null || printf '0')
+    head_end=$(grep -F -c "${GITSETU_MANAGED_HEAD_END:-# [gitsetu:managed:head:end]}" "$HOME/.gitconfig" 2>/dev/null || printf '0')
+    tail_start=$(grep -F -c "${GITSETU_MANAGED_START:-# [gitsetu:managed:start]}" "$HOME/.gitconfig" 2>/dev/null || printf '0')
+    tail_end=$(grep -F -c "${GITSETU_MANAGED_END:-# [gitsetu:managed:end]}" "$HOME/.gitconfig" 2>/dev/null || printf '0')
+    if [[ "$tail_start" != "1" || "$tail_end" != "1" || "$head_start" != "$head_end" || "$head_start" -gt 1 ]]; then
+        print_error "Global gitconfig must contain valid GitSetu managed blocks."
         issues=$((issues + 1))
     fi
 
@@ -251,36 +253,19 @@ verify_git_config() {
         fi
     done
 
-    # Validate effective identity in real repositories, including environment
-    # overrides that take precedence over Git configuration.
+    # Validate effective identity in real repositories using the unified guard validator
     for (( i=0; i<PROFILE_COUNT; i++ )); do
         label="${PROFILE_LABELS[$i]:-}"
-        expected="${PROFILE_EMAILS[$i]:-}"
         dir="${PROFILE_DIRS[$i]:-}"
         [[ -n "$dir" ]] || continue
         repo=$(_verify_first_repo_under "$dir" 2>/dev/null || true)
         [[ -n "$repo" ]] || continue
+        profile_path="$GITSETU_PROFILES_DIR/${label}.gitconfig"
 
-        if [[ -n "${GIT_AUTHOR_EMAIL:-}" ]]; then
-            author_email="$GIT_AUTHOR_EMAIL"
-        else
-            author_ident=$(git -C "$repo" var GIT_AUTHOR_IDENT 2>/dev/null || true)
-            author_email=$(_verify_extract_email_from_ident "$author_ident" 2>/dev/null || true)
-        fi
-        if [[ -n "${GIT_COMMITTER_EMAIL:-}" ]]; then
-            committer_email="$GIT_COMMITTER_EMAIL"
-        else
-            committer_ident=$(git -C "$repo" var GIT_COMMITTER_IDENT 2>/dev/null || true)
-            committer_email=$(_verify_extract_email_from_ident "$committer_ident" 2>/dev/null || true)
-        fi
-
-        if [[ -z "$author_email" || -z "$committer_email" ]]; then
-            print_error "Profile '$label': effective author/committer identity is unresolved in $repo"
-            issues=$((issues + 1))
-            continue
-        fi
-        if [[ "$author_email" != "$expected" || "$committer_email" != "$expected" ]]; then
-            print_error "Profile '$label': effective identity mismatch in $repo (author='$author_email', committer='$committer_email')"
+        if ! (cd "$repo" && _guard_validate_effective_identity "$label" "$profile_path"); then
+            print_error "Profile '$label': effective identity mismatch in $repo"
+            print_error "  Expected: ${GUARD_EXPECTED_NAME:-<unset>} <${GUARD_EXPECTED_EMAIL:-<unset>}>${GUARD_EXPECTED_ORIGIN:+ (from $GUARD_EXPECTED_ORIGIN)}"
+            print_error "  Actual:   ${GUARD_ACTUAL_NAME:-<unset>} <${GUARD_ACTUAL_EMAIL:-<unset>}>${GUARD_ACTUAL_NAME_ORIGIN:+ (from $GUARD_ACTUAL_NAME_ORIGIN)}"
             issues=$((issues + 1))
         else
             print_success "Profile '$label': effective identity correct in $repo"
@@ -308,11 +293,24 @@ verify_ssh_connectivity() {
         return 1
     fi
 
+    local has_known_hosts=0
+    if [[ -f "$HOME/.ssh/known_hosts" && -s "$HOME/.ssh/known_hosts" ]]; then
+        has_known_hosts=1
+    fi
+
+    if [[ "$has_known_hosts" -eq 0 && "${GITSETU_ALLOW_SSH_HOST_KEY:-0}" != "1" && "${GITSETU_SSH_ACCEPT_NEW_HOST:-0}" != "1" ]]; then
+        print_warning "No SSH connection was attempted: unknown host key refused by default. Set GITSETU_ALLOW_SSH_HOST_KEY=1 to approve first-use host key."
+        return 1
+    fi
+
+    if [[ "${GITSETU_ALLOW_SSH_HOST_KEY:-0}" == "1" || "${GITSETU_SSH_ACCEPT_NEW_HOST:-0}" == "1" ]]; then
+        print_info "Explicitly approved first-use host key"
+    fi
+
     for (( i=0; i<PROFILE_COUNT; i++ )); do
         label="${PROFILE_LABELS[$i]:-}"
         provider="${PROFILE_PROVIDERS[$i]:-github.com}"
-        prefix=$(printf '%s' "$provider" | cut -d'.' -f1)
-        host="${prefix}-${label}"
+        host="gitsetu-${label}"
 
         tmp_out=""
         for tmp_base in /tmp /var/tmp; do
@@ -339,16 +337,8 @@ verify_ssh_connectivity() {
         fi
 
         local strict_mode="yes"
-        if ! ssh-keygen -F "$host" >/dev/null 2>&1; then
-            if [[ "${GITSETU_ALLOW_SSH_HOST_KEY:-0}" != "1" && "${GITSETU_SSH_ACCEPT_NEW_HOST:-0}" != "1" ]]; then
-                printf >&2 '  %s%s first-use host key for %s is not trusted; connection refused.%b\n' \
-                    "$YELLOW" "$SYM_WARN" "$host" "$RESET"
-                printf >&2 '    No SSH connection was attempted. Set GITSETU_ALLOW_SSH_HOST_KEY=1 to approve this first use explicitly.\n'
-                rm -f "$tmp_out"
-                return 1
-            fi
+        if [[ "${GITSETU_ALLOW_SSH_HOST_KEY:-0}" == "1" || "${GITSETU_SSH_ACCEPT_NEW_HOST:-0}" == "1" ]]; then
             strict_mode="accept-new"
-            printf >&2 '  %sExplicitly approved first-use host key for %s.%s\n' "$DIM" "$host" "$RESET"
         fi
 
         printf >&2 '  Testing SSH: %s ... ' "$host"
@@ -360,7 +350,23 @@ verify_ssh_connectivity() {
         output=$(cat "$tmp_out" 2>/dev/null || true)
         rm -f "$tmp_out"
 
-        if printf '%s' "$output" | grep -qi 'successfully authenticated\|logged in as\|welcome to'; then
+        local remote_user=""
+        if [[ "$output" =~ Hi[[:space:]]+([A-Za-z0-9_-]+)! ]]; then
+            remote_user="${BASH_REMATCH[1]}"
+        elif [[ "$output" =~ Welcome[[:space:]]+to[[:space:]]+GitLab,[[:space:]]*@([A-Za-z0-9_.-]+)! ]]; then
+            remote_user="${BASH_REMATCH[1]}"
+        fi
+
+        local expected_user="${PROFILE_USERS[$i]:-}"
+        if [[ -z "$expected_user" ]]; then
+            expected_user="$label"
+        fi
+
+        if [[ -n "$remote_user" && -n "$expected_user" && "$remote_user" != "$expected_user" ]]; then
+            printf >&2 '%b%s Key authenticated as '\''%s'\'', but profile '\''%s'\'' expects account '\''%s'\''.%b\n' \
+                "$RED" "$SYM_CROSS" "$remote_user" "$label" "$expected_user" "$RESET"
+            failed=1
+        elif printf '%s' "$output" | grep -qi 'successfully authenticated\|logged in as\|welcome to'; then
             printf >&2 '%b%s authenticated%b\n' "$GREEN" "$SYM_CHECK" "$RESET"
         elif printf '%s' "$output" | grep -qi 'permission denied'; then
             printf >&2 '%b%s key not added to %s%b\n' "$YELLOW" "$SYM_WARN" "$provider" "$RESET"

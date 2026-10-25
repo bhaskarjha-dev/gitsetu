@@ -755,6 +755,8 @@ _unescape_registry_field_preserve_newlines() {
 # ------------------------------------------------------------------------------
 
 GITSETU_MARKER_PREFIX="# [gitsetu:managed"
+GITSETU_MANAGED_HEAD_START="# [gitsetu:managed:head:start]"
+GITSETU_MANAGED_HEAD_END="# [gitsetu:managed:head:end]"
 GITSETU_MANAGED_START="# [gitsetu:managed:start]"
 GITSETU_MANAGED_END="# [gitsetu:managed:end]"
 
@@ -804,6 +806,7 @@ _clear_profile_state() {
     PROFILE_KEYS=()
     PROFILE_USERS=()
     PROFILE_PATS=()
+    GITSETU_REGISTRY_WAS_V1=0
 }
 
 # Registry writes are intentionally not a general "write anywhere" API. The
@@ -1044,6 +1047,15 @@ write_profiles_registry() {
         return 1
     fi
 
+    local v1_backup_path=""
+    if [[ "${GITSETU_REGISTRY_WAS_V1:-0}" -eq 1 && -f "$registry" ]]; then
+        local ts
+        ts=$(date +%Y%m%dT%H%M%S 2>/dev/null || date +%Y%m%d%H%M%S)
+        v1_backup_path="${registry}.v1-${ts}.bak"
+        cp -p "$registry" "$v1_backup_path" 2>/dev/null || cp "$registry" "$v1_backup_path" 2>/dev/null || true
+        chmod 600 "$v1_backup_path" 2>/dev/null || true
+    fi
+
     if ! _gitsetu_validate_registry_write_destination "$registry"; then
         _gitsetu_remove_owned_file "$tmp_file" 2>/dev/null || true
         return 1
@@ -1068,6 +1080,14 @@ write_profiles_registry() {
         _gitsetu_registry_error "installed registry reparse detection was indeterminate"
         return 1
     fi
+    if [[ -n "$v1_backup_path" ]]; then
+        GITSETU_REGISTRY_WAS_V1=0
+        if declare -f print_success >/dev/null 2>&1; then
+            print_success "Migrated your v1.0.0 profiles to the v1.1.0 format (backup: $v1_backup_path)."
+        else
+            printf 'Migrated your v1.0.0 profiles to the v1.1.0 format (backup: %s).\n' "$v1_backup_path" >&2
+        fi
+    fi
     return 0
 }
 
@@ -1075,8 +1095,200 @@ write_profile_registry() {
     write_profiles_registry "$@"
 }
 
-# load_profiles accepts only the exact v2 header and strict six-field records.
-# Any legacy, unversioned, partially escaped, malformed, or mixed file is an error.
+# _load_v1_profiles reads a legacy 7-field v1 registry and converts it in memory.
+_load_v1_profiles() {
+    local registry="$1"
+    local raw_line clean_line line_number=0
+    local label email dir provider sign_commits key_path provider_user extra
+    local loaded_name loaded_email profile_path
+    local labels=() names=() emails=() directories=()
+    local providers=() signs=() keys=() users=()
+    local record_count=0 j has_global=0 global_idx=-1
+    local saw_v1_header=0
+
+    while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+        line_number=$((line_number + 1))
+        raw_line="${raw_line//$'\r'/}"
+        if [[ "${#raw_line}" -gt "$_GITSETU_REGISTRY_MAX_LINE_LENGTH" ]]; then
+            _gitsetu_registry_error "registry line ${line_number} exceeds the size limit"
+            return 1
+        fi
+
+        # Check comment lines
+        if [[ "$raw_line" == "#"* ]]; then
+            if [[ "$raw_line" == "# gitsetu profile registry"* || "$raw_line" == "# Format:"* ]]; then
+                saw_v1_header=1
+            fi
+            continue
+        fi
+
+        # Skip blank lines
+        [[ -z "$raw_line" ]] && continue
+
+        # Protect Windows drive letters from IFS=: splitting
+        clean_line=$(printf '%s' "$raw_line" | sed -E 's/:([a-zA-Z]):/:\1#DRIVE#/g')
+
+        # Count colons: exactly 7 fields means 6 colons
+        local colon_count
+        colon_count=$(printf '%s' "$clean_line" | tr -cd ':' | wc -c | tr -d ' \t\r\n')
+        if [[ "$colon_count" -ne 6 ]]; then
+            _gitsetu_registry_error "unsupported or legacy registry format. Unrecognized profile registry at ${registry}. Move it aside and run gitsetu setup, or run gitsetu teardown --force."
+            return 1
+        fi
+
+        IFS=: read -r label email dir provider sign_commits key_path provider_user extra <<< "$clean_line"
+        if [[ -n "${extra:-}" ]]; then
+            _gitsetu_registry_error "unsupported or legacy registry format. Unrecognized profile registry at ${registry}. Move it aside and run gitsetu setup, or run gitsetu teardown --force."
+            return 1
+        fi
+
+        dir="${dir//#DRIVE#/:}"
+        key_path="${key_path//#DRIVE#/:}"
+
+        # Expand leading ~ or ~/
+        if [[ "$dir" == "~"* ]]; then
+            if [[ "$dir" == "~" ]]; then
+                dir="$HOME"
+            elif [[ "$dir" == "~/"* ]]; then
+                dir="$HOME/${dir#\~/}"
+            fi
+        fi
+        if [[ "$key_path" == "~"* ]]; then
+            if [[ "$key_path" == "~" ]]; then
+                key_path="$HOME"
+            elif [[ "$key_path" == "~/"* ]]; then
+                key_path="$HOME/${key_path#\~/}"
+            fi
+        fi
+
+        provider="${provider:-github.com}"
+        sign_commits="${sign_commits:-0}"
+        if [[ -z "$key_path" ]]; then
+            key_path="$HOME/.ssh/id_ed25519_${label}"
+        fi
+
+        # Load name and email from profile config or fallbacks
+        profile_path="${GITSETU_PROFILES_DIR:-${GITSETU_CONFIG_DIR:-${HOME:-}/.config/gitsetu}/profiles}/${label}.gitconfig"
+        loaded_name=""
+        loaded_email=""
+        if [[ -f "$profile_path" && ! -L "$profile_path" ]]; then
+            loaded_name=$(git config -f "$profile_path" --get user.name 2>/dev/null || true)
+            loaded_email=$(git config -f "$profile_path" --get user.email 2>/dev/null || true)
+        fi
+        if [[ -z "$loaded_name" ]]; then
+            loaded_name=$(git config --global --get user.name 2>/dev/null || true)
+        fi
+        if [[ -z "$loaded_email" && -n "$email" ]]; then
+            loaded_email="$email"
+        fi
+        if [[ -z "$loaded_email" ]]; then
+            loaded_email=$(git config --global --get user.email 2>/dev/null || true)
+        fi
+
+        if ! validate_profile_record "$label" "$dir" "$provider" "$sign_commits" "$key_path" "$provider_user"; then
+            _gitsetu_registry_error "unsupported or legacy registry format. Unrecognized profile registry at ${registry}. Move it aside and run gitsetu setup, or run gitsetu teardown --force."
+            return 1
+        fi
+
+        if ! validate_user_name "$loaded_name" || ! validate_email "$loaded_email"; then
+            _gitsetu_registry_error "unsupported or legacy registry format. Unrecognized profile registry at ${registry}. Move it aside and run gitsetu setup, or run gitsetu teardown --force."
+            return 1
+        fi
+
+        for (( j=0; j<${#labels[@]}; j++ )); do
+            if [[ "$label" == "${labels[$j]}" ]]; then
+                _gitsetu_registry_error "duplicate profile label on registry line ${line_number}"
+                return 1
+            fi
+        done
+
+        if [[ "$label" == "global" ]]; then
+            has_global=1
+            global_idx=${#labels[@]}
+        fi
+
+        labels+=("$label")
+        names+=("$loaded_name")
+        emails+=("$loaded_email")
+        directories+=("$dir")
+        providers+=("$provider")
+        signs+=("$sign_commits")
+        keys+=("$key_path")
+        users+=("$provider_user")
+        record_count=$((record_count + 1))
+    done < "$registry"
+
+    if [[ "$record_count" -eq 0 ]]; then
+        _gitsetu_registry_error "unsupported or legacy registry format. Unrecognized profile registry at ${registry}. Move it aside and run gitsetu setup, or run gitsetu teardown --force."
+        return 1
+    fi
+
+    # Ensure the first profile is global
+    if [[ "$has_global" -eq 0 ]]; then
+        local g_name g_email g_key
+        g_name=$(git config --global --get user.name 2>/dev/null || true)
+        g_email=$(git config --global --get user.email 2>/dev/null || true)
+        [[ -n "$g_name" ]] || g_name="${names[0]:-Pat Example}"
+        [[ -n "$g_email" ]] || g_email="${emails[0]:-pat.work@example.com}"
+        g_key="$HOME/.ssh/id_ed25519"
+
+        labels=("global" "${labels[@]}")
+        names=("$g_name" "${names[@]}")
+        emails=("$g_email" "${emails[@]}")
+        directories=("" "${directories[@]}")
+        providers=("github.com" "${providers[@]}")
+        signs=("0" "${signs[@]}")
+        keys=("$g_key" "${keys[@]}")
+        users=("" "${users[@]}")
+    elif [[ "$global_idx" -gt 0 ]]; then
+        local g_lbl="${labels[$global_idx]}"
+        local g_nm="${names[$global_idx]}"
+        local g_em="${emails[$global_idx]}"
+        local g_d="${directories[$global_idx]}"
+        local g_pr="${providers[$global_idx]}"
+        local g_sg="${signs[$global_idx]}"
+        local g_ky="${keys[$global_idx]}"
+        local g_us="${users[$global_idx]}"
+
+        local new_lbls=("global") new_nms=("$g_nm") new_ems=("$g_em") new_dirs=("$g_d")
+        local new_prs=("$g_pr") new_sgs=("$g_sg") new_kys=("$g_ky") new_uss=("$g_us")
+        for (( j=0; j<${#labels[@]}; j++ )); do
+            [[ "$j" -eq "$global_idx" ]] && continue
+            new_lbls+=("${labels[$j]}")
+            new_nms+=("${names[$j]}")
+            new_ems+=("${emails[$j]}")
+            new_dirs+=("${directories[$j]}")
+            new_prs+=("${providers[$j]}")
+            new_sgs+=("${signs[$j]}")
+            new_kys+=("${keys[$j]}")
+            new_uss+=("${users[$j]}")
+        done
+        labels=("${new_lbls[@]}")
+        names=("${new_nms[@]}")
+        emails=("${new_ems[@]}")
+        directories=("${new_dirs[@]}")
+        providers=("${new_prs[@]}")
+        signs=("${new_sgs[@]}")
+        keys=("${new_kys[@]}")
+        users=("${new_uss[@]}")
+    fi
+
+    GITSETU_REGISTRY_WAS_V1=1
+    PROFILE_LABELS=("${labels[@]+"${labels[@]}"}")
+    PROFILE_NAMES=("${names[@]+"${names[@]}"}")
+    PROFILE_EMAILS=("${emails[@]+"${emails[@]}"}")
+    PROFILE_DIRS=("${directories[@]+"${directories[@]}"}")
+    PROFILE_PROVIDERS=("${providers[@]+"${providers[@]}"}")
+    PROFILE_SIGNS=("${signs[@]+"${signs[@]}"}")
+    PROFILE_KEYS=("${keys[@]+"${keys[@]}"}")
+    PROFILE_USERS=("${users[@]+"${users[@]}"}")
+    PROFILE_PATS=()
+    PROFILE_COUNT=${#PROFILE_LABELS[@]}
+    return 0
+}
+
+# load_profiles accepts the exact v2 header and strict six-field records,
+# or seamlessly translates legacy v1 registries in memory.
 load_profiles() {
     _clear_profile_state
     GITSETU_REGISTRY_ERROR=""
@@ -1097,6 +1309,19 @@ load_profiles() {
        ! declare -f validate_registry_line >/dev/null 2>&1; then
         _gitsetu_registry_error "registry validators are unavailable"
         return 1
+    fi
+
+    if [[ ! -s "$registry" ]]; then
+        _gitsetu_registry_error "registry header is missing"
+        return 1
+    fi
+
+    local first_line=""
+    IFS= read -r first_line < "$registry" || true
+    first_line="${first_line//$'\r'/}"
+    if [[ "$first_line" != "$_GITSETU_REGISTRY_HEADER" ]]; then
+        _load_v1_profiles "$registry"
+        return $?
     fi
 
     local labels=()

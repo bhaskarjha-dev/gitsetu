@@ -133,8 +133,8 @@ test_integration_ssh_config_created() {
     assert_file_exists "$HOME/.ssh/config" "ssh config exists" &&
     assert_file_contains "$HOME/.ssh/config" "Include ~/.config/gitsetu/profiles/ssh_config" "has include directive" &&
     assert_file_exists "$GITSETU_PROFILES_DIR/ssh_config" "isolated ssh config exists" &&
-    assert_file_contains "$GITSETU_PROFILES_DIR/ssh_config" "Host github-global" "has global host" &&
-    assert_file_contains "$GITSETU_PROFILES_DIR/ssh_config" "Host github-pro" "has pro host" &&
+    assert_file_contains "$GITSETU_PROFILES_DIR/ssh_config" "Host gitsetu-global" "has global host" &&
+    assert_file_contains "$GITSETU_PROFILES_DIR/ssh_config" "Host gitsetu-pro" "has pro host" &&
     assert_file_contains "$GITSETU_PROFILES_DIR/ssh_config" "IdentitiesOnly yes" "has IdentitiesOnly"
 }
 

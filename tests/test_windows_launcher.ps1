@@ -134,7 +134,7 @@ try {
     Copy-Item (Join-Path $repoRoot "gitsetu") (Join-Path $checkout "gitsetu") -Force
     Remove-Item (Join-Path $checkout "lib") -Recurse -Force
     Copy-Item (Join-Path $repoRoot "lib") (Join-Path $checkout "lib") -Recurse
-    foreach ($file in @("install.ps1", "uninstall.ps1", "package.json", "package-lock.json", "flake.nix", "flake.lock")) {
+    foreach ($file in @("install.ps1", "uninstall.ps1", "package.json", "package-lock.json")) {
         Copy-Item (Join-Path $repoRoot $file) (Join-Path $checkout $file) -Force
     }
     [void][IO.Directory]::CreateDirectory((Join-Path $checkout "packaging\windows"))

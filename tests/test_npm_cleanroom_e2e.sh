@@ -62,6 +62,7 @@ _npm_e2e_kill_descendants() {
     done
 }
 
+# shellcheck disable=SC2329
 cleanup_npm_sandbox() {
     local exit_status=$?
     trap - EXIT
@@ -301,14 +302,14 @@ else
     fail "Feature 10" "$EMAIL_RUN"
 fi
 
-# F11: guard --install (installs globally via core.hooksPath)
+# F11: guard --install (installs into managed profiles via core.hooksPath)
 OUT_GUARD=$(RUN_CMD guard --install 2>&1 || true)
 HOOK_PATH="$CLEAN_HOME/.config/gitsetu/hooks/pre-commit"
-CORE_HOOKS=$(git config --global core.hooksPath 2>/dev/null || true)
-if [ -f "$HOOK_PATH" ] && grep -q "gitsetu" "$HOOK_PATH" && [[ "$CORE_HOOKS" == *".config/gitsetu/hooks"* ]]; then
-    pass "Feature 11: guard --install configures global pre-commit hook"
+PROFILE_HOOKS=$(git config -f "$CLEAN_HOME/.config/gitsetu/profiles/work.gitconfig" core.hooksPath 2>/dev/null || true)
+if [ -f "$HOOK_PATH" ] && grep -q "gitsetu" "$HOOK_PATH" && [[ "$PROFILE_HOOKS" == *".config/gitsetu/hooks"* ]]; then
+    pass "Feature 11: guard --install configures profile pre-commit hook"
 else
-    fail "Feature 11" "Hook missing or core.hooksPath not set ($CORE_HOOKS). Output: $OUT_GUARD"
+    fail "Feature 11" "Hook missing or profile core.hooksPath not set ($PROFILE_HOOKS). Output: $OUT_GUARD"
 fi
 
 # F12: guard --uninstall

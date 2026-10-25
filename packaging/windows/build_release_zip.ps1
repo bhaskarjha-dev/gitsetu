@@ -21,7 +21,7 @@ $members = @(
     "gitsetu.exe", "gitsetu", "lib/completion.sh", "lib/core.sh", "lib/platform.sh",
     "lib/ui.sh", "lib/validate.sh", "lib/backup.sh", "lib/ssh.sh", "lib/gitconfig.sh",
     "lib/guard.sh", "lib/doctor.sh", "lib/verify.sh", "lib/teardown.sh", "lib/discovery.sh",
-    "lib/setup.sh", "lib/keychain.sh"
+    "lib/setup.sh"
 )
 foreach ($member in $members) {
     $path = [IO.Path]::GetFullPath((Join-Path $SourceDir $member.Replace('/', '\')))

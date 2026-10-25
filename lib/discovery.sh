@@ -226,6 +226,37 @@ discover_ssh_key_for_label() {
     printf '\n'
 }
 
+discover_global_ssh_key() {
+    local ssh_dir="${HOME:-}/.ssh"
+    local pattern path
+
+    [[ -n "${HOME:-}" && -d "$ssh_dir" && ! -L "$ssh_dir" ]] || {
+        printf '%s/.ssh/id_ed25519\n' "${HOME:-}"
+        return 0
+    }
+
+    # 1. Reuse existing id_ed25519_global or id_rsa_global
+    for pattern in "id_ed25519_global" "id_rsa_global"; do
+        path="$ssh_dir/$pattern"
+        if [[ -f "$path" && ! -L "$path" ]]; then
+            printf '%s\n' "$path"
+            return 0
+        fi
+    done
+
+    # 2. Otherwise reuse the first existing pair (private and .pub) among default keys
+    for pattern in "id_ed25519" "id_ecdsa" "id_rsa"; do
+        path="$ssh_dir/$pattern"
+        if [[ -f "$path" && ! -L "$path" && -f "${path}.pub" && ! -L "${path}.pub" ]]; then
+            printf '%s\n' "$path"
+            return 0
+        fi
+    done
+
+    # 3. If none exists, generate ~/.ssh/id_ed25519 (OpenSSH default name)
+    printf '%s/id_ed25519\n' "$ssh_dir"
+}
+
 # ------------------------------------------------------------------------------
 # discover_workspace_dir
 # ------------------------------------------------------------------------------
@@ -477,8 +508,8 @@ generate_initial_blueprint() {
     PROFILE_SIGNS[0]="0"
 
     local global_key
-    global_key=$(discover_ssh_key_for_label "global")
-    PROFILE_KEYS[0]="${global_key:-$HOME/.ssh/id_ed25519_global}"
+    global_key=$(discover_global_ssh_key)
+    PROFILE_KEYS[0]="$global_key"
     PROFILE_USERS[0]=""
     PROFILE_PATS[0]=""
     PROFILE_COUNT=1

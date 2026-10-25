@@ -461,7 +461,7 @@ test_vault_adversarial_authenticated_baseline_is_valid() {
     _adv_write_authenticated_envelope "$archive" "$vault" || return 1
     _adv_reset_live_target
 
-    cmd_restore "$vault" >/dev/null 2>&1 || status=$?
+    cmd_restore "$vault" --force >/dev/null 2>&1 || status=$?
     assert_equals "0" "$status" "authenticated v2 adversarial baseline restores" || return 1
     assert_file_contains "$GITSETU_PROFILES_DIR/global.gitconfig" "Adversarial Fixture" \
         "baseline restores the strict registry and profile payload" || return 1
@@ -866,7 +866,6 @@ for _mutation in magic algorithm salt tag length payload append truncate passwor
 done
 unset _ADV_PENDING_MUTATION _mutation _description
 
-run_test "member-count and member-size boundaries fail closed" \
-    test_vault_adversarial_rejects_count_and_size_boundaries
+run_test "member-count and member-size boundaries fail closed" test_vault_adversarial_rejects_count_and_size_boundaries
 
 print_results "Adversarial vault tests"

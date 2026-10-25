@@ -163,8 +163,13 @@ _guard_validate_effective_identity() {
     local label="$1" profile_config="$2"
     local expected_name expected_email configured_name configured_email
     local author_ident committer_ident author_name author_email committer_name committer_email
+    local origin_line
 
     GUARD_MISMATCH_KIND=""
+    GUARD_EXPECTED_ORIGIN="$profile_config"
+    GUARD_ACTUAL_NAME_ORIGIN=""
+    GUARD_ACTUAL_EMAIL_ORIGIN=""
+
     [[ -f "$profile_config" ]] || {
         _guard_record_mismatch "managed profile config" "" "" "$profile_config" ""
         return 1
@@ -174,6 +179,17 @@ _guard_validate_effective_identity() {
     if [[ -z "$expected_name" || -z "$expected_email" ]]; then
         _guard_record_mismatch "managed identity definition" "$expected_name" "$expected_email" "" ""
         return 1
+    fi
+
+    origin_line=$(git config --show-origin --get user.name 2>/dev/null || true)
+    if [[ -n "$origin_line" ]]; then
+        GUARD_ACTUAL_NAME_ORIGIN="${origin_line%%	*}"
+        GUARD_ACTUAL_NAME_ORIGIN="${GUARD_ACTUAL_NAME_ORIGIN#file:}"
+    fi
+    origin_line=$(git config --show-origin --get user.email 2>/dev/null || true)
+    if [[ -n "$origin_line" ]]; then
+        GUARD_ACTUAL_EMAIL_ORIGIN="${origin_line%%	*}"
+        GUARD_ACTUAL_EMAIL_ORIGIN="${GUARD_ACTUAL_EMAIL_ORIGIN#file:}"
     fi
 
     # These commands include system/global/worktree/local values under Git's
@@ -216,94 +232,41 @@ _guard_validate_effective_identity() {
 _guard_block_identity() {
     local label="$1"
     local red='\033[0;31m' green='\033[0;32m' bold='\033[1m' reset='\033[0m'
+    local exp_origin="${GUARD_EXPECTED_ORIGIN:+ (from ${GUARD_EXPECTED_ORIGIN})}"
+    local act_name_origin="${GUARD_ACTUAL_NAME_ORIGIN:+ (from ${GUARD_ACTUAL_NAME_ORIGIN})}"
+    local act_email_origin="${GUARD_ACTUAL_EMAIL_ORIGIN:+ (from ${GUARD_ACTUAL_EMAIL_ORIGIN})}"
     printf '\n  %bGitSetu Guard: BLOCKING COMMIT%b\n' "$red" "$reset" >&2
     printf '  Managed profile: %b%s%b\n' "$bold" "$label" "$reset" >&2
     printf '  Mismatch: %s\n' "${GUARD_MISMATCH_KIND:-managed identity unavailable}" >&2
-    printf '  Expected name:  %b%s%b\n' "$green" "${GUARD_EXPECTED_NAME:-<unset>}" "$reset" >&2
-    printf '  Expected email: %b%s%b\n' "$green" "${GUARD_EXPECTED_EMAIL:-<unset>}" "$reset" >&2
-    printf '  Actual name:    %s\n' "${GUARD_ACTUAL_NAME:-<unset>}" >&2
-    printf '  Actual email:   %s\n' "${GUARD_ACTUAL_EMAIL:-<unset>}" >&2
+    printf '  Expected name:  %b%s%b%s\n' "$green" "${GUARD_EXPECTED_NAME:-<unset>}" "$reset" "$exp_origin" >&2
+    printf '  Expected email: %b%s%b%s\n' "$green" "${GUARD_EXPECTED_EMAIL:-<unset>}" "$reset" "$exp_origin" >&2
+    printf '  Actual name:    %s%s\n' "${GUARD_ACTUAL_NAME:-<unset>}" "$act_name_origin" >&2
+    printf '  Actual email:   %s%s\n' "${GUARD_ACTUAL_EMAIL:-<unset>}" "$act_email_origin" >&2
     printf '  Git does not reveal whether --author, environment, or config supplied the prospective author.\n' >&2
     printf '  The resulting author and committer were checked; --no-verify and later history rewrites remain outside this hook.\n' >&2
     printf '  Run %bgitsetu doctor%b or remove the conflicting local/worktree override.\n' "$bold" "$reset" >&2
-    exit 1
+    exit 65
 }
 
 _guard_block_unknown_managed_state() {
     printf '\n  %bGitSetu Guard: BLOCKING COMMIT%b\n' '\033[0;31m' '\033[0m' >&2
     printf '  Managed identity state is missing or invalid, so this repository cannot be classified safely.\n' >&2
     printf '  Run %bgitsetu doctor%b; use --no-verify only if you independently verified the identity.\n' '\033[1m' '\033[0m' >&2
-    exit 1
+    exit 65
 }
 
-# Run the repository hook that the global hooksPath temporarily displaced.
-# stdin remains untouched and all arguments are forwarded.
-_guard_run_downstream_hook() {
-    local root="$1" state_file="${GITSETU_HOOKS_DIR:-${GITSETU_CONFIG_DIR:-${HOME}/.config/gitsetu}/hooks}/$_GUARD_STATE_BASENAME"
-    local configured="" candidate common_dir status=0
-
-    if [[ -L "$state_file" ]]; then
-        printf '%s\n' '[GitSetu Guard] ERROR: redirected prior hooksPath state; refusing to guess.' >&2
-        exit 1
-    fi
-    if [[ -f "$state_file" ]]; then
-        configured=$(cat "$state_file" 2>/dev/null) || configured=""
-        configured=${configured%$'\r'}
-        if [[ "$configured" == *$'\n'* || "$configured" == *$'\r'* ]]; then
-            printf '%s\n' '[GitSetu Guard] ERROR: invalid prior hooksPath state; refusing to guess.' >&2
-            exit 1
-        fi
-        [[ "$configured" == "none" ]] && configured=""
-    fi
-
-    if [[ -n "$configured" ]]; then
-        if [[ "$configured" != /* && "$configured" != [a-zA-Z]:/* ]]; then
-            candidate="$root/$configured"
-        else
-            candidate="$configured"
-        fi
-    else
-        # `git rev-parse --git-path hooks` honors core.hooksPath and would point
-        # back to this wrapper. Derive the repository's real common-dir hook
-        # directly; this also gives linked worktrees their common hook location.
-        common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || common_dir="$root/.git"
-        if [[ "$common_dir" != /* && "$common_dir" != [a-zA-Z]:/* ]]; then
-            common_dir="$root/$common_dir"
-        fi
-        candidate="${common_dir%/}/hooks/pre-commit"
-    fi
-
-    if _guard_paths_equal "$candidate" "$GITSETU_HOOKS_DIR/pre-commit"; then
-        return 0
-    fi
-    if [[ -f "$candidate" && -x "$candidate" ]]; then
-        "$candidate" "$@" || status=$?
-        return "$status"
-    fi
-    return 0
-}
-
-# This function is called by the installed hook after loading the current
-# GitSetu modules. Keeping policy in the library makes installed and source-test
-# behavior identical.
 _guard_execute() {
     local root common_dir route_path resolve_status=0
     root=$(git rev-parse --show-toplevel 2>/dev/null) || root=$(pwd)
-    # Match Git's own includeIf semantics: conditional gitdir routing uses the
-    # repository's common git directory. For a linked worktree this remains
-    # under the primary repository, so routing is deterministic even when the
-    # linked working tree is checked out elsewhere.
     common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || common_dir="$root/.git"
     if [[ "$common_dir" != /* && "$common_dir" != [a-zA-Z]:/* ]]; then
         common_dir="$root/$common_dir"
     fi
     route_path="$common_dir"
-    _guard_managed_profile_for_path "$route_path"
-    resolve_status=$?
+    _guard_managed_profile_for_path "$route_path" || resolve_status=$?
 
     if [[ "$resolve_status" -eq 1 ]]; then
-        _guard_run_downstream_hook "$root" "$@"
-        return $?
+        return 0
     fi
     if [[ "$resolve_status" -ne 0 ]]; then
         _guard_block_unknown_managed_state
@@ -312,187 +275,242 @@ _guard_execute() {
     if ! _guard_validate_effective_identity "$GUARD_PROFILE_LABEL" "$GUARD_PROFILE_CONFIG"; then
         _guard_block_identity "$GUARD_PROFILE_LABEL"
     fi
-    _guard_run_downstream_hook "$root" "$@"
+    return 0
 }
 
 # ------------------------------------------------------------------------------
 # Installation lifecycle
 # ------------------------------------------------------------------------------
 
-_guard_shell_quote() {
-    local value="$1"
-    value="${value//\'/\'\\\'\'}"
-    printf "'%s'" "$value"
-}
+GITSETU_GUARD_HOOK_NAMES=(
+    applypatch-msg
+    pre-applypatch
+    post-applypatch
+    pre-commit
+    pre-merge-commit
+    prepare-commit-msg
+    commit-msg
+    post-commit
+    pre-rebase
+    post-checkout
+    post-merge
+    pre-push
+    post-rewrite
+    pre-auto-gc
+    reference-transaction
+    sendemail-validate
+    post-index-change
+)
 
-# Resolve the one library root trusted for a persistent hook. Production is
-# bound to the canonical root of the guard.sh that is executing now; caller
-# supplied GITSETU_DIR is ignored. A test/developer checkout may opt in
-# explicitly, but module shape is still validated before persistence.
-_guard_trusted_library_root() {
-    local origin_file="${BASH_SOURCE[0]}" origin_dir candidate canonical module
-    origin_dir=$(cd "$(dirname "$origin_file")" 2>/dev/null && pwd -P) || return 1
-    if [[ "$(basename "$origin_file")" == "guard.sh" ]]; then
-        candidate=$(dirname "$origin_dir")
-    else
-        candidate="$origin_dir"
-    fi
-
-    if [[ -n "${GITSETU_DIR:-}" && "${GITSETU_TEST:-0}" == "1" && "${GITSETU_ALLOW_TEST_LIB_DIR:-0}" == "1" ]]; then
-        candidate="$GITSETU_DIR"
-    fi
-    canonical=$(cd "$candidate" 2>/dev/null && pwd -P) || return 1
-    for module in core.sh platform.sh validate.sh ui.sh gitconfig.sh guard.sh; do
-        [[ -f "$canonical/lib/$module" && ! -L "$canonical/lib/$module" ]] || return 1
-    done
-    GUARD_TRUSTED_LIB_ROOT="$canonical"
-}
-
-# Hook-side counterpart: reject missing and symlinked module files.
-_guard_hook_module_is_safe() {
-    local path="$1"
-    [[ -f "$path" && ! -L "$path" ]]
-}
-
-_guard_write_state() {
-    local state_path="$1" value="$2" tmp
-    [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] || return 1
-    tmp=$(umask 077; mktemp "${state_path}.tmp.XXXXXX") || return 1
-    printf '%s\n' "${value:-none}" > "$tmp" || { rm -f "$tmp"; return 1; }
-    chmod 600 "$tmp" 2>/dev/null || { rm -f "$tmp"; return 1; }
-    mv -f "$tmp" "$state_path"
-}
-
-install_guard() {
-    local hook_path="$GITSETU_HOOKS_DIR/pre-commit"
-    local state_path="$GITSETU_HOOKS_DIR/$_GUARD_STATE_BASENAME"
-    local existing_hooks_path current_hooks_path
-    local hooks_dir lib_dir lib_quoted hook_tmp
-
-    existing_hooks_path=$(git config --global core.hooksPath 2>/dev/null || true)
-
-    if [[ -n "$existing_hooks_path" ]] && ! _guard_paths_equal "$existing_hooks_path" "$GITSETU_HOOKS_DIR"; then
-        print_warning "core.hooksPath is already set to: $existing_hooks_path"
-        print_warning "GitSetu will chain that hook explicitly; uninstall restores the exact prior value."
-        if ! confirm "Override core.hooksPath with the gitsetu hooks directory?" "n"; then
-            print_info "Guard hook installation skipped."
-            return 0
+_guard_resolve_entrypoint() {
+    local entrypoint=""
+    if [[ -n "${GITSETU_ENTRYPOINT:-}" && -f "$GITSETU_ENTRYPOINT" ]]; then
+        entrypoint="$GITSETU_ENTRYPOINT"
+    elif [[ -f "$HOME/.local/bin/gitsetu" ]]; then
+        entrypoint="$HOME/.local/bin/gitsetu"
+    elif command -v gitsetu >/dev/null 2>&1; then
+        entrypoint="$(command -v gitsetu)"
+    elif [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+        local src_candidate
+        src_candidate=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)/gitsetu
+        if [[ -f "$src_candidate" ]]; then
+            entrypoint="$src_candidate"
         fi
     fi
-
-    if [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
-        print_info "[DRY RUN] Would install guard hook at: $hook_path"
-        print_info "[DRY RUN] Would set core.hooksPath = $GITSETU_HOOKS_DIR"
-        return 0
+    if [[ -z "$entrypoint" && -f "$0" ]]; then
+        entrypoint="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/$(basename "$0")"
     fi
+    entrypoint=$(normalize_path "$entrypoint") || true
+    GUARD_RESOLVED_ENTRYPOINT="$entrypoint"
+}
 
-    _guard_trusted_library_root || {
-        print_error "Cannot establish a canonical regular-file GitSetu library root for the persistent guard hook."
-        return 1
-    }
-    lib_dir="$GUARD_TRUSTED_LIB_ROOT"
-    lib_quoted=$(_guard_shell_quote "$lib_dir") || return 1
-
-    ensure_dirs || return 1
-    chmod 700 "$GITSETU_HOOKS_DIR" 2>/dev/null || {
-        print_error "Failed to enforce mode 0700 on hooks directory."
-        return 1
-    }
-
-    if [[ -z "$existing_hooks_path" ]] || ! _guard_paths_equal "$existing_hooks_path" "$GITSETU_HOOKS_DIR"; then
-        _guard_write_state "$state_path" "${existing_hooks_path:-none}" || {
-            print_error "Failed to record the existing hooksPath policy."
-            return 1
-        }
-    elif [[ ! -f "$state_path" ]]; then
-        # A fresh v2 installation has no previous hook to recover. Do not infer
-        # or migrate a policy from an older on-disk format.
-        _guard_write_state "$state_path" "none" || return 1
-    fi
-
-    hooks_dir=$(normalize_path "$GITSETU_HOOKS_DIR") || return 1
-    hook_tmp=$(umask 077; mktemp "${hook_path}.tmp.XXXXXX") || {
-        print_error "Failed to create temporary guard hook."
-        return 1
-    }
-
-    cat > "$hook_tmp" <<HOOK_SCRIPT
+_guard_generate_stub_content() {
+    local entrypoint="$1"
+    cat <<'STUB_EOF'
 #!/usr/bin/env bash
-# [gitsetu:managed] v2 pre-commit identity guard
-set -u
-set -o pipefail
-GITSETU_CLEANUP_FILES=()
-GITSETU_CLEANUP_DIRS=()
-GITSETU_LIB_DIR=${lib_quoted}
+# [gitsetu:managed] gitsetu-hook v3
+HOOK_NAME="$(basename "$0")"
+HOOKS_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+ENTRYPOINT=""
+if [[ -f "$HOOKS_DIR/entrypoint" ]]; then
+    ENTRYPOINT="$(cat "$HOOKS_DIR/entrypoint" 2>/dev/null || true)"
+    ENTRYPOINT="${ENTRYPOINT%$'\r'}"
+fi
+if [[ -z "$ENTRYPOINT" ]]; then
+STUB_EOF
+    printf '    ENTRYPOINT="%s"\n' "$entrypoint"
+    cat <<'STUB_EOF'
+fi
 
-_guard_hook_load_failed() {
-    printf '%s\n' '[GitSetu Guard] ERROR: installed guard modules are missing or unsafe; managed commits fail closed.' >&2
-    exit 1
-}
-
-_guard_hook_module_is_safe() {
-    [[ -f "\$1" && ! -L "\$1" ]]
-}
-
-for _guard_module in core.sh platform.sh validate.sh ui.sh gitconfig.sh guard.sh; do
-    _guard_hook_module_is_safe "\$GITSETU_LIB_DIR/lib/\$_guard_module" || _guard_hook_load_failed
-    # shellcheck disable=SC1090
-    source "\$GITSETU_LIB_DIR/lib/\$_guard_module" || _guard_hook_load_failed
-done
-unset _guard_module
-
-_guard_execute "\$@"
-HOOK_SCRIPT
-
-    chmod 700 "$hook_tmp" 2>/dev/null || {
-        rm -f "$hook_tmp"
-        print_error "Failed to enforce executable permissions on guard hook."
-        return 1
-    }
-    mv -f "$hook_tmp" "$hook_path" || return 1
-    git config --global core.hooksPath "$hooks_dir" || {
-        rm -f "$hook_path"
-        return 1
-    }
-
-    print_success "Guard hook installed: $hook_path"
-    print_info "Managed repositories fail closed; unmanaged repositories only run their normal hooks."
-    print_info "The guard checks prospective author and committer identities, but not --no-verify or history rewrites."
-}
-
-uninstall_guard() {
-    local hook_path="$GITSETU_HOOKS_DIR/pre-commit"
-    local state_path="$GITSETU_HOOKS_DIR/$_GUARD_STATE_BASENAME"
-    local current_hooks_path previous=""
-
-    if [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
-        print_info "[DRY RUN] Would remove: $hook_path"
-        print_info "[DRY RUN] Would restore the prior core.hooksPath policy"
-        return 0
-    fi
-
-    if [[ -f "$hook_path" ]]; then
-        rm -f "$hook_path"
-        print_success "Removed guard hook: $hook_path"
+if [[ "$HOOK_NAME" == "pre-commit" ]]; then
+    if [[ -z "$ENTRYPOINT" || ! -x "$ENTRYPOINT" ]]; then
+        printf 'GitSetu guard: gitsetu not found at %s; commit allowed. Run gitsetu doctor.\n' "${ENTRYPOINT:-<empty>}" >&2
     else
-        print_info "No guard hook found at: $hook_path"
+        "$ENTRYPOINT" __guard-hook "$HOOK_NAME" "$@"
+        rc=$?
+        if [[ $rc -eq 65 ]]; then
+            exit 65
+        elif [[ $rc -ne 0 ]]; then
+            printf 'GitSetu guard: gitsetu not found at %s; commit allowed. Run gitsetu doctor.\n' "$ENTRYPOINT" >&2
+        fi
+    fi
+fi
+
+DISPLACED=""
+if command -v git >/dev/null 2>&1; then
+    raw_hooks=$(git config --show-origin --get-all core.hooksPath 2>/dev/null || true)
+    if [[ -n "$raw_hooks" ]]; then
+        while IFS= read -r line; do
+            [[ -n "$line" ]] || continue
+            origin="${line%%	*}"
+            path="${line#*	}"
+            origin="${origin#file:}"
+            case "$origin" in
+                *gitsetu*|*profiles*) continue ;;
+            esac
+            if [[ "$path" == "~" ]]; then
+                path="$HOME"
+            elif [[ "$path" == "~/"* ]]; then
+                path="$HOME/${path:2}"
+            fi
+            DISPLACED="$path"
+        done <<RAW_EOF
+$raw_hooks
+RAW_EOF
     fi
 
-    current_hooks_path=$(git config --global core.hooksPath 2>/dev/null || true)
-    if _guard_paths_equal "$current_hooks_path" "$GITSETU_HOOKS_DIR"; then
-        if [[ -f "$state_path" ]]; then
-            previous=$(cat "$state_path" 2>/dev/null) || previous=""
+    if [[ -z "$DISPLACED" ]]; then
+        COMMON_DIR="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+        if [[ -n "$COMMON_DIR" ]]; then
+            DISPLACED="$COMMON_DIR/hooks"
+        fi
+    fi
+fi
+
+if [[ -n "$DISPLACED" && -f "$DISPLACED/$HOOK_NAME" && -x "$DISPLACED/$HOOK_NAME" ]]; then
+    DISPLACED_CANONICAL="$(cd "$(dirname "$DISPLACED/$HOOK_NAME")" 2>/dev/null && pwd)"
+    if [[ "$DISPLACED_CANONICAL" != "$HOOKS_DIR" ]]; then
+        exec "$DISPLACED/$HOOK_NAME" "$@"
+    fi
+fi
+
+exit 0
+STUB_EOF
+}
+
+_guard_cleanup_legacy_global_hookspath() {
+    local global_hooks previous="" state_file="${GITSETU_HOOKS_DIR:-$HOME/.config/gitsetu/hooks}/$_GUARD_STATE_BASENAME"
+    global_hooks=$(git config --global core.hooksPath 2>/dev/null || true)
+    if _guard_paths_equal "$global_hooks" "${GITSETU_HOOKS_DIR:-$HOME/.config/gitsetu/hooks}"; then
+        if [[ -f "$state_file" ]]; then
+            previous=$(cat "$state_file" 2>/dev/null || true)
             previous=${previous%$'\r'}
         fi
         if [[ -n "$previous" && "$previous" != "none" ]]; then
-            git config --global core.hooksPath "$previous" || return 1
-            print_success "Restored prior core.hooksPath: $previous"
+            git config --global core.hooksPath "$previous" 2>/dev/null || true
         else
             git config --global --unset core.hooksPath 2>/dev/null || true
-            print_success "Unset core.hooksPath"
         fi
-    elif [[ -n "$current_hooks_path" ]]; then
-        print_warning "core.hooksPath points to '$current_hooks_path' (not gitsetu). Leaving it unchanged."
     fi
-    rm -f "$state_path"
+}
+
+install_guard() {
+    local hooks_dir="$GITSETU_HOOKS_DIR"
+    local h stub_tmp stub_content
+
+    if [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
+        print_info "[DRY RUN] Would install guard hook stubs into: $hooks_dir"
+        return 0
+    fi
+
+    if declare -f load_profiles >/dev/null 2>&1; then
+        if ! load_profiles; then
+            print_error "Cannot install guard: profile registry is invalid or unreadable."
+            return 1
+        fi
+    fi
+
+    ensure_dirs || return 1
+    mkdir -p "$hooks_dir" || return 1
+    chmod 700 "$hooks_dir" 2>/dev/null || true
+
+    _guard_resolve_entrypoint
+    local entrypoint="$GUARD_RESOLVED_ENTRYPOINT"
+    printf '%s\n' "$entrypoint" > "$hooks_dir/entrypoint" || return 1
+    chmod 600 "$hooks_dir/entrypoint" 2>/dev/null || true
+
+    stub_content=$(_guard_generate_stub_content "$entrypoint")
+
+    for h in "${GITSETU_GUARD_HOOK_NAMES[@]}"; do
+        stub_tmp=$(umask 077; mktemp "$hooks_dir/${h}.tmp.XXXXXX" 2>/dev/null) || {
+            print_error "Failed to create temporary hook file for $h."
+            return 1
+        }
+        printf '%s\n' "$stub_content" > "$stub_tmp" || { rm -f "$stub_tmp"; return 1; }
+        chmod 700 "$stub_tmp" 2>/dev/null || { rm -f "$stub_tmp"; return 1; }
+        mv -f "$stub_tmp" "$hooks_dir/$h" || { rm -f "$stub_tmp"; return 1; }
+    done
+
+    touch "$hooks_dir/enabled" || return 1
+    chmod 600 "$hooks_dir/enabled" 2>/dev/null || true
+
+    _guard_cleanup_legacy_global_hookspath
+
+    local i
+    for (( i=0; i<PROFILE_COUNT; i++ )); do
+        [[ "${PROFILE_LABELS[$i]}" == "global" ]] && continue
+        if declare -f write_profile_gitconfig >/dev/null 2>&1; then
+            write_profile_gitconfig "${PROFILE_LABELS[$i]}" "${PROFILE_NAMES[$i]}" \
+                "${PROFILE_EMAILS[$i]}" "${PROFILE_SIGNS[$i]}" "${PROFILE_KEYS[$i]}" \
+                "${PROFILE_PROVIDERS[$i]:-}" "${PROFILE_USERS[$i]:-}" 2>/dev/null || true
+        fi
+    done
+    if [[ "${GITSETU_REGISTRY_WAS_V1:-0}" -eq 1 ]]; then
+        if declare -f write_profiles_registry >/dev/null 2>&1; then
+            write_profiles_registry "$GITSETU_PROFILES_CONF" || true
+        fi
+    elif declare -f write_profiles_conf >/dev/null 2>&1; then
+        write_profiles_conf || true
+    fi
+
+    print_success "Guard installed in: $hooks_dir"
+    print_info "Managed profiles enforce identity guard. Unmanaged repositories fail open."
+    return 0
+}
+
+uninstall_guard() {
+    local hooks_dir="$GITSETU_HOOKS_DIR"
+    local h
+
+    if [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
+        print_info "[DRY RUN] Would remove guard hooks from: $hooks_dir"
+        return 0
+    fi
+
+    rm -f "$hooks_dir/enabled" "$hooks_dir/entrypoint" 2>/dev/null || true
+    for h in "${GITSETU_GUARD_HOOK_NAMES[@]}"; do
+        rm -f "$hooks_dir/$h" 2>/dev/null || true
+    done
+
+    _guard_cleanup_legacy_global_hookspath
+    rm -f "$hooks_dir/$_GUARD_STATE_BASENAME" 2>/dev/null || true
+
+    if [[ "${PROFILE_COUNT:-0}" -eq 0 ]] && declare -f load_profiles >/dev/null 2>&1; then
+        load_profiles >/dev/null 2>&1 || true
+    fi
+    local i
+    for (( i=0; i<PROFILE_COUNT; i++ )); do
+        [[ "${PROFILE_LABELS[$i]}" == "global" ]] && continue
+        if declare -f write_profile_gitconfig >/dev/null 2>&1; then
+            write_profile_gitconfig "${PROFILE_LABELS[$i]}" "${PROFILE_NAMES[$i]}" \
+                "${PROFILE_EMAILS[$i]}" "${PROFILE_SIGNS[$i]}" "${PROFILE_KEYS[$i]}" \
+                "${PROFILE_PROVIDERS[$i]:-}" "${PROFILE_USERS[$i]:-}" 2>/dev/null || true
+        fi
+    done
+    if declare -f write_profiles_conf >/dev/null 2>&1; then
+        write_profiles_conf || true
+    fi
+
+    print_success "Guard uninstalled."
+    return 0
 }

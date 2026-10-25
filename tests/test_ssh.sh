@@ -15,7 +15,7 @@ test_ssh_host_block_format() {
     local block
     block=$(build_ssh_host_block "pro" "github.com")
 
-    assert_contains "$block" "Host github-pro" "has Host line" &&
+    assert_contains "$block" "Host gitsetu-pro" "has Host line" &&
     assert_contains "$block" "HostName github.com" "has HostName" &&
     assert_contains "$block" "IdentityFile ~/.ssh/id_ed25519_pro" "has IdentityFile" &&
     assert_contains "$block" "IdentitiesOnly yes" "has IdentitiesOnly"
@@ -25,7 +25,7 @@ test_ssh_host_block_custom_host() {
     local block
     block=$(build_ssh_host_block "work" "gitlab.com")
 
-    assert_contains "$block" "Host gitlab-work" "has Host with label" &&
+    assert_contains "$block" "Host gitsetu-work" "has Host with label" &&
     assert_contains "$block" "HostName gitlab.com" "has custom HostName"
 }
 
@@ -93,8 +93,8 @@ test_write_ssh_config_creates_file() {
     assert_file_exists "$HOME/.ssh/config" "ssh config created" &&
     assert_file_contains "$HOME/.ssh/config" "Include ~/.config/gitsetu/profiles/ssh_config" "has include directive" &&
     assert_file_exists "$GITSETU_PROFILES_DIR/ssh_config" "isolated config created" &&
-    assert_file_contains "$GITSETU_PROFILES_DIR/ssh_config" "Host github-global" "has global host" &&
-    assert_file_contains "$GITSETU_PROFILES_DIR/ssh_config" "Host github-pro" "has pro host"
+    assert_file_contains "$GITSETU_PROFILES_DIR/ssh_config" "Host gitsetu-global" "has global host" &&
+    assert_file_contains "$GITSETU_PROFILES_DIR/ssh_config" "Host gitsetu-pro" "has pro host"
 }
 
 test_write_ssh_config_idempotent() {
@@ -325,7 +325,7 @@ test_ssh_host_block_port443() {
 
     assert_contains "$block" "Port 443" "has Port 443" &&
     assert_contains "$block" "HostName ssh.github.com" "has ssh.github.com HostName" &&
-    assert_contains "$block" "Host github-work" "has Host alias"
+    assert_contains "$block" "Host gitsetu-work" "has Host alias"
 }
 
 test_ssh_host_block_port443_exact_host_policy() {

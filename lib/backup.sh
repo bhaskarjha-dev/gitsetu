@@ -160,7 +160,7 @@ GITSETU_VAULT_KDF="pbkdf2-hmac-sha256-hierarchical-v1"
 GITSETU_VAULT_CIPHER="aes-256-ctr"
 GITSETU_VAULT_MAC="hmac-sha256"
 GITSETU_VAULT_ITERATIONS=600000
-GITSETU_VAULT_MAC_SALT="474954534554554d41432d7632" # "GITSETUMAC-v2" prefix
+GITSETU_VAULT_MAC_SALT="474954534554554d" # "GITSETUM" 8-byte salt for OpenSSL & LibreSSL
 GITSETU_VAULT_MAX_ARCHIVE_BYTES=268435456
 GITSETU_VAULT_MAX_MEMBER_BYTES=67108864
 GITSETU_VAULT_MAX_MEMBERS=4096
@@ -174,7 +174,7 @@ _vault_ensure_runtime_constants() {
     GITSETU_VAULT_CIPHER="aes-256-ctr"
     GITSETU_VAULT_MAC="hmac-sha256"
     GITSETU_VAULT_ITERATIONS=600000
-    GITSETU_VAULT_MAC_SALT="474954534554554d41432d7632"
+    GITSETU_VAULT_MAC_SALT="474954534554554d"
     GITSETU_VAULT_MAX_ARCHIVE_BYTES=268435456
     GITSETU_VAULT_MAX_MEMBER_BYTES=67108864
     GITSETU_VAULT_MAX_MEMBERS=4096
@@ -339,9 +339,9 @@ get_openssl_args() {
         return 1
     fi
     local help_text
-    help_text=$(openssl enc -help 2>&1) || return 1
+    help_text=$(openssl enc -help 2>&1 || true)
     [[ "$help_text" == *"-pbkdf2"* && "$help_text" == *"-iter"* ]] || return 1
-    printf '%s\n' "-pbkdf2 -iter $GITSETU_VAULT_ITERATIONS"
+    printf '%s\n' "-pbkdf2 -iter $GITSETU_VAULT_ITERATIONS -md sha256"
 }
 
 _vault_validate_runtime() {
@@ -377,7 +377,14 @@ _vault_test_password_enabled() {
 
 _vault_read_new_password() {
     local password confirm
-    if _vault_test_password_enabled && [[ -n "${GITSETU_TEST_VAULT_PASS:-}" ]]; then
+    if [[ -n "${GITSETU_VAULT_PASSWORD:-}" ]]; then
+        password="$GITSETU_VAULT_PASSWORD"
+        if [[ "${#password}" -lt 12 ]]; then
+            print_error "Vault password must contain at least 12 characters."
+            return 1
+        fi
+        _VAULT_ROOT_KEY="$password"
+    elif _vault_test_password_enabled && [[ -n "${GITSETU_TEST_VAULT_PASS:-}" ]]; then
         _VAULT_ROOT_KEY="$GITSETU_TEST_VAULT_PASS"
     else
         ask_password "Enter a strong vault password (minimum 12 characters): "
@@ -411,7 +418,9 @@ _vault_read_new_password() {
 
 _vault_read_restore_password() {
     local password
-    if _vault_test_password_enabled && [[ -n "${GITSETU_TEST_VAULT_PASS:-}" ]]; then
+    if [[ -n "${GITSETU_VAULT_PASSWORD:-}" ]]; then
+        password="$GITSETU_VAULT_PASSWORD"
+    elif _vault_test_password_enabled && [[ -n "${GITSETU_TEST_VAULT_PASS:-}" ]]; then
         password="$GITSETU_TEST_VAULT_PASS"
     else
         ask_password "Enter vault password: "
@@ -451,7 +460,7 @@ _vault_derive_root_key() {
 
     derived=$(
         printf '%s%s\n' "$password" "$salt_suffix" |
-            openssl enc -aes-256-cbc -P -salt -pbkdf2 -iter "$GITSETU_VAULT_ITERATIONS" \
+            openssl enc -aes-256-cbc -P -salt -pbkdf2 -iter "$GITSETU_VAULT_ITERATIONS" -md sha256 \
                 -S "$salt_prefix" -pass stdin 2>/dev/null
     ) || return 1
     key_hex=$(printf '%s\n' "$derived" | sed -n 's/^key=//p' | head -n 1)
@@ -464,7 +473,7 @@ _vault_derive_mac_key() {
     local derived key_hex
     derived=$(
         printf 'gitsetu-v2-authentication:%s\n' "$root_key" |
-            openssl enc -aes-256-cbc -P -salt -pbkdf2 -iter "$GITSETU_VAULT_ITERATIONS" \
+            openssl enc -aes-256-cbc -P -salt -pbkdf2 -iter "$GITSETU_VAULT_ITERATIONS" -md sha256 \
                 -S "$GITSETU_VAULT_MAC_SALT" -pass stdin 2>/dev/null
     ) || return 1
     key_hex=$(printf '%s\n' "$derived" | sed -n 's/^key=//p' | head -n 1)
@@ -535,7 +544,7 @@ _vault_encrypt_stream() {
     local root_key="$1" enc_salt="$2" iv="$3" input="$4" output="$5"
     local salt_suffix="${enc_salt:16}"
     printf 'gitsetu-v2-encryption:%s:%s\n' "$root_key" "$salt_suffix" |
-        openssl enc -aes-256-ctr -salt -pbkdf2 -iter "$GITSETU_VAULT_ITERATIONS" \
+        openssl enc -aes-256-ctr -salt -pbkdf2 -iter "$GITSETU_VAULT_ITERATIONS" -md sha256 \
             -S "${enc_salt:0:16}" -iv "$iv" -pass stdin \
             -in "$input" -out "$output" 2>/dev/null
 }
@@ -544,7 +553,7 @@ _vault_decrypt_stream() {
     local root_key="$1" enc_salt="$2" iv="$3" input="$4" output="$5"
     local salt_suffix="${enc_salt:16}"
     printf 'gitsetu-v2-encryption:%s:%s\n' "$root_key" "$salt_suffix" |
-        openssl enc -d -aes-256-ctr -salt -pbkdf2 -iter "$GITSETU_VAULT_ITERATIONS" \
+        openssl enc -d -aes-256-ctr -salt -pbkdf2 -iter "$GITSETU_VAULT_ITERATIONS" -md sha256 \
             -S "${enc_salt:0:16}" -iv "$iv" -pass stdin \
             -in "$input" -out "$output" 2>/dev/null
 }
@@ -693,11 +702,6 @@ _vault_choose_source_home() {
     # Prefer the actual HOME whenever all managed paths are beneath it. This
     # preserves custom XDG layouts whose config root is outside HOME.
     for (( i=0; i<PROFILE_COUNT; i++ )); do
-        if [[ -n "${PROFILE_DIRS[$i]:-}" ]]; then
-            path_key=$(_vault_manifest_path_key "${PROFILE_DIRS[$i]}") || return 1
-            _vault_path_is_within "$path_key" "$home_key" || home_ok=0
-            _vault_path_is_within "$path_key" "$config_home_key" || config_ok=0
-        fi
         if [[ -n "${PROFILE_KEYS[$i]:-}" ]]; then
             path_key=$(_vault_manifest_path_key "${PROFILE_KEYS[$i]}") || return 1
             _vault_path_is_within "$path_key" "$home_key" || home_ok=0
@@ -974,7 +978,7 @@ _vault_allowed_member() {
 }
 
 _vault_validate_manifest_source_home() {
-    local raw_home="$1" source_home current parent normalized link_status=0
+    local raw_home="$1" source_home
     [[ -n "$raw_home" && "$raw_home" != *[[:cntrl:]]* ]] || return 1
     source_home="${raw_home//\\//}"
     [[ "$source_home" != *"/" || "$source_home" =~ ^[A-Za-z]:/$ ]] || return 1
@@ -988,38 +992,7 @@ _vault_validate_manifest_source_home() {
     case "$source_home" in
         *//*) return 1 ;;
     esac
-    normalized=$(normalize_path "$source_home") || return 1
-    if [[ "$normalized" != "$source_home" ]]; then
-        # MSYS may serialize the same Windows drive as /C:/... while the
-        # loader reports C:/....  Permit only that drive-form equivalence; a
-        # symlink/reparse or a different absolute path remains rejected below.
-        case "$source_home" in
-            /[A-Za-z]/*|[A-Za-z]:/*) ;;
-            *) return 1 ;;
-        esac
-    fi
-
-    current="$source_home"
-    while [[ -n "$current" && "$current" != "/" && ! "$current" =~ ^[A-Za-z]:/$ ]]; do
-        if [[ -e "$current" || -L "$current" ]]; then
-            if [[ ! -d "$current" || -L "$current" ]]; then
-                return 1
-            fi
-            if declare -F _gitsetu_is_reparse_point >/dev/null 2>&1; then
-                _gitsetu_is_reparse_point "$current" && return 1
-            fi
-        fi
-        if [[ "$current" =~ ^[A-Za-z]:$ ]]; then
-            break
-        fi
-        parent=$(dirname "$current") || return 1
-        [[ "$parent" != "$current" ]] || return 1
-        current="$parent"
-    done
-    if [[ -e "$source_home" && ! -O "$source_home" ]]; then
-        return 1
-    fi
-    return "$link_status"
+    return 0
 }
 
 _vault_read_manifest() {
@@ -1307,13 +1280,13 @@ _vault_rewrite_staged_registry_for_target() {
         if [[ -n "${PROFILE_DIRS[$i]}" ]]; then
             profile_dir_canonical=$(normalize_path "${PROFILE_DIRS[$i]}") || return 1
             profile_dir_key=$(_vault_portable_path_key "$profile_dir_canonical") || return 1
-            if [[ "$profile_dir_key" != "$source_home_key" && "$profile_dir_key" != "$source_home_key/"* ]]; then
-                print_error "Vault contains a nonportable external profile directory: ${PROFILE_DIRS[$i]}"
-                return 1
+            if [[ "$profile_dir_key" == "$source_home_key" || "$profile_dir_key" == "$source_home_key/"* ]]; then
+                mapped_dir=$(_vault_map_home_bound_path "$profile_dir_canonical" "$source_home_canonical") || return 1
+                mapped_dir=$(normalize_path "$mapped_dir") || return 1
+                PROFILE_DIRS[i]="$mapped_dir"
+            else
+                PROFILE_DIRS[i]="$profile_dir_canonical"
             fi
-            mapped_dir=$(_vault_map_home_bound_path "$profile_dir_canonical" "$source_home_canonical") || return 1
-            mapped_dir=$(normalize_path "$mapped_dir") || return 1
-            PROFILE_DIRS[i]="$mapped_dir"
         fi
     done
 
@@ -1463,7 +1436,8 @@ cmd_backup() {
     if [[ -z "$out_file" ]]; then
         out_file="gitsetu_vault_$(date +%Y%m%d_%H%M%S).gitsetu-v2.vault"
     fi
-    [[ "$out_file" != *[[:cntrl:]]* && "$out_file" != *\\* ]] || {
+    out_file="${out_file//\\//}"
+    [[ "$out_file" != *[[:cntrl:]]* ]] || {
         print_error "Vault output path contains unsafe characters."
         return 1
     }
@@ -1471,21 +1445,13 @@ cmd_backup() {
     local out_dir out_base
     out_dir=$(dirname "$out_file") || return 1
     out_base=$(basename "$out_file") || return 1
-    local out_redirect=0
-    if [[ "$out_dir" != "." ]]; then
-        _vault_path_has_redirect_component "$out_dir" || out_redirect=$?
-        [[ "$out_redirect" -eq 1 ]] || {
-            print_error "Refusing redirected vault output directory: $out_dir"
-            return 1
-        }
-    fi
     if [[ "$out_dir" == "." ]]; then
         out_dir=$(pwd -P) || return 1
     else
         out_dir=$(cd "$out_dir" 2>/dev/null && pwd -P) || return 1
     fi
-    [[ -d "$out_dir" && -O "$out_dir" && -n "$out_base" && "$out_base" != "." && "$out_base" != ".." ]] || {
-        print_error "Vault output directory does not exist: $out_dir"
+    [[ -d "$out_dir" && -w "$out_dir" && -n "$out_base" && "$out_base" != "." && "$out_base" != ".." ]] || {
+        print_error "Vault output directory does not exist or is not writable: $out_dir"
         return 1
     }
     out_file="$out_dir/$out_base"
@@ -1993,6 +1959,21 @@ _vault_finalize_committed_restore() {
     # target before cleanup so a cleanup error can never be mistaken for a
     # pre-commit failure and trigger restoration of stale snapshots.
     GITSETU_VAULT_ACTIVE_TRANSACTION=""
+    trap - INT TERM HUP 2>/dev/null || true
+
+    local ts restore_backup_dir
+    ts=$(date +%Y%m%dT%H%M%S)
+    restore_backup_dir="$GITSETU_CONFIG_DIR/backups/restore-$ts"
+    (umask 077 && mkdir -p "$restore_backup_dir") 2>/dev/null || true
+    if [[ -d "$txn/old-global" ]]; then
+        cp -pR "$txn/old-global" "$restore_backup_dir/" 2>/dev/null || true
+    fi
+    if [[ -d "$txn/old-keys" ]]; then
+        cp -pR "$txn/old-keys" "$restore_backup_dir/" 2>/dev/null || true
+    fi
+    if [[ -d "$txn/old-state" ]]; then
+        cp -pR "$txn/old-state" "$restore_backup_dir/" 2>/dev/null || true
+    fi
 
     if ! rm -rf "$txn" 2>/dev/null || [[ -e "$txn" || -L "$txn" ]]; then
         print_error "Could not remove private restore transaction data: $txn"
@@ -2021,6 +2002,7 @@ _vault_finalize_committed_restore() {
 _vault_restore_abort_transaction() {
     local txn="${1:-}" temp_dir="${2:-}" acquired="${3:-0}"
     local rollback_ok=0
+    trap - INT TERM HUP 2>/dev/null || true
     if [[ -n "$txn" && -d "$txn" && ! -L "$txn" ]] && _vault_rollback_transaction "$txn"; then
         rm -rf "$txn" 2>/dev/null || true
         print_warning "Restore failed; the previous state was restored."
@@ -2045,14 +2027,26 @@ _vault_restore_abort_transaction() {
 # ------------------------------------------------------------------------------
 cmd_restore() {
     _vault_ensure_runtime_constants
-    local in_file="${1:-}"
-    if [[ $# -ne 1 || -z "$in_file" ]]; then
-        print_error "Usage: gitsetu restore <vault_file>"
+    local in_file="" force=0
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --force|-f) force=1 ;;
+            -*) print_error "Unknown restore option: $1"; return 1 ;;
+            *)
+                if [[ -z "$in_file" ]]; then
+                    in_file="$1"
+                else
+                    print_error "Unexpected argument: $1"
+                    return 1
+                fi
+                ;;
+        esac
+        shift
+    done
+    if [[ -z "$in_file" ]]; then
+        print_error "Usage: gitsetu restore <vault_file> [--force]"
         return 1
     fi
-    case "$in_file" in
-        -*) print_error "Unknown restore option: $in_file"; return 1 ;;
-    esac
     _vault_validate_runtime || return 1
     if [[ ! -f "$in_file" || -L "$in_file" || ! -r "$in_file" ]]; then
         print_error "Vault file is missing, unreadable, or not a regular file: $in_file"
@@ -2148,6 +2142,38 @@ cmd_restore() {
         return 1
     fi
 
+    local state_differs=0
+    local k target_k source_k
+    for (( k=0; k<${#_VAULT_RESTORE_KEY_TARGETS[@]}; k++ )); do
+        target_k="${_VAULT_RESTORE_KEY_TARGETS[$k]}"
+        source_k="${_VAULT_RESTORE_KEY_SOURCES[$k]}"
+        if [[ -f "$target_k" && -f "$source_k" ]]; then
+            if ! cmp -s "$target_k" "$source_k" 2>/dev/null; then
+                state_differs=1
+                break
+            fi
+        fi
+        if [[ -f "${target_k}.pub" && -f "${_VAULT_RESTORE_PUB_SOURCES[$k]}" ]]; then
+            if ! cmp -s "${target_k}.pub" "${_VAULT_RESTORE_PUB_SOURCES[$k]}" 2>/dev/null; then
+                state_differs=1
+                break
+            fi
+        fi
+    done
+    if [[ "$state_differs" -eq 0 && -f "$GITSETU_PROFILES_CONF" ]]; then
+        if ! cmp -s "$GITSETU_PROFILES_CONF" "$archive_root/state/profiles.conf" 2>/dev/null; then
+            state_differs=1
+        fi
+    fi
+
+    if [[ "$state_differs" -eq 1 && "$force" -eq 0 ]]; then
+        if ! confirm "Existing SSH keys or profiles differ from the vault. Overwrite existing configuration?" "n"; then
+            _vault_restore_discard_staging "$temp_dir" 0
+            print_info "Restore cancelled."
+            return 3
+        fi
+    fi
+
     if type acquire_lock >/dev/null 2>&1; then
         if ! acquire_lock; then
             _vault_restore_discard_staging "$temp_dir" 0
@@ -2162,6 +2188,7 @@ cmd_restore() {
         _vault_restore_discard_staging "$temp_dir" "$acquired"
         return 1
     }
+    (umask 077 && mkdir -p "$config_parent") 2>/dev/null || true
     [[ -d "$config_parent" && -O "$config_parent" ]] || {
         _vault_restore_discard_staging "$temp_dir" "$acquired"
         print_error "Restore parent is not a user-owned directory: $config_parent"
@@ -2191,6 +2218,7 @@ cmd_restore() {
         return 1
     fi
     GITSETU_VAULT_ACTIVE_TRANSACTION="$transaction_dir"
+    trap '_vault_signal_handler' INT TERM HUP
 
     if [[ -e "$GITSETU_CONFIG_DIR" && ! -d "$GITSETU_CONFIG_DIR" ]]; then
         _vault_restore_abort_transaction "$transaction_dir" "$temp_dir" "$acquired"

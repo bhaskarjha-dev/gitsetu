@@ -14,7 +14,6 @@ const ROOT = path.resolve(__dirname, '..');
 const MANIFEST_PATH = path.join(__dirname, 'release.json');
 const ENV_PATH = path.join(__dirname, 'release.env');
 const PACKAGE_PATH = path.join(ROOT, 'package.json');
-const FLAKE_PATH = path.join(ROOT, 'flake.nix');
 const CORE_PATH = path.join(ROOT, 'lib', 'core.sh');
 
 const BUNDLE_MODULES = [
@@ -31,7 +30,6 @@ const BUNDLE_MODULES = [
   'lib/teardown.sh',
   'lib/discovery.sh',
   'lib/setup.sh',
-  'lib/keychain.sh',
   'lib/completion.sh'
 ];
 
@@ -47,13 +45,7 @@ const REQUIRED_ARTIFACTS = [
 ];
 
 const TEMPLATE_TARGETS = [
-  ['aur/PKGBUILD.in', 'aur/PKGBUILD'],
-  ['aur/.SRCINFO.in', 'aur/.SRCINFO'],
-  ['homebrew/gitsetu.rb.in', 'homebrew/gitsetu.rb'],
-  ['scoop/gitsetu.json.in', 'scoop/gitsetu.json'],
-  ['winget/BhaskarJha.GitSetu.yaml.in', 'winget/manifests/b/BhaskarJha/GitSetu/1.1.0/BhaskarJha.GitSetu.yaml'],
-  ['winget/BhaskarJha.GitSetu.installer.yaml.in', 'winget/manifests/b/BhaskarJha/GitSetu/1.1.0/BhaskarJha.GitSetu.installer.yaml'],
-  ['winget/BhaskarJha.GitSetu.locale.en-US.yaml.in', 'winget/manifests/b/BhaskarJha/GitSetu/1.1.0/BhaskarJha.GitSetu.locale.en-US.yaml']
+  ['homebrew/gitsetu.rb.in', 'homebrew/gitsetu.rb']
 ];
 
 function fail(message) {
@@ -104,18 +96,6 @@ function validateManifest(manifest) {
   if (!manifest.release || typeof manifest.release !== 'object') fail('release policy is missing');
   if (!Array.isArray(manifest.aliases && manifest.aliases.commands) || manifest.aliases.commands.join(',') !== 'gitsetu,git-setu') {
     fail('command aliases must be exactly gitsetu and git-setu');
-  }
-  if (!Array.isArray(manifest.aliases && manifest.aliases.githubExtensions) || manifest.aliases.githubExtensions.join(',') !== 'gh-gitsetu,gh-setu') {
-    fail('GitHub extension commands must be exactly gh-gitsetu and gh-setu');
-  }
-  for (const extensionName of manifest.aliases.githubExtensions) {
-    const extensionPath = path.join(ROOT, 'packaging', 'gh-extension', extensionName);
-    if (!fs.existsSync(extensionPath) || !fs.statSync(extensionPath).isFile() || fs.lstatSync(extensionPath).isSymbolicLink()) {
-      fail(`GitHub extension command is missing or redirected: ${extensionName}`);
-    }
-    if (process.platform !== 'win32' && (fs.statSync(extensionPath).mode & 0o111) === 0) {
-      fail(`GitHub extension command is not executable: ${extensionName}`);
-    }
   }
   if (!manifest.runtime || manifest.runtime.bashMinimum !== '3.2') fail('runtime Bash policy must remain 3.2+');
   for (const dependency of ['bash', 'git', 'openssh', 'openssl', 'coreutils']) {
@@ -201,8 +181,6 @@ function validateSourceConsistency(manifest) {
   const expectedBins = { gitsetu: './bin/gitsetu.js', 'git-setu': './bin/gitsetu.js' };
   if (JSON.stringify(pkg.bin) !== JSON.stringify(expectedBins)) fail('package.json command aliases are inconsistent');
   if (coreVersion() !== manifest.version) fail('lib/core.sh version does not match release manifest');
-  const flake = fs.readFileSync(FLAKE_PATH, 'utf8');
-  if (!flake.includes(`upstreamVersion = "${manifest.version}"`)) fail('flake.nix upstreamVersion is stale');
   const expectedEnv = envText(manifest);
   const actualEnv = fs.readFileSync(ENV_PATH, 'utf8');
   if (actualEnv !== expectedEnv) fail('packaging/release.env is stale; run node packaging/release.js write-env');

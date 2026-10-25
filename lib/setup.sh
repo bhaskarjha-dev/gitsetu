@@ -165,7 +165,7 @@ preset_guided_onboarding() {
                 done
 
                 local global_key
-                global_key=$(discover_ssh_key_for_label "global")
+                global_key=$(discover_global_ssh_key)
 
                 # shellcheck disable=SC2034
                 PROFILE_COUNT=1
@@ -182,7 +182,7 @@ preset_guided_onboarding() {
                 # shellcheck disable=SC2034
                 PROFILE_SIGNS[0]="0"
                 # shellcheck disable=SC2034
-                PROFILE_KEYS[0]="${global_key:-$HOME/.ssh/id_ed25519_global}"
+                PROFILE_KEYS[0]="$global_key"
                 # shellcheck disable=SC2034
                 PROFILE_USERS[0]=""
                 # shellcheck disable=SC2034
@@ -254,7 +254,7 @@ preset_guided_onboarding() {
                 personal_dir=$(normalize_path "$personal_dir")
 
                 local global_key
-                global_key=$(discover_ssh_key_for_label "global")
+                global_key=$(discover_global_ssh_key)
                 local work_key
                 work_key=$(discover_ssh_key_for_label "work")
                 local personal_key
@@ -277,7 +277,7 @@ preset_guided_onboarding() {
                 # shellcheck disable=SC2034
                 PROFILE_SIGNS[0]="0"
                 # shellcheck disable=SC2034
-                PROFILE_KEYS[0]="${global_key:-$HOME/.ssh/id_ed25519_global}"
+                PROFILE_KEYS[0]="$global_key"
                 # shellcheck disable=SC2034
                 PROFILE_USERS[0]=""
                 # shellcheck disable=SC2034
@@ -381,16 +381,10 @@ prompt_edit_profile() {
     ask "SSH Key Path" "$def_key"
     if [[ -n "$REPLY" ]]; then PROFILE_KEYS[i]=$(normalize_path "$REPLY"); fi
 
-    # HTTPS PAT Integration
+    # HTTPS Provider Username Integration
     ask "Provider Username (e.g. GitHub handle, for HTTPS cloning)" "${PROFILE_USERS[i]:-}"
     if [[ -n "$REPLY" ]]; then 
         PROFILE_USERS[i]="$REPLY"
-        if confirm "Would you like to store a Personal Access Token (PAT) for this profile now?" "n"; then
-            ask_password "Enter PAT token"
-            if [[ -n "$REPLY" ]]; then
-                PROFILE_PATS[i]="$REPLY"
-            fi
-        fi
     fi
 }
 
@@ -436,15 +430,6 @@ prompt_add_profile() {
 
     ask "Provider Username (e.g. GitHub handle, for HTTPS cloning)" ""
     PROFILE_USERS[PROFILE_COUNT]="$REPLY"
-    PROFILE_PATS[PROFILE_COUNT]=""
-    if [[ -n "$REPLY" ]]; then
-        if confirm "Would you like to store a Personal Access Token (PAT) for this profile now?" "n"; then
-            ask_password "Enter PAT token"
-            if [[ -n "$REPLY" ]]; then
-                PROFILE_PATS[PROFILE_COUNT]="$REPLY"
-            fi
-        fi
-    fi
 
     PROFILE_COUNT=$((PROFILE_COUNT + 1))
 }
@@ -1096,28 +1081,36 @@ _setup_snapshot_regular_or_tree() {
 
 _setup_snapshot_target() {
     local txn="$1" name="$2" source_path="$3"
-    _setup_snapshot_regular_or_tree "$source_path" "$txn/snapshots/$name"
+    local resolved="$source_path"
+    if [[ -L "$source_path" ]]; then
+        if declare -f _gitconfig_resolve_symlink_target >/dev/null 2>&1; then
+            resolved=$(_gitconfig_resolve_symlink_target "$source_path") || return 1
+        fi
+    fi
+    printf '%s\n' "$resolved" > "$txn/snapshots/$name.target" 2>/dev/null || return 1
+    _setup_snapshot_regular_or_tree "$resolved" "$txn/snapshots/$name"
 }
 
 _setup_restore_target() {
     local txn="$1" name="$2" destination="$3"
     local state="$txn/snapshots/$name.state"
     [[ -f "$state" ]] || return 1
-    # A replacement symlink/reparse point is not owned state.  Refuse rollback
-    # rather than deleting anything at that path or following it.
-    if [[ -L "$destination" ]]; then
-        return 1
+
+    local actual_dest="$destination"
+    if [[ -f "$txn/snapshots/$name.target" ]]; then
+        actual_dest=$(cat "$txn/snapshots/$name.target" 2>/dev/null || printf '%s' "$destination")
     fi
-    if [[ -d "$destination" ]]; then
-        rm -rf "$destination" 2>/dev/null || return 1
-    else
-        rm -f "$destination" 2>/dev/null || return 1
+
+    if [[ -d "$actual_dest" && ! -L "$actual_dest" ]]; then
+        rm -rf "$actual_dest" 2>/dev/null || return 1
+    elif [[ -f "$actual_dest" && ! -L "$actual_dest" ]]; then
+        rm -f "$actual_dest" 2>/dev/null || return 1
     fi
     if grep -q '^present$' "$state" 2>/dev/null; then
         if [[ -d "$txn/snapshots/$name" && ! -L "$txn/snapshots/$name" ]]; then
-            cp -pR "$txn/snapshots/$name" "$destination" 2>/dev/null || return 1
+            cp -pR "$txn/snapshots/$name" "$actual_dest" 2>/dev/null || return 1
         elif [[ -f "$txn/snapshots/$name" && ! -L "$txn/snapshots/$name" ]]; then
-            cp -p "$txn/snapshots/$name" "$destination" 2>/dev/null || return 1
+            cp -p "$txn/snapshots/$name" "$actual_dest" 2>/dev/null || return 1
         else
             return 1
         fi
@@ -1128,9 +1121,6 @@ _setup_restore_target() {
 _setup_begin_transaction() {
     _SETUP_TRANSACTION_DIR=""
     _SETUP_CREATED_KEYS=()
-    _SETUP_STORED_CREDENTIAL_LABELS=()
-    _SETUP_STORED_CREDENTIAL_PROVIDERS=()
-    _SETUP_STORED_CREDENTIAL_PATHS=()
     [[ "${GITSETU_DRY_RUN:-0}" -eq 0 ]] || return 0
 
     local parent txn
@@ -1144,12 +1134,15 @@ _setup_begin_transaction() {
     }
     _SETUP_TRANSACTION_DIR="$txn"
 
-    _setup_snapshot_target "$txn" profiles-conf "$GITSETU_PROFILES_CONF" || return 1
-    _setup_snapshot_target "$txn" profiles-dir "$GITSETU_PROFILES_DIR" || return 1
-    _setup_snapshot_target "$txn" hooks-dir "$GITSETU_HOOKS_DIR" || return 1
-    _setup_snapshot_target "$txn" tokens "$GITSETU_CONFIG_DIR/.tokens" || return 1
-    _setup_snapshot_target "$txn" gitconfig "$HOME/.gitconfig" || return 1
-    _setup_snapshot_target "$txn" sshconfig "$HOME/.ssh/config" || return 1
+    if ! _setup_snapshot_target "$txn" profiles-conf "$GITSETU_PROFILES_CONF" ||
+       ! _setup_snapshot_target "$txn" profiles-dir "$GITSETU_PROFILES_DIR" ||
+       ! _setup_snapshot_target "$txn" hooks-dir "$GITSETU_HOOKS_DIR" ||
+       ! _setup_snapshot_target "$txn" gitconfig "$HOME/.gitconfig" ||
+       ! _setup_snapshot_target "$txn" sshconfig "$HOME/.ssh/config"; then
+        rm -rf "$txn" 2>/dev/null || true
+        _SETUP_TRANSACTION_DIR=""
+        return 1
+    fi
     return 0
 }
 
@@ -1211,17 +1204,6 @@ _setup_remove_created_key_safely() {
 
 _setup_rollback_transaction() {
     local txn="${_SETUP_TRANSACTION_DIR:-}" i failed=0
-    # Remove credentials stored during this attempt before restoring files.
-    for (( i=${#_SETUP_STORED_CREDENTIAL_LABELS[@]}-1; i>=0; i-- )); do
-        if declare -F keychain_erase >/dev/null 2>&1; then
-            keychain_erase "${_SETUP_STORED_CREDENTIAL_LABELS[$i]}" \
-                "${_SETUP_STORED_CREDENTIAL_PROVIDERS[$i]}" \
-                "${_SETUP_STORED_CREDENTIAL_PATHS[$i]}" >/dev/null 2>&1 || failed=1
-        fi
-    done
-    _SETUP_STORED_CREDENTIAL_LABELS=()
-    _SETUP_STORED_CREDENTIAL_PROVIDERS=()
-    _SETUP_STORED_CREDENTIAL_PATHS=()
 
     for (( i=${#_SETUP_CREATED_KEYS[@]}-1; i>=0; i-- )); do
         _setup_remove_created_key_safely "${_SETUP_CREATED_KEYS[$i]}" || failed=1
@@ -1232,7 +1214,6 @@ _setup_rollback_transaction() {
         _setup_restore_target "$txn" profiles-conf "$GITSETU_PROFILES_CONF" || failed=1
         _setup_restore_target "$txn" profiles-dir "$GITSETU_PROFILES_DIR" || failed=1
         _setup_restore_target "$txn" hooks-dir "$GITSETU_HOOKS_DIR" || failed=1
-        _setup_restore_target "$txn" tokens "$GITSETU_CONFIG_DIR/.tokens" || failed=1
         _setup_restore_target "$txn" gitconfig "$HOME/.gitconfig" || failed=1
         _setup_restore_target "$txn" sshconfig "$HOME/.ssh/config" || failed=1
         if [[ "$failed" -eq 0 ]]; then
@@ -1253,6 +1234,8 @@ _setup_blueprint_abort() {
     print_error "$message"
     if ! _setup_rollback_transaction; then
         print_error "Setup rollback was incomplete. Recovery snapshots remain in $_SETUP_TRANSACTION_DIR."
+    else
+        print_info "All changes from this run were rolled back."
     fi
     release_lock || true
     return 1
@@ -1283,6 +1266,7 @@ remove_profile_transaction() {
         _setup_blueprint_abort "Could not stage profile removal."
         return 1
     fi
+    rm -f "${GITSETU_CONFIG_DIR:-$HOME/.config/gitsetu}/remotes/${label}.remotes" 2>/dev/null || true
     if ! write_profiles_conf ||
        ! write_global_gitconfig ||
        ! write_ssh_config; then
@@ -1367,42 +1351,11 @@ execute_blueprint() {
         fi
     done
 
-    # 1.5 Store PATs in Keychain
-    local has_pats=0
-    for (( i=0; i<PROFILE_COUNT; i++ )); do
-        if [[ -n "${PROFILE_PATS[$i]:-}" ]] && [[ -n "${PROFILE_USERS[$i]:-}" ]]; then
-            has_pats=1
-            break
-        fi
-    done
-    if [[ "$has_pats" -eq 1 ]]; then
-        local setup_pat_scope=""
-        print_section "Storing Credentials in Keychain"
-        setup_pat_scope=$(keychain_setup_pat_scope) || {
-            _setup_blueprint_abort "Could not resolve the canonical setup PAT scope."
-            return 1
-        }
-        for (( i=0; i<PROFILE_COUNT; i++ )); do
-            if [[ -n "${PROFILE_PATS[$i]:-}" ]] && [[ -n "${PROFILE_USERS[$i]:-}" ]]; then
-                local provider="${PROFILE_PROVIDERS[$i]:-github.com}"
-                if [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
-                    print_info "[DRY RUN] Would store PAT for ${PROFILE_USERS[i]}@${provider}"
-                    PROFILE_PATS[i]=""
-                    continue
-                fi
-                if ! keychain_store "${PROFILE_LABELS[i]}" "$provider" "${PROFILE_USERS[i]}" \
-                    "${PROFILE_PATS[i]}" "$setup_pat_scope"; then
-                    PROFILE_PATS[i]=""
-                    _setup_blueprint_abort "Failed to store PAT for ${PROFILE_USERS[i]}@${provider}."
-                    return 1
-                fi
-                _SETUP_STORED_CREDENTIAL_LABELS+=("${PROFILE_LABELS[i]}")
-                _SETUP_STORED_CREDENTIAL_PROVIDERS+=("$provider")
-                _SETUP_STORED_CREDENTIAL_PATHS+=("$setup_pat_scope")
-                print_success "Stored PAT for ${PROFILE_USERS[i]}@${provider}"
-                PROFILE_PATS[i]=""
-            fi
-        done
+    # Check for native Git credential helper
+    local helper_out
+    helper_out=$(git config --get-all credential.helper 2>/dev/null || true)
+    if [[ -z "$helper_out" ]]; then
+        print_info "Note: No Git credential helper is configured. Native HTTPS credential caching is recommended (e.g., git config --global credential.helper osxkeychain|manager|cache)."
     fi
 
     # 2. Write global gitconfig
@@ -1423,43 +1376,31 @@ execute_blueprint() {
         return 1
     fi
 
-    if ! display_public_keys; then
-        _setup_blueprint_abort "Failed to display generated public keys."
-        return 1
+    # 7. Guard activation prompt (non-fatal, respects --guard / --no-guard)
+    local want_guard=0
+    if [[ "${GITSETU_GUARD_FLAG:-}" == "1" ]]; then
+        want_guard=1
+    elif [[ "${GITSETU_GUARD_FLAG:-}" == "0" ]]; then
+        want_guard=0
+    elif _ui_tty_available && [[ -z "${CI:-}" ]]; then
+        if confirm "Enable pre-commit identity guard (prevents wrong-email commits)?" "n"; then
+            want_guard=1
+        fi
+    else
+        print_info "Guard not installed. Enable it later with: gitsetu guard --install"
+        want_guard=0
     fi
+
+    if [[ "$want_guard" -eq 1 ]]; then
+        if ! install_guard; then
+            print_warning "Failed to install the pre-commit identity guard."
+        fi
+    fi
+
     if ! auto_register_ssh_keys; then
         print_warning "SSH keys were generated, but automatic agent registration did not complete."
     fi
     printf >&2 '\n'
-
-    # 6.5 Live SSH handshake verification with Port 443 fallback (T2.3)
-    if [[ -z "${GITSETU_TEST:-}" || -n "${GITSETU_TEST_SSH_VERIFY:-}" || -n "${GITSETU_TEST_SSH:-}" ]]; then
-        print_section "SSH Verification"
-        local v_key_path v_provider
-        for (( i=0; i<PROFILE_COUNT; i++ )); do
-            v_key_path="${PROFILE_KEYS[i]:-$HOME/.ssh/id_ed25519_${PROFILE_LABELS[i]}}"
-            v_provider="${PROFILE_PROVIDERS[i]:-github.com}"
-            verify_ssh_handshake "$v_key_path" "$v_provider" || true
-        done
-        printf >&2 '\n'
-
-        if [[ "${GITSETU_PORT443_NEEDED:-0}" -eq 1 ]]; then
-            print_info "Regenerating SSH configuration with Port 443 corporate fallback..."
-            if ! write_ssh_config; then
-                _setup_blueprint_abort "Failed to regenerate SSH configuration after Port 443 fallback."
-                return 1
-            fi
-        fi
-    fi
-
-    # 7. Guard activation prompt (T2.4)
-    if [[ ! -f "$GITSETU_HOOKS_DIR/pre-commit" ]] && [[ -z "${GITSETU_TEST:-}" ]]; then
-        if confirm "Enable pre-commit identity guard (prevents wrong-email commits)?" "y" &&
-           ! install_guard; then
-            _setup_blueprint_abort "Failed to install the pre-commit identity guard."
-            return 1
-        fi
-    fi
 
     if [[ -n "$_SETUP_TRANSACTION_DIR" ]]; then
         if rm -rf "$_SETUP_TRANSACTION_DIR" 2>/dev/null; then
@@ -1473,6 +1414,12 @@ execute_blueprint() {
         print_error "Setup state was written, but the runtime lock could not be released cleanly."
         return 1
     fi
+
+    # Display public keys only after all state is committed and cannot abort
+    display_public_keys || true
+
+    printf >&2 '\nNext: add each key above at its provider (GitHub: https://github.com/settings/ssh/new), then run: GITSETU_VERIFY_NETWORK=1 gitsetu verify\n\n'
+
     render_setup_summary
 }
 
@@ -1660,16 +1607,17 @@ cmd_add() {
     local name="${2:-}"
     local email="${3:-}"
     local dir="${4:-}"
+    shift 4 2>/dev/null || true
 
     if [[ -z "$label" ]] || [[ -z "$name" ]] || [[ -z "$email" ]] || [[ -z "$dir" ]]; then
-        print_error "Usage: gitsetu add <label> \"<name>\" <email> <dir>"
+        print_error "Usage: gitsetu add <label> \"<name>\" <email> <dir> [flags...]"
         printf >&2 "Example: gitsetu add personal \"Aditya Kumar\" aditya@gmail.com ~/personal\n"
         exit 1
     fi
 
     label=$(to_lower "$label")
     # Pass it to the underlying profile router
-    cmd_profile add "$label" --name="$name" --email="$email" --dir="$dir"
+    cmd_profile add "$label" --name="$name" --email="$email" --dir="$dir" "$@"
 }
 
 # ------------------------------------------------------------------------------
@@ -1722,7 +1670,7 @@ cmd_profile() {
                 idx=$PROFILE_COUNT
                 PROFILE_COUNT=$((PROFILE_COUNT + 1))
                 PROFILE_LABELS[idx]="$label"
-                PROFILE_NAMES[idx]="${PROFILE_NAMES[0]}" # default to global name
+                PROFILE_NAMES[idx]="${PROFILE_NAMES[0]:-}" # default to global name
                 PROFILE_EMAILS[idx]=""
                 PROFILE_DIRS[idx]="$HOME/$label"
                 PROFILE_PROVIDERS[idx]="github.com"
@@ -1732,6 +1680,7 @@ cmd_profile() {
                 PROFILE_PATS[idx]=""
             fi
 
+            local profile_remotes=()
             # Parse flags
             while [[ $# -gt 0 ]]; do
                 # shellcheck disable=SC2034  # PROFILE_* arrays consumed by write_profiles_conf()
@@ -1744,6 +1693,19 @@ cmd_profile() {
                     --fido2) PROFILE_KEYS[idx]="$HOME/.ssh/id_ed25519_sk_${label}" ;;
                     --sign) PROFILE_SIGNS[idx]="1" ;;
                     --no-sign) PROFILE_SIGNS[idx]="0" ;;
+                    --guard) GITSETU_GUARD_FLAG=1 ;;
+                    --no-guard) GITSETU_GUARD_FLAG=0 ;;
+                    --provider-user=*) PROFILE_USERS[idx]="${1#*=}" ;;
+                    --remote=*)
+                        local r_val="${1#*=}"
+                        [[ -n "$r_val" ]] && profile_remotes+=("$r_val")
+                        ;;
+                    --remote)
+                        shift
+                        if [[ $# -gt 0 && -n "$1" ]]; then
+                            profile_remotes+=("$1")
+                        fi
+                        ;;
                     *)
                         print_error "Unknown flag: $1"
                         release_lock
@@ -1752,6 +1714,19 @@ cmd_profile() {
                 esac
                 shift
             done
+
+            # HIGH-03: Ensure global fallback identity is populated if empty
+            if [[ -z "${PROFILE_NAMES[0]:-}" || -z "${PROFILE_EMAILS[0]:-}" ]]; then
+                if [[ -n "${PROFILE_NAMES[idx]:-}" && -n "${PROFILE_EMAILS[idx]:-}" ]]; then
+                    PROFILE_NAMES[0]="${PROFILE_NAMES[idx]}"
+                    PROFILE_EMAILS[0]="${PROFILE_EMAILS[idx]}"
+                    print_info "Global (fallback) identity set to ${PROFILE_NAMES[0]} <${PROFILE_EMAILS[0]}>; change it with gitsetu profile edit global --email=…"
+                elif [[ -z "${PROFILE_NAMES[0]:-}" ]]; then
+                    print_error "Set git config --global user.name first or pass --name."
+                    release_lock
+                    exit 1
+                fi
+            fi
 
             # Validation
             if [[ -z "${PROFILE_EMAILS[idx]}" ]]; then
@@ -1769,6 +1744,25 @@ cmd_profile() {
                 print_error "Invalid email address: '${PROFILE_EMAILS[idx]}'."
                 release_lock
                 exit 1
+            fi
+
+            if [[ ${#profile_remotes[@]} -gt 0 ]]; then
+                local remotes_dir="${GITSETU_CONFIG_DIR:-$HOME/.config/gitsetu}/remotes"
+                (umask 077 && mkdir -p "$remotes_dir") 2>/dev/null || true
+                local rem_target="$remotes_dir/${label}.remotes"
+                local r_entry
+                for r_entry in "${profile_remotes[@]}"; do
+                    printf '%s\n' "$r_entry" >> "$rem_target"
+                done
+                local git_ver
+                git_ver=$(git --version 2>/dev/null | awk '{print $3}' || true)
+                if [[ -n "$git_ver" ]]; then
+                    local older
+                    older=$(printf '%s\n2.36.0\n' "$git_ver" | sort -V | head -n1)
+                    if [[ "$older" == "$git_ver" && "$git_ver" != "2.36.0" && "$git_ver" != "2.36"* ]]; then
+                        print_warning "hasconfig:remote.*.url requires Git 2.36+ (installed: $git_ver)."
+                    fi
+                fi
             fi
 
             if ! execute_blueprint; then

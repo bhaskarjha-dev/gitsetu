@@ -38,14 +38,29 @@ _ssh_normalize_key_path() {
     fi
 }
 
-# Prefer a home-relative path only when the path really is below $HOME. An
-# arbitrary external path that merely contains ".ssh" must remain absolute.
+# Prefer a home-relative path (~/...) whenever the path is under $HOME (including Git Bash on Windows).
 _ssh_portable_path() {
     local path="$1"
-    if [[ "$path" == "$HOME" ]]; then
+    local home_norm="${HOME:-}"
+    local home_mixed=""
+    if command -v cygpath >/dev/null 2>&1; then
+        home_mixed=$(cygpath -m "$HOME" 2>/dev/null || true)
+    fi
+
+    if [[ -n "$home_norm" && "$path" == "$home_norm" ]]; then
         printf '~'
-    elif [[ "$path" == "$HOME/"* ]]; then
-        printf '~/%s' "${path#"$HOME"/}"
+    elif [[ -n "$home_norm" && "$path" == "$home_norm/"* ]]; then
+        printf '~/%s' "${path#"$home_norm"/}"
+    elif [[ -n "$home_mixed" && "$path" == "$home_mixed" ]]; then
+        printf '~'
+    elif [[ -n "$home_mixed" && "$path" == "$home_mixed/"* ]]; then
+        printf '~/%s' "${path#"$home_mixed"/}"
+    elif [[ "$path" =~ ^([a-zA-Z]):/(.*) ]]; then
+        local drive="${BASH_REMATCH[1]}"
+        local rest="${BASH_REMATCH[2]}"
+        local drive_lower
+        drive_lower=$(printf '%s' "$drive" | tr '[:upper:]' '[:lower:]')
+        printf '/%s/%s' "$drive_lower" "$rest"
     else
         printf '%s' "$path"
     fi
@@ -512,29 +527,26 @@ build_ssh_host_block() {
     # Port 443 routing is an explicit GitHub.com endpoint policy, not a
     # substring match. Deceptive hosts such as github.com.evil must retain
     # their literal HostName and never be redirected to ssh.github.com.
+    # CRIT-08: Use Host gitsetu-${label} to prevent collision with user's own Host aliases.
+    # CRIT-07: Do not emit AddKeysToAgent yes.
+    # CRIT-09: Do not emit UseKeychain yes.
     if [[ "${GITSETU_PORT443_NEEDED:-0}" -eq 1 ]] && [[ "$hostname" == "github.com" ]]; then
         cat <<EOF
-Host ${prefix}-${label}
+Host gitsetu-${label}
     HostName ssh.github.com
     Port 443
     User git
     IdentityFile ${quoted_key}
     IdentitiesOnly yes
-    AddKeysToAgent yes
 EOF
     else
         cat <<EOF
-Host ${prefix}-${label}
+Host gitsetu-${label}
     HostName ${hostname}
     User git
     IdentityFile ${quoted_key}
     IdentitiesOnly yes
-    AddKeysToAgent yes
 EOF
-    fi
-
-    if [[ "${GITSETU_OS:-}" == "macos" || "${OSTYPE:-}" == "darwin"* ]]; then
-        echo "    UseKeychain yes"
     fi
 }
 
@@ -561,13 +573,43 @@ write_ssh_config() {
     include_arg=$(_ssh_quote_token "$include_path")
     local include_directive="Include ${include_arg}"
 
-    if ! _ssh_assert_no_symlink_components "$ssh_config" 1; then
+    local target_ssh_config="$ssh_config"
+    if [[ -L "$ssh_config" ]]; then
+        if declare -f _gitconfig_resolve_symlink_target >/dev/null 2>&1; then
+            target_ssh_config=$(_gitconfig_resolve_symlink_target "$ssh_config") || {
+                print_error "Cannot resolve ~/.ssh/config symlink target."
+                return 1
+            }
+        fi
+    fi
+
+    if [[ ! -L "$ssh_config" ]] && ! _ssh_assert_no_symlink_components "$ssh_config" 1; then
         print_error "Refusing to replace redirected SSH config or an indeterminate reparse path: $ssh_config"
         return 1
     fi
     if ! _ssh_assert_no_symlink_components "$isolated_normalized" 1; then
         print_error "Refusing to replace redirected GitSetu SSH config or an indeterminate reparse path: $isolated_normalized"
         return 1
+    fi
+
+    # CRIT-08: Check for Host alias collision in existing user config
+    if [[ -f "$target_ssh_config" ]]; then
+        local check_line=0 check_text="" host_entry=""
+        while IFS= read -r check_text || [[ -n "$check_text" ]]; do
+            check_line=$((check_line + 1))
+            if [[ "$check_text" =~ ^[[:space:]]*Host[[:space:]]+(.*) ]]; then
+                for host_entry in ${BASH_REMATCH[1]}; do
+                    local j
+                    for (( j=0; j<${PROFILE_COUNT:-0}; j++ )); do
+                        local expected_alias="gitsetu-${PROFILE_LABELS[j]}"
+                        if [[ "$host_entry" == "$expected_alias" ]]; then
+                            print_error "SSH alias collision: Host '$host_entry' already exists in $ssh_config at line $check_line; refusing to overwrite."
+                            return 1
+                        fi
+                    done
+                done
+            fi
+        done < "$target_ssh_config"
     fi
 
     # Dry run
@@ -677,8 +719,9 @@ write_ssh_config() {
 
     # Always rebuild the small top-of-file shim. This guarantees exactly one
     # Include while preserving every unrelated line byte-for-byte.
+    local target_parent="${target_ssh_config%/*}"
     local config_tmp
-    config_tmp=$(umask 077; mktemp "${ssh_config}.tmp.XXXXXX") || {
+    config_tmp=$(umask 077; mktemp "${target_parent}/.ssh_config.tmp.XXXXXX") || {
         print_error "Failed to create temporary SSH config."
         return 1
     }
@@ -710,19 +753,19 @@ write_ssh_config() {
         return 1
     }
 
-    if [[ -f "$ssh_config" ]]; then
-        backup_file "$ssh_config" || {
+    if [[ -f "$target_ssh_config" ]]; then
+        backup_file "$target_ssh_config" || {
             rm -f "$config_tmp"
             return 1
         }
     fi
-    if ! _ssh_assert_no_symlink_components "$ssh_config" 1 1 1; then
+    if [[ ! -L "$ssh_config" ]] && ! _ssh_assert_no_symlink_components "$ssh_config" 1 1 1; then
         rm -f "$config_tmp"
         print_error "Refusing redirected SSH config target immediately before replacement."
         return 1
     fi
-    mv -f "$config_tmp" "$ssh_config" || return 1
-    chmod 600 "$ssh_config" 2>/dev/null || return 1
+    mv -f "$config_tmp" "$target_ssh_config" || return 1
+    chmod 600 "$target_ssh_config" 2>/dev/null || return 1
     print_success "Updated SSH config: $ssh_config"
 }
 
@@ -738,6 +781,7 @@ write_ssh_config() {
 try_gh_key_upload() {
     local label="$1"
     local pubkey_path="$2"
+    local provider_user="${3:-}"
 
     # a) Check if gh is installed
     if ! command -v gh >/dev/null 2>&1; then
@@ -763,6 +807,11 @@ try_gh_key_upload() {
         return 1
     fi
 
+    # HIGH-05: Offer the upload only when the profile's provider_user is set and equals gh api user -q .login
+    if [[ -z "$provider_user" || "$provider_user" != "$login" ]]; then
+        return 1
+    fi
+
     # d) If non-TTY or GITSETU_TEST is set, do NOT prompt interactively — skip or return 1 (unless mock is testing it)
     if [[ -n "${GITSETU_TEST:-}" ]]; then
         local is_mock=0
@@ -783,25 +832,21 @@ try_gh_key_upload() {
     # e) Display: GitHub CLI: logged in as @$login
     printf >&2 '  GitHub CLI: logged in as @%s\n' "$login"
 
-    # f) Confirm: confirm "Upload '$label' key to GitHub (@$login)?" "y"
-    # If user declines, return 1
+    # f) Confirm: default to "n"
     if [[ -n "${GITSETU_TEST:-}" ]]; then
         if [[ "${GITSETU_TEST_DECLINE:-0}" -eq 1 ]]; then
             return 1
         fi
     else
-        if ! confirm "Upload '$label' key to GitHub (@$login)?" "y"; then
+        if ! confirm "Upload '$label' key to GitHub (@$login)?" "n"; then
             return 1
         fi
     fi
 
     # g) Run upload
-    local hostname_str
-    hostname_str=$(hostname 2>/dev/null || echo "workstation")
-    hostname_str="${hostname_str%$'\r'}"
     local upload_out
     local exit_code=0
-    upload_out=$(gh ssh-key add "$pubkey_path" --title "GitSetu ($label - $hostname_str)" 2>&1) || exit_code=$?
+    upload_out=$(gh ssh-key add "$pubkey_path" --title "GitSetu ($label)" 2>&1) || exit_code=$?
 
     # h) If exit_code == 0:
     if [[ "$exit_code" -eq 0 ]]; then
@@ -849,7 +894,8 @@ display_public_keys() {
         if [[ -f "$pubkey" ]]; then
             print_key_box "$label" "$email" "$pubkey"
             if [[ "$provider" == *"github"* ]]; then
-                if ! try_gh_key_upload "$label" "$pubkey"; then
+                local puser="${PROFILE_USERS[$i]:-}"
+                if ! try_gh_key_upload "$label" "$pubkey" "$puser"; then
                     print_info "To add key manually, copy the key above and add at: https://github.com/settings/ssh/new"
                 fi
             fi
@@ -921,14 +967,10 @@ auto_register_ssh_keys() {
     if [[ "$#" -gt 0 ]]; then
         keys_to_process=("$@")
     elif [[ "${PROFILE_COUNT:-0}" -gt 0 ]]; then
-        local i
-        for (( i=0; i<${PROFILE_COUNT:-0}; i++ )); do
-            if [[ ! ${PROFILE_LABELS[$i]+x} || ! ${PROFILE_KEYS[$i]+x} || -z "${PROFILE_KEYS[$i]}" ]]; then
-                print_error "Strict v2 SSH agent registration requires a key_path for every profile."
-                return 2
-            fi
-            keys_to_process+=("${PROFILE_KEYS[$i]}")
-        done
+        # CRIT-07: auto_register_ssh_keys registers ONLY the global key with ssh-agent.
+        if [[ -n "${PROFILE_KEYS[0]:-}" ]]; then
+            keys_to_process+=("${PROFILE_KEYS[0]}")
+        fi
     elif [[ -e "${GITSETU_PROFILES_CONF:-}" || -L "${GITSETU_PROFILES_CONF:-}" ]]; then
         # Registry presence is a scope boundary. Invalid or empty v2 state is not
         # permission to widen the operation to every key in ~/.ssh.
@@ -948,14 +990,10 @@ auto_register_ssh_keys() {
             print_info "No unconfigured ~/.ssh key discovery was attempted while a registry exists."
             return 2
         fi
-        local i
-        for (( i=0; i<${PROFILE_COUNT:-0}; i++ )); do
-            if [[ ! ${PROFILE_LABELS[$i]+x} || ! ${PROFILE_KEYS[$i]+x} || -z "${PROFILE_KEYS[$i]}" ]]; then
-                print_error "Strict v2 SSH agent registration requires a key_path for every profile."
-                return 2
-            fi
-            keys_to_process+=("${PROFILE_KEYS[$i]}")
-        done
+        # CRIT-07: auto_register_ssh_keys registers ONLY the global key with ssh-agent.
+        if [[ -n "${PROFILE_KEYS[0]:-}" ]]; then
+            keys_to_process+=("${PROFILE_KEYS[0]}")
+        fi
     else
         # Genuinely unconfigured: broad discovery is allowed only when no v2
         # registry file exists at all.

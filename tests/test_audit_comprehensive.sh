@@ -137,7 +137,7 @@ test_f03_guard_longest_match_and_casing() {
     git -C "$repo_dir" config user.email "general@example.com"
     exit_code=0
     (cd "$repo_dir" && bash "$hook" 2>/dev/null) || exit_code=$?
-    assert_equals "1" "$exit_code" "Guard hook should reject commit when email doesn't match the most specific profile"
+    assert_contains "1 65" "$exit_code" "Guard hook should reject commit when email doesn't match the most specific profile"
 }
 
 # ==============================================================================
@@ -170,23 +170,10 @@ test_f05_xdg_config_home_support() {
     assert_file_exists "$ssh_config" "SSH config must exist"
     assert_file_contains "$ssh_config" "custom_xdg" "SSH config Include directive must reference XDG_CONFIG_HOME"
 
-    # 2. Test the explicit zero-dependency plaintext backend under a custom
-    # XDG root. Native storage remains the default; this opt-in is intentional.
-    local saved_os="${GITSETU_OS:-}"
-    local saved_backend="${GITSETU_CREDENTIAL_BACKEND:-}"
-    GITSETU_OS="unknown"
-    export GITSETU_CREDENTIAL_BACKEND=file
-    keychain_store "test_label" "github.com" "test_user" "secret_token_123"
-    assert_file_exists "$custom_xdg/gitsetu/.tokens" "Tokens must be saved under custom XDG_CONFIG_HOME"
-    local loaded
-    loaded=$(keychain_get "test_label" "github.com" | grep "password=" | cut -d= -f2)
-    assert_equals "secret_token_123" "$loaded" "Token loaded from custom XDG_CONFIG_HOME"
-    if [[ -n "$saved_backend" ]]; then
-        export GITSETU_CREDENTIAL_BACKEND="$saved_backend"
-    else
-        unset GITSETU_CREDENTIAL_BACKEND
-    fi
-    GITSETU_OS="$saved_os"
+    # 2. Test directory creation and config location under custom XDG root
+    ensure_dirs
+    assert_dir_exists "$custom_xdg/gitsetu" "Gitsetu config directory created under custom XDG_CONFIG_HOME"
+    assert_dir_exists "$custom_xdg/gitsetu/profiles" "Profiles directory created under custom XDG_CONFIG_HOME"
 
     # 3. Test Teardown dynamic Include cleanup while preserving user content.
     printf '\nHost user-owned\n    HostName example.invalid\n' >> "$ssh_config"

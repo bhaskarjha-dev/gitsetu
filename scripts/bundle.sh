@@ -74,7 +74,6 @@ MODULES=(
     lib/teardown.sh
     lib/discovery.sh
     lib/setup.sh
-    lib/keychain.sh
     lib/completion.sh
 )
 

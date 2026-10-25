@@ -381,7 +381,7 @@ test_backup_restore_rolls_back_without_sidecars() {
     if (
         # shellcheck disable=SC2329  # invoked indirectly by cmd_restore
         write_profile_gitconfig() { return 1; }
-        cmd_restore "$vault_file" >/dev/null 2>&1
+        cmd_restore "$vault_file" --force >/dev/null 2>&1
     ); then
         status=0
     else

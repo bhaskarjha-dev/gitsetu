@@ -165,7 +165,7 @@ test_auto_register_from_profile_keys() {
     )
     unset SSH_AUTH_SOCK
 
-    assert_contains "$output" "Registered 2 key(s) with SSH agent" "auto-registers all profile keys" || return 1
+    assert_contains "$output" "Registered 1 key(s) with SSH agent" "auto-registers global profile key (CRIT-07)" || return 1
 }
 
 # ------------------------------------------------------------------------------
@@ -256,7 +256,7 @@ test_try_gh_key_already_registered() {
             fi
             return 0
         }
-        GITSETU_TEST_GH_MOCK=1 try_gh_key_upload "work" "$dummy_pub" 2>&1
+        GITSETU_TEST_GH_MOCK=1 try_gh_key_upload "work" "$dummy_pub" "octocat" 2>&1
     ) || rc=$?
 
     assert_equals "0" "$rc" "returns 0 when key already in use" || return 1
@@ -282,7 +282,7 @@ test_try_gh_upload_success() {
             fi
             return 0
         }
-        GITSETU_TEST_GH_MOCK=1 try_gh_key_upload "work" "$dummy_pub" 2>&1
+        GITSETU_TEST_GH_MOCK=1 try_gh_key_upload "work" "$dummy_pub" "octocat" 2>&1
     ) || rc=$?
 
     assert_equals "0" "$rc" "returns 0 on successful key upload" || return 1
@@ -352,7 +352,7 @@ test_build_ssh_host_block_standard() {
     local block
     block=$(build_ssh_host_block "work" "github.com" "$HOME/.ssh/id_ed25519_work")
 
-    assert_contains "$block" "Host github-work" "alias format correct" || return 1
+    assert_contains "$block" "Host gitsetu-work" "alias format correct" || return 1
     assert_contains "$block" "HostName github.com" "standard hostname emitted" || return 1
     assert_not_contains "$block" "Port 443" "port 443 omitted on standard config" || return 1
     assert_not_contains "$block" "ssh.github.com" "ssh.github.com omitted on standard config" || return 1
@@ -367,7 +367,7 @@ test_build_ssh_host_block_port443_github() {
     block=$(build_ssh_host_block "corp" "github.com" "$HOME/.ssh/id_ed25519_corp")
     GITSETU_PORT443_NEEDED=0
 
-    assert_contains "$block" "Host github-corp" "alias format correct" || return 1
+    assert_contains "$block" "Host gitsetu-corp" "alias format correct" || return 1
     assert_contains "$block" "HostName ssh.github.com" "corporate fallback hostname emitted" || return 1
     assert_contains "$block" "Port 443" "corporate fallback port 443 emitted" || return 1
 }
@@ -381,7 +381,7 @@ test_build_ssh_host_block_port443_ignored_gitlab() {
     block=$(build_ssh_host_block "corp" "gitlab.com" "$HOME/.ssh/id_ed25519_corp")
     GITSETU_PORT443_NEEDED=0
 
-    assert_contains "$block" "Host gitlab-corp" "alias format correct" || return 1
+    assert_contains "$block" "Host gitsetu-corp" "alias format correct" || return 1
     assert_contains "$block" "HostName gitlab.com" "gitlab hostname preserved" || return 1
     assert_not_contains "$block" "Port 443" "port 443 omitted for non-GitHub" || return 1
     assert_not_contains "$block" "ssh.github.com" "ssh.github.com omitted for non-GitHub" || return 1

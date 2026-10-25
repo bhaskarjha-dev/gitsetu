@@ -149,7 +149,7 @@ test_guard_ignores_untrusted_environment_lib_root() {
     local hook
     hook=$(cat "$GITSETU_HOOKS_DIR/pre-commit")
     assert_not_contains "$hook" "$evil" "caller-controlled GITSETU_DIR is not embedded" || return 1
-    assert_contains "$hook" "GITSETU_LIB_DIR='" "hook has one canonical library root" || return 1
+    assert_contains "$hook" "gitsetu-hook v3" "hook has canonical gitsetu v3 header" || return 1
     unset GITSETU_DIR GITSETU_SCRIPT_DIR GITSETU_ALLOW_TEST_LIB_DIR
 }
 
@@ -178,7 +178,7 @@ test_gitconfig_helper_uses_validated_canonical_executable() {
     local block
     block=$(build_global_gitconfig_block) || return 1
     assert_not_contains "$block" "$evil" "caller helper redirection is not emitted" || return 1
-    assert_contains "$block" "!'" "helper is shell-quoted" || return 1
+    assert_not_contains "$block" "credential.helper" "v1.1.0 does not inject custom credential helper" || return 1
     unset GITSETU_DIR GITSETU_SCRIPT_DIR GIT_CONFIG_NOSYSTEM GIT_CONFIG_SYSTEM GIT_CONFIG_GLOBAL
     GITSETU_OS=gitbash
 }

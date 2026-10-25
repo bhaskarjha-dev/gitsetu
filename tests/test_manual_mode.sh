@@ -53,7 +53,7 @@ test_manual_mode_rejects_ambiguous_empty_profile() {
 
 test_manual_mode_creates_ssh_alias() {
     setup routed
-    assert_file_contains "$GITSETU_PROFILES_DIR/ssh_config" "Host github-manual"
+    assert_file_contains "$GITSETU_PROFILES_DIR/ssh_config" "Host gitsetu-manual"
     assert_file_contains "$GITSETU_PROFILES_DIR/ssh_config" "IdentityFile ~/.ssh/id_ed25519_manual"
 }
 

@@ -18,15 +18,17 @@ is_test_mode() {
 }
 
 FORCE=0
+KEEP_CONFIG=0
 TEARDOWN=0
 for arg in "$@"; do
     case "$arg" in
         --force|-f|--yes|-y) FORCE=1 ;;
+        --keep-config) KEEP_CONFIG=1 ;;
         --teardown) TEARDOWN=1 ;;
         --help|-h)
-            printf 'Usage: uninstall.sh [--force] [--teardown]\n'
-            printf '  --force      authorize removal in a non-interactive session\n'
-            printf '  --teardown   run "gitsetu teardown --deep --force" before removal\n'
+            printf 'Usage: uninstall.sh [--force] [--keep-config]\n'
+            printf '  --force        authorize removal in a non-interactive session\n'
+            printf '  --keep-config  preserve Git and SSH configuration during removal\n'
             exit 0
             ;;
         *) error "Unknown option: $arg" ;;
@@ -65,44 +67,57 @@ if [[ ! -e "$INSTALL_ROOT" ]]; then
 fi
 
 [[ -d "$INSTALL_ROOT" && ! -L "$INSTALL_ROOT" ]] || error "Installation root is not a real directory"
-MARKER="$INSTALL_ROOT/install.marker"
-[[ -f "$MARKER" && ! -L "$MARKER" ]] || error "Refusing to remove an unmarked directory: $INSTALL_ROOT"
 
-MARKER_FORMAT=""
-MARKER_VERSION=""
-MARKER_SHA256=""
-MARKER_RELEASE_ID=""
-marker_lines=0
-while IFS='=' read -r key value || [[ -n "$key" ]]; do
-    marker_lines=$((marker_lines + 1))
-    case "$key" in
-        format) MARKER_FORMAT="$value" ;;
-        version) MARKER_VERSION="$value" ;;
-        artifact_sha256) MARKER_SHA256="$value" ;;
-        release_id) MARKER_RELEASE_ID="$value" ;;
-        *) error "Unexpected installation marker key: $key" ;;
-    esac
-done < "$MARKER"
-[[ "$marker_lines" -eq 4 ]] || error "Installation marker is incomplete"
-[[ "$MARKER_FORMAT" == "1" ]] || error "Unsupported installation marker format"
-[[ "$MARKER_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || error "Installation marker version is invalid"
-[[ "$MARKER_SHA256" =~ ^[0-9a-f]{64}$ ]] || error "Installation marker digest is invalid"
-[[ "$MARKER_RELEASE_ID" == "${MARKER_VERSION}-${MARKER_SHA256:0:16}" ]] || error "Installation marker release ID is inconsistent"
+IS_V1=0
+if [[ -d "$INSTALL_ROOT/.git" && -f "$INSTALL_ROOT/gitsetu" && -f "$INSTALL_ROOT/lib/core.sh" ]]; then
+    IS_V1=1
+    MARKER_VERSION="1.0.0"
+    RELEASE_DIR="$INSTALL_ROOT"
+else
+    MARKER="$INSTALL_ROOT/install.marker"
+    [[ -f "$MARKER" && ! -L "$MARKER" ]] || error "Refusing to remove an unmarked directory: $INSTALL_ROOT"
 
-CURRENT_FILE="$INSTALL_ROOT/current"
-[[ -f "$CURRENT_FILE" && ! -L "$CURRENT_FILE" ]] || error "Current release pointer is missing or is a symbolic link"
-CURRENT_RELEASE=""
-IFS= read -r CURRENT_RELEASE < "$CURRENT_FILE" || error "Could not read the current release pointer"
-[[ "$CURRENT_RELEASE" == "releases/$MARKER_RELEASE_ID" ]] || error "Current release pointer does not match the installation marker"
-RELEASE_DIR="$INSTALL_ROOT/$CURRENT_RELEASE"
-[[ -d "$RELEASE_DIR" && ! -L "$RELEASE_DIR" ]] || error "Current release directory is missing or redirected"
-[[ -f "$RELEASE_DIR/gitsetu" && ! -L "$RELEASE_DIR/gitsetu" ]] || error "Current GitSetu executable is missing or redirected"
+    MARKER_FORMAT=""
+    MARKER_VERSION=""
+    MARKER_SHA256=""
+    MARKER_RELEASE_ID=""
+    marker_lines=0
+    while IFS='=' read -r key value || [[ -n "$key" ]]; do
+        marker_lines=$((marker_lines + 1))
+        case "$key" in
+            format) MARKER_FORMAT="$value" ;;
+            version) MARKER_VERSION="$value" ;;
+            artifact_sha256) MARKER_SHA256="$value" ;;
+            release_id) MARKER_RELEASE_ID="$value" ;;
+            *) error "Unexpected installation marker key: $key" ;;
+        esac
+    done < "$MARKER"
+    [[ "$marker_lines" -eq 4 ]] || error "Installation marker is incomplete"
+    [[ "$MARKER_FORMAT" == "1" ]] || error "Unsupported installation marker format"
+    [[ "$MARKER_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || error "Installation marker version is invalid"
+    [[ "$MARKER_SHA256" =~ ^[0-9a-f]{64}$ ]] || error "Installation marker digest is invalid"
+    [[ "$MARKER_RELEASE_ID" == "${MARKER_VERSION}-${MARKER_SHA256:0:16}" ]] || error "Installation marker release ID is inconsistent"
+
+    CURRENT_FILE="$INSTALL_ROOT/current"
+    [[ -f "$CURRENT_FILE" && ! -L "$CURRENT_FILE" ]] || error "Current release pointer is missing or is a symbolic link"
+    CURRENT_RELEASE=""
+    IFS= read -r CURRENT_RELEASE < "$CURRENT_FILE" || error "Could not read the current release pointer"
+    [[ "$CURRENT_RELEASE" == "releases/$MARKER_RELEASE_ID" ]] || error "Current release pointer does not match the installation marker"
+    RELEASE_DIR="$INSTALL_ROOT/$CURRENT_RELEASE"
+    [[ -d "$RELEASE_DIR" && ! -L "$RELEASE_DIR" ]] || error "Current release directory is missing or redirected"
+    [[ -f "$RELEASE_DIR/gitsetu" && ! -L "$RELEASE_DIR/gitsetu" ]] || error "Current GitSetu executable is missing or redirected"
+fi
 
 info "GitSetu v$MARKER_VERSION is installed at $INSTALL_ROOT"
-info "Generated SSH keys and Git identity configuration are preserved by default."
-if [[ "$TEARDOWN" -eq 1 ]]; then
-    info "Running explicit managed-state teardown..."
-    "$RELEASE_DIR/gitsetu" teardown --deep --force || error "Managed-state teardown failed; installation was not removed"
+if [[ "$KEEP_CONFIG" -eq 1 ]]; then
+    info "Generated SSH keys and Git identity configuration are preserved."
+else
+    info "Running managed-state teardown..."
+    if [[ -f "$RELEASE_DIR/gitsetu" && -x "$RELEASE_DIR/gitsetu" ]]; then
+        "$RELEASE_DIR/gitsetu" teardown --force || true
+    elif command -v gitsetu >/dev/null 2>&1; then
+        gitsetu teardown --force || true
+    fi
 fi
 
 if [[ "$FORCE" -ne 1 ]]; then
@@ -113,17 +128,21 @@ if [[ "$FORCE" -ne 1 ]]; then
         printf 'Remove the GitSetu executables and versioned installation? [y/N] '
         read -r response < /dev/tty || response=""
     else
-        error "Non-interactive uninstall requires --force (or --yes)."
+        printf 'confirmation required; pass --force\n' >&2
+        exit 3
     fi
-    [[ "$response" =~ ^[Yy]$ ]] || { info "Uninstallation aborted."; exit 0; }
+    if [[ ! "$response" =~ ^[Yy]$ ]]; then
+        printf 'confirmation required; pass --force\n' >&2
+        exit 3
+    fi
 fi
 
 status=0
 remove_managed_wrapper() {
     local wrapper="$BIN_DIR/$1" target=""
     if [[ -L "$wrapper" ]]; then
-        target="$(readlink "$wrapper")"
-        if [[ "$target" == "$INSTALL_ROOT/"* ]]; then
+        target="$(readlink "$wrapper" 2>/dev/null || true)"
+        if [[ "$target" == "$INSTALL_ROOT/"* || "$target" == *"/gitsetu"* ]]; then
             rm -f -- "$wrapper" || status=1
         else
             printf 'Error: refusing unrelated symbolic link: %s\n' "$wrapper" >&2

@@ -1,0 +1,182 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-posix:
+    name: Build & Attest POSIX Artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: release
+    outputs:
+      tag: ${{ steps.vars.outputs.tag }}
+      version: ${{ steps.vars.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '20.19.4'
+          cache: npm
+          package-manager-cache: false
+
+      - name: Determine version and tag
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          version="${tag#v}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build standalone bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          GITSETU_BUNDLE_SOURCE_COMMIT="$GITHUB_SHA" bash scripts/bundle.sh dist/gitsetu
+
+      - name: Generate SHA256SUMS and prepare release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum dist/gitsetu install.sh uninstall.sh > SHA256SUMS
+
+      - name: Attest POSIX build provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: |
+            dist/gitsetu
+            install.sh
+            uninstall.sh
+            SHA256SUMS
+
+      - name: Publish to npm (if NPM_TOKEN present)
+        shell: bash
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          TAG_VER: ${{ steps.vars.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${NPM_TOKEN:-}" ]]; then
+            node -e 'const fs=require("fs"); const pkg=JSON.parse(fs.readFileSync("package.json","utf8")); pkg.private=false; pkg.version=process.env.TAG_VER; fs.writeFileSync("package.json", JSON.stringify(pkg,null,2)+"\n");'
+            npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
+            if [[ "$TAG_VER" == *"-"* ]]; then
+              npm publish --access public --provenance --tag next
+            else
+              npm publish --access public --provenance
+            fi
+          else
+            echo "NPM_TOKEN secret not configured; skipping npm publish."
+          fi
+
+      - name: Upload POSIX artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: posix-artifacts
+          path: |
+            dist/gitsetu
+            install.sh
+            uninstall.sh
+            SHA256SUMS
+
+  build-windows:
+    name: Build & Attest Windows Artifacts
+    runs-on: windows-latest
+    timeout-minutes: 30
+    environment: release
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Build Windows release ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $sourceRoot = Join-Path $env:TEMP "gitsetu-release-src"
+          if (Test-Path -LiteralPath $sourceRoot) { Remove-Item -LiteralPath $sourceRoot -Recurse -Force }
+          New-Item -ItemType Directory -Path $sourceRoot -Force | Out-Null
+          Copy-Item -LiteralPath "gitsetu" -Destination (Join-Path $sourceRoot "gitsetu")
+          Copy-Item -LiteralPath "lib" -Destination (Join-Path $sourceRoot "lib") -Recurse
+          
+          # Compile native Windows launcher
+          $launcherOut = Join-Path $env:TEMP "gitsetu-launcher-out"
+          if (Test-Path -LiteralPath $launcherOut) { Remove-Item -LiteralPath $launcherOut -Recurse -Force }
+          & .\packaging\windows\build_launcher.ps1 -OutDir $launcherOut
+          Copy-Item -LiteralPath (Join-Path $launcherOut "gitsetu.exe") -Destination (Join-Path $sourceRoot "gitsetu.exe")
+          
+          # Create zip archive
+          & .\packaging\windows\build_release_zip.ps1 -SourceDir $sourceRoot -OutFile "dist\gitsetu-windows.zip"
+
+      - name: Attest Windows build provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: dist/gitsetu-windows.zip
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-artifacts
+          path: dist/gitsetu-windows.zip
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [build-posix, build-windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release
+    steps:
+      - name: Download POSIX artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: posix-artifacts
+          path: dist-release
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: windows-artifacts
+          path: dist-release
+
+      - name: Publish GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.build-posix.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist-release
+          extra_flags=()
+          if [[ "$TAG" == *"-"* ]]; then
+            extra_flags+=(--prerelease)
+          fi
+          gh release create "$TAG" \
+            gitsetu \
+            gitsetu-windows.zip \
+            install.sh \
+            uninstall.sh \
+            SHA256SUMS \
+            --title "GitSetu $TAG" \
+            --generate-notes \
+            "${extra_flags[@]+"${extra_flags[@]}"}"

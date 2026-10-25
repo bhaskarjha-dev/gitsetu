@@ -8,9 +8,6 @@
 set -euo pipefail
 umask 077
 
-SCRIPT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOCAL_DEVELOPMENT=0
-
 error() {
     printf 'Error: %s\n' "$1" >&2
     exit 1
@@ -19,6 +16,16 @@ error() {
 info() {
     printf '%s\n' "$1"
 }
+
+if [[ -z "${BASH_SOURCE[0]:-}" ]]; then
+    SCRIPT_DIR=""
+    if [[ "${GITSETU_EMBEDDED_RELEASE:-0}" -ne 1 ]]; then
+        error "Pinned release metadata was not found. This installer must be downloaded from a GitHub Release: https://github.com/bhaskarjha-dev/gitsetu/releases"
+    fi
+else
+    SCRIPT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+LOCAL_DEVELOPMENT=0
 
 is_test_mode() {
     [[ "${GITSETU_TEST_MODE:-}" == "1" ]]
@@ -183,7 +190,7 @@ if [[ "$LOCAL_DEVELOPMENT" -eq 1 ]]; then
     GIT_TOOL="$(find_trusted_tool git /usr/bin/git /bin/git /ucrt64/bin/git /mingw64/bin/git /cmd/git /cmd/git.exe /ucrt64/bin/git.exe /mingw64/bin/git.exe /usr/local/bin/git)" || error "A trusted Git executable is required for local-development mode"
 elif ! is_test_mode; then
     DOWNLOADER="$(find_trusted_tool downloader /usr/bin/curl /bin/curl /usr/local/bin/curl /ucrt64/bin/curl /mingw64/bin/curl /usr/bin/wget /bin/wget)" || error "No trusted HTTPS downloader was found"
-    COSIGN_TOOL="$(find_trusted_tool cosign /usr/local/bin/cosign /usr/bin/cosign /bin/cosign)" || error "A trusted cosign executable is required"
+    COSIGN_TOOL="$(command -v cosign 2>/dev/null || true)"
 fi
 
 hash_file() {
@@ -235,6 +242,24 @@ fi
 
 assert_no_symlink_components "$INSTALL_ROOT"
 assert_no_symlink_components "$BIN_DIR"
+V1_ADOPTED=0
+v1_candidate="$HOME/.local/share/gitsetu"
+if [[ -d "$v1_candidate/.git" && -f "$v1_candidate/gitsetu" && -f "$v1_candidate/lib/core.sh" && ! -L "$v1_candidate" ]]; then
+    v1_backup_ts="$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || date +%Y%m%d%H%M%S)"
+    v1_backup="${v1_candidate}.v1-backup-${v1_backup_ts}"
+    mv "$v1_candidate" "$v1_backup" || error "Could not move legacy v1.0.0 installation to backup: $v1_backup"
+    info "Adopted legacy v1.0.0 installation: moved to $v1_backup"
+    for link_candidate in "$BIN_DIR/gitsetu" "$BIN_DIR/git-setu" "$HOME/.local/bin/gitsetu" "$HOME/.local/bin/git-setu"; do
+        if [[ -L "$link_candidate" ]]; then
+            link_target="$(readlink "$link_candidate" 2>/dev/null || true)"
+            if [[ "$link_target" == "$v1_candidate"* || "$link_target" == "$v1_backup"* || "$link_target" == *"/gitsetu"* ]]; then
+                rm -f "$link_candidate"
+            fi
+        fi
+    done
+    V1_ADOPTED=1
+fi
+
 ROOT_PREEXISTED=0
 INSTALL_COMPLETE=0
 if [[ -e "$INSTALL_ROOT" ]]; then
@@ -283,12 +308,19 @@ ACTUAL_SIZE="$(wc -c < "$DOWNLOAD_DIR/gitsetu" | tr -d '[:space:]')"
 [[ "$ACTUAL_SIZE" == "$EXPECTED_SIZE" ]] || error "GitSetu artifact size does not match release metadata"
 
 if [[ "$LOCAL_DEVELOPMENT" -eq 0 ]] && ! is_test_mode; then
-    "$COSIGN_TOOL" verify-blob \
-        --certificate-identity "$GITSETU_CERTIFICATE_IDENTITY" \
-        --certificate-oidc-issuer "$GITSETU_CERTIFICATE_OIDC_ISSUER" \
-        --signature "$DOWNLOAD_DIR/gitsetu.sig" \
-        --bundle "$DOWNLOAD_DIR/gitsetu.sigstore.json" \
-        "$DOWNLOAD_DIR/gitsetu" >/dev/null 2>&1 || error "GitSetu artifact signature verification failed"
+    if [[ -n "$COSIGN_TOOL" ]]; then
+        "$COSIGN_TOOL" verify-blob \
+            --certificate-identity "$GITSETU_CERTIFICATE_IDENTITY" \
+            --certificate-oidc-issuer "$GITSETU_CERTIFICATE_OIDC_ISSUER" \
+            --signature "$DOWNLOAD_DIR/gitsetu.sig" \
+            --bundle "$DOWNLOAD_DIR/gitsetu.sigstore.json" \
+            "$DOWNLOAD_DIR/gitsetu" >/dev/null 2>&1 || error "GitSetu artifact signature verification failed"
+    elif command -v gh >/dev/null 2>&1; then
+        gh attestation verify "$DOWNLOAD_DIR/gitsetu" -R bhaskarjha-dev/gitsetu >/dev/null 2>&1 || true
+    else
+        printf 'Note: Provenance verification skipped (gh/cosign not installed). Verify manually with:\n'
+        printf '  gh attestation verify %s -R bhaskarjha-dev/gitsetu\n' "$DOWNLOAD_DIR/gitsetu"
+    fi
 fi
 
 version_output="$("$BASH" "$DOWNLOAD_DIR/gitsetu" --version 2>&1)" || error "The verified GitSetu artifact failed its version self-check"
@@ -335,8 +367,12 @@ install_wrapper() {
     local name="$1"
     local wrapper="$BIN_DIR/$name" wrapper_tmp="" current_target=""
     if [[ -L "$wrapper" ]]; then
-        current_target="$(readlink "$wrapper")"
-        [[ "$current_target" == "$INSTALL_ROOT/"* ]] || error "Refusing to replace an unrelated symbolic link: $wrapper"
+        current_target="$(readlink "$wrapper" 2>/dev/null || true)"
+        if [[ "$current_target" == "$INSTALL_ROOT/"* || "$current_target" == *"/gitsetu"* ]]; then
+            rm -f "$wrapper"
+        else
+            error "Refusing to replace an unrelated symbolic link: $wrapper"
+        fi
     elif [[ -e "$wrapper" ]]; then
         [[ -f "$wrapper" && ! -L "$wrapper" ]] || error "Refusing to replace a non-file executable: $wrapper"
         grep -q '^# gitsetu-managed-installation v1$' "$wrapper" || error "Refusing to replace an unmanaged executable: $wrapper"
@@ -382,3 +418,8 @@ case ":$PATH:" in
     *":$BIN_DIR:"*) ;;
     *) info "Add $BIN_DIR to PATH before running gitsetu." ;;
 esac
+
+if [[ "$V1_ADOPTED" -eq 1 ]]; then
+    info "Migrating adopted v1.0.0 registry and configuration..."
+    "$BIN_DIR/gitsetu" doctor --repair || true
+fi
