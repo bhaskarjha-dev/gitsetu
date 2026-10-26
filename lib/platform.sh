@@ -361,6 +361,29 @@ absolute_path() {
 }
 
 # ------------------------------------------------------------------------------
+# is_canonical_path — Returns 0 if path is in canonical form for the current platform
+# ------------------------------------------------------------------------------
+is_canonical_path() {
+    [[ $# -eq 1 ]] || return 1
+    local path="$1" normalized
+    [[ -n "$path" && "$path" != *[[:cntrl:]]* ]] || return 1
+    [[ -z "${GITSETU_OS:-}" ]] && detect_os
+    normalized=$(canonicalize_path "$path") || return 1
+    if [[ "$normalized" == "$path" ]]; then
+        return 0
+    fi
+    if [[ "${GITSETU_OS:-}" == "gitbash" && "$path" =~ ^/([a-zA-Z])(/.*)?$ ]]; then
+        local drive rest
+        drive=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
+        rest="${BASH_REMATCH[2]:-/}"
+        if [[ "$normalized" == "${drive}:${rest}" ]]; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# ------------------------------------------------------------------------------
 # get_gitdir_keyword — Returns the correct includeIf keyword for the OS
 #
 # Windows/Git Bash uses case-insensitive matching: gitdir/i:

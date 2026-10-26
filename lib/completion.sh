@@ -104,7 +104,7 @@ _gitsetu() {
     prev="${COMP_WORDS[COMP_CWORD-1]:-}"
     command="${COMP_WORDS[1]:-}"
     subcommand="${COMP_WORDS[2]:-}"
-    opts="setup init add remove status audit verify doctor run teardown guard profile backup restore credential prompt update --help --version -h -v"
+    opts="setup init add remove status audit verify doctor run teardown guard profile backup restore credential prompt explain import update --help --version -h -v"
 
     if [[ ${COMP_CWORD:-0} -eq 1 ]]; then
         # shellcheck disable=SC2207
@@ -179,7 +179,11 @@ _gitsetu() {
             # shellcheck disable=SC2207
             COMPREPLY=( $(compgen -W "get store erase" -- "$cur") )
             ;;
-        backup|restore)
+        import)
+            # shellcheck disable=SC2207
+            COMPREPLY=( $(compgen -W "--yes -y" -- "$cur") )
+            ;;
+        explain|backup|restore)
             # Let the shell's filename completion handle the optional path.
             COMPREPLY=()
             ;;

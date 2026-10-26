@@ -176,11 +176,26 @@ const trustedBashCheck = `
 $ErrorActionPreference = 'Stop'
 $p = $env:GITSETU_CANDIDATE_BASH
 if (-not $p) { throw 'missing candidate' }
-$roots = @(
+$roots = [System.Collections.Generic.List[string]]@(
   (Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)) 'Git'),
   (Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFilesX86)) 'Git'),
   (Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) 'Programs\\Git')
 )
+foreach ($regKey in @('SOFTWARE\\GitForWindows', 'SOFTWARE\\WOW6432Node\\GitForWindows')) {
+  try {
+    $k = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($regKey)
+    if ($k) { $val = $k.GetValue('InstallPath'); if ($val -and (Test-Path -LiteralPath $val)) { $roots.Add($val) } }
+  } catch {}
+  try {
+    $k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($regKey)
+    if ($k) { $val = $k.GetValue('InstallPath'); if ($val -and (Test-Path -LiteralPath $val)) { $roots.Add($val) } }
+  } catch {}
+}
+$userProfile = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
+if ($userProfile) {
+  $scoopGit = Join-Path $userProfile 'scoop\\apps\\git\\current'
+  if (Test-Path -LiteralPath $scoopGit) { $roots.Add($scoopGit) }
+}
 $full = [IO.Path]::GetFullPath($p)
 $allowed = $false
 foreach ($root in $roots) {
@@ -192,7 +207,11 @@ $item = Get-Item -LiteralPath $full -Force
 if ($item.PSIsContainer -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { throw 'candidate is redirected' }
 $current = $item.Directory
 while ($null -ne $current) {
-  if (($current.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'candidate has a reparse parent' }
+  if (($current.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+    if (-not ($userProfile -and $current.FullName.Equals((Join-Path $userProfile 'scoop\\apps\\git\\current'), [StringComparison]::OrdinalIgnoreCase))) {
+      throw 'candidate has a reparse parent'
+    }
+  }
   $current = $current.Parent
 }
 $acl = Get-Acl -LiteralPath $full

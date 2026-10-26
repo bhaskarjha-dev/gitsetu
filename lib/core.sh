@@ -588,7 +588,9 @@ track_temp_file() {
     [[ -f "$1" && ! -L "$1" && -O "$1" ]] || return 1
     _gitsetu_path_has_symlink_component "$parent" || link_status=$?
     [[ "$link_status" -eq 1 ]] || return 1
-    if declare -f canonicalize_path >/dev/null 2>&1; then
+    if declare -F is_canonical_path >/dev/null 2>&1; then
+        is_canonical_path "$parent" || return 1
+    elif declare -f canonicalize_path >/dev/null 2>&1; then
         parent=$(canonicalize_path "$parent") || return 1
         [[ "$parent" == "${1%/*}" || ( "${1%/*}" =~ ^[a-zA-Z]:$ && "$parent" == "${1%/*}/" ) ]] || return 1
     fi
@@ -870,14 +872,23 @@ _gitsetu_validate_registry_write_destination() {
         return 1
     fi
 
-    canonical_config=$(canonicalize_path "$config_root") || return 1
-    canonical_parent=$(canonicalize_path "$parent") || return 1
-    canonical_registry=$(canonicalize_path "$registry") || return 1
-    if [[ "$canonical_config" != "$config_root" ||
-          "$canonical_parent" != "$parent" ||
-          "$canonical_registry" != "$registry" ]]; then
-        _gitsetu_registry_error "registry destination is not canonical"
-        return 1
+    if declare -F is_canonical_path >/dev/null 2>&1; then
+        if ! is_canonical_path "$config_root" ||
+           ! is_canonical_path "$parent" ||
+           ! is_canonical_path "$registry"; then
+            _gitsetu_registry_error "registry destination is not canonical"
+            return 1
+        fi
+    else
+        canonical_config=$(canonicalize_path "$config_root") || return 1
+        canonical_parent=$(canonicalize_path "$parent") || return 1
+        canonical_registry=$(canonicalize_path "$registry") || return 1
+        if [[ "$canonical_config" != "$config_root" ||
+              "$canonical_parent" != "$parent" ||
+              "$canonical_registry" != "$registry" ]]; then
+            _gitsetu_registry_error "registry destination is not canonical"
+            return 1
+        fi
     fi
 
     if [[ -e "$registry" || -L "$registry" ]]; then
@@ -1026,11 +1037,28 @@ write_profiles_registry() {
     fi
     tmp_file="$GITSETU_TMP_FILE"
     local tmp_parent="${tmp_file%/*}"
-    if [[ ! -f "$tmp_file" || -L "$tmp_file" || ! -O "$tmp_file" ||
-          "$tmp_parent" != "$registry_parent" ]]; then
-        _gitsetu_remove_owned_file "$tmp_file" 2>/dev/null || true
-        _gitsetu_registry_error "secure registry temporary file failed validation"
-        return 1
+    local tmp_canonical registry_canonical
+    if declare -F is_canonical_path >/dev/null 2>&1; then
+        if ! is_canonical_path "$tmp_parent" || ! is_canonical_path "$registry_parent"; then
+            _gitsetu_remove_owned_file "$tmp_file" 2>/dev/null || true
+            _gitsetu_registry_error "secure registry temporary file failed validation"
+            return 1
+        fi
+        tmp_canonical=$(canonicalize_path "$tmp_parent") || return 1
+        registry_canonical=$(canonicalize_path "$registry_parent") || return 1
+        if [[ ! -f "$tmp_file" || -L "$tmp_file" || ! -O "$tmp_file" ||
+              "$tmp_canonical" != "$registry_canonical" ]]; then
+            _gitsetu_remove_owned_file "$tmp_file" 2>/dev/null || true
+            _gitsetu_registry_error "secure registry temporary file failed validation"
+            return 1
+        fi
+    else
+        if [[ ! -f "$tmp_file" || -L "$tmp_file" || ! -O "$tmp_file" ||
+              "$tmp_parent" != "$registry_parent" ]]; then
+            _gitsetu_remove_owned_file "$tmp_file" 2>/dev/null || true
+            _gitsetu_registry_error "secure registry temporary file failed validation"
+            return 1
+        fi
     fi
 
     if ! {

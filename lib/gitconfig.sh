@@ -342,8 +342,12 @@ _gitconfig_validate_persisted_paths() {
         case "$dir" in
             *\\*|*//*|../*|*/../*|*/..|*/./*|*/.) return 1 ;;
         esac
-        normalized=$(_gitconfig_normalize_path "$dir") || return 1
-        [[ "$normalized" == "$dir" ]] || return 1
+        if declare -F is_canonical_path >/dev/null 2>&1; then
+            is_canonical_path "$dir" || return 1
+        else
+            normalized=$(_gitconfig_normalize_path "$dir") || return 1
+            [[ "$normalized" == "$dir" ]] || return 1
+        fi
     done
 }
 
@@ -625,12 +629,12 @@ write_global_gitconfig() {
         printf '\n%s\n' "$tail_block"
     } > "$GITCONFIG_TMP"
 
-    print_success "Updated managed blocks in: $gitconfig"
-
     chmod 600 "$GITCONFIG_TMP" 2>/dev/null || return 1
     if [[ -f "$target" ]]; then backup_file "$target" || return 1; fi
     mv -f "$GITCONFIG_TMP" "$target" || return 1
     chmod 600 "$target" 2>/dev/null || return 1
+
+    print_success "Updated managed blocks in: $gitconfig"
 
     _gitconfig_list_kept_user_routes "$target"
 }

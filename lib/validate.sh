@@ -334,9 +334,13 @@ validate_absolute_path() {
 validate_canonical_path() {
     [[ $# -eq 1 ]] || return 1
     validate_absolute_path "$1" || return 1
-    local normalized
-    normalized=$(normalize_path "$1") || return 1
-    [[ "$normalized" == "$1" ]]
+    if declare -F is_canonical_path >/dev/null 2>&1; then
+        is_canonical_path "$1"
+    else
+        local normalized
+        normalized=$(normalize_path "$1") || return 1
+        [[ "$normalized" == "$1" ]]
+    fi
 }
 
 validate_profile_directory() {

@@ -49,11 +49,16 @@ _vault_path_has_redirect_component() {
 }
 
 _vault_validate_canonical_state_path() {
-    local path="$1" normalized redirect=0
+    local path="$1" redirect=0
     [[ -n "$path" && "$path" != *[[:cntrl:]]* ]] || return 1
     case "$path" in /*|[A-Za-z]:/*) ;; *) return 1 ;; esac
-    normalized=$(normalize_path "$path") || return 1
-    [[ "$normalized" == "$path" ]] || return 1
+    if declare -F is_canonical_path >/dev/null 2>&1; then
+        is_canonical_path "$path" || return 1
+    else
+        local normalized
+        normalized=$(normalize_path "$path") || return 1
+        [[ "$normalized" == "$path" ]] || return 1
+    fi
     _vault_path_has_redirect_component "$path" || redirect=$?
     [[ "$redirect" -eq 1 ]] || return 1
     if [[ -e "$path" || -L "$path" ]]; then
@@ -1324,10 +1329,15 @@ _vault_rewrite_staged_registry_for_target() {
 # Destination key safety and duplicate detection
 # ------------------------------------------------------------------------------
 _vault_validate_key_destination() {
-    local key_path="$1" normalized current managed_ssh_root key_key root_key
+    local key_path="$1" current managed_ssh_root key_key root_key
     [[ -n "$key_path" && "$key_path" != *[[:cntrl:]]* ]] || return 1
-    normalized=$(normalize_path "$key_path") || return 1
-    [[ "$normalized" == "$key_path" ]] || return 1
+    if declare -F is_canonical_path >/dev/null 2>&1; then
+        is_canonical_path "$key_path" || return 1
+    else
+        local normalized
+        normalized=$(normalize_path "$key_path") || return 1
+        [[ "$normalized" == "$key_path" ]] || return 1
+    fi
     managed_ssh_root=$(normalize_path "$HOME/.ssh") || return 1
     key_key=$(_vault_portable_path_key "$key_path") || return 1
     root_key=$(_vault_portable_path_key "$managed_ssh_root") || return 1

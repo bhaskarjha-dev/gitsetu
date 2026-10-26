@@ -121,12 +121,17 @@ if (Test-Path -LiteralPath (Join-Path $v1Share ".git")) {
 }
 
 Write-Host "GitSetu v$version is installed at $rootDir"
+$teardownWarning = $false
 if ($KeepConfig) {
     Write-Host "Generated SSH keys and Git identity configuration are preserved." -ForegroundColor Gray
 } else {
     Write-Host "Running managed-state teardown..."
     if (Test-Path -LiteralPath $exePath) {
-        try { & $exePath teardown --force } catch { }
+        & $exePath teardown --force
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Managed teardown exited with code $LASTEXITCODE. Global configuration or hooks may require manual review."
+            $teardownWarning = $true
+        }
     }
 }
 
@@ -198,4 +203,8 @@ try {
 } catch {
     Stop-Uninstall "Could not completely remove $rootDir"
 }
-Write-Host "GitSetu was removed successfully." -ForegroundColor Green
+if ($teardownWarning) {
+    Write-Host "GitSetu executables were removed, but managed configuration could not be completely torn down." -ForegroundColor Yellow
+} else {
+    Write-Host "GitSetu was removed successfully." -ForegroundColor Green
+}

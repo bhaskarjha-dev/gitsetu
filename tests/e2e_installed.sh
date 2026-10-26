@@ -202,7 +202,7 @@ case_crit11_vault() {
 case_crit12_v1_registry() {
   new_home crit12-v1-registry || return
   repo "$HOME/work/r"
-  if git -C "$REPO" rev-parse --verify -q v1.0.0^{commit} >/dev/null 2>&1; then
+  if git -C "$REPO" rev-parse --verify -q 'v1.0.0^{commit}' >/dev/null 2>&1; then
     mkdir -p "$T/v1" && git -C "$REPO" archive v1.0.0 | tar -x -C "$T/v1"
     must bash "$T/v1/gitsetu" add work "Pat Example" pat.work@example.com "$HOME/work" || return
   else
@@ -226,7 +226,7 @@ case_crit12_v1_registry() {
 case_crit13_installer() {
   [[ "$MODE" == "installed" ]] || return
   bare_home crit13-installer
-  if git -C "$REPO" rev-parse --verify -q v1.0.0^{commit} >/dev/null 2>&1; then
+  if git -C "$REPO" rev-parse --verify -q 'v1.0.0^{commit}' >/dev/null 2>&1; then
     git clone -q "$REPO" "$HOME/.local/share/gitsetu" && git -C "$HOME/.local/share/gitsetu" checkout -q v1.0.0
   else
     mkdir -p "$HOME/.local/share/gitsetu"

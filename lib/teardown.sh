@@ -252,7 +252,12 @@ teardown_config_dir() {
         print_error "Refusing unsafe teardown target: ${config_dir}"
         return 1
     fi
-    if declare -F canonicalize_path >/dev/null 2>&1; then
+    if declare -F is_canonical_path >/dev/null 2>&1; then
+        is_canonical_path "$config_dir" || {
+            print_error "Refusing non-canonical config root: $config_dir"
+            return 1
+        }
+    elif declare -F canonicalize_path >/dev/null 2>&1; then
         local canonical
         canonical=$(canonicalize_path "$config_dir") || return 1
         [[ "$canonical" == "$config_dir" ]] || {

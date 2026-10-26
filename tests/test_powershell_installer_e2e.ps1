@@ -176,6 +176,12 @@ public static class HostilePowerShell {
     if ($LASTEXITCODE -ne 0) { throw "PowerShell uninstaller failed" }
     if (Test-Path -LiteralPath $installRoot) { throw "Uninstaller left installation residue" }
 
+    $gitConfig = Join-Path $HOME ".gitconfig"
+    if (Test-Path -LiteralPath $gitConfig) {
+        $content = [IO.File]::ReadAllText($gitConfig)
+        if ($content -match 'gitsetu:managed') { throw "Uninstaller left managed blocks in .gitconfig" }
+    }
+
     Write-Host "PowerShell installer E2E: PASS" -ForegroundColor Green
 } finally {
     if ($null -eq $oldTestMode) { Remove-Item Env:GITSETU_TEST_MODE -ErrorAction SilentlyContinue } else { $env:GITSETU_TEST_MODE = $oldTestMode }

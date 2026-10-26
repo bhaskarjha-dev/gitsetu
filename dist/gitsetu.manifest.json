@@ -3,17 +3,17 @@
   "name": "gitsetu",
   "version": "1.1.0",
   "releaseState": "development",
-  "sourceCommit": "5b6ab5135f543f4546f96359da2041d95579866e",
-  "sourceDirty": "clean",
-  "bundleSha256": "5046c1356aff12e76e40c21fac60ba1d1c37bbf1fc18e3e4f0c05bce2ff483f1",
+  "sourceCommit": "5cc0d5a2a6c12371fe6ccc85f61c3ee146916e4f",
+  "sourceDirty": "dirty",
+  "bundleSha256": "51196ba22a968849e30cc8eba21a4fe63f5ee06f173035109f4d8df336e00336",
   "modules": [
     {
       "path": "lib/core.sh",
-      "sha256": "8a72bd6ce90d4859cbbcaca51a98598328c4bc1c633140bddf4992589bf84ced"
+      "sha256": "e097d6fe49b099ab11a963ff840b08abd7d5ede557a5b5b725ca3c65dc881910"
     },
     {
       "path": "lib/platform.sh",
-      "sha256": "139dec26afa2ffca2d061f80bd9c1b3de38ed89c526375328fc5ee5f3114d896"
+      "sha256": "896a6dc44db8dee2ec9ad864e32a037548f90c033d3375e4cc8a02c7dc7f1e84"
     },
     {
       "path": "lib/ui.sh",
@@ -21,11 +21,11 @@
     },
     {
       "path": "lib/validate.sh",
-      "sha256": "9647220a5d7317c0c9f009ac10a4f37f5880df0406d262bfb0f883fce2339c2b"
+      "sha256": "580ff79bf5fff6333f90275172637b87c026df437009ecd39c2863cefc9f06b3"
     },
     {
       "path": "lib/backup.sh",
-      "sha256": "83ff7a31e27ae9d5d1f66523dc7a745b4234e0ba2291ede8dae08dc7615be787"
+      "sha256": "425004a9f52fc5a880c4ab35d7b826a9c65d229d301f2a44542b261b4be8336a"
     },
     {
       "path": "lib/ssh.sh",
@@ -33,7 +33,7 @@
     },
     {
       "path": "lib/gitconfig.sh",
-      "sha256": "9591377b33d10eb476b9dea4d271fd008387d02cd8d00a31562352b865e24745"
+      "sha256": "0fcb1119b4ded719aef605e8f5c7bc8b13895b13090245f958f8d5e8de0bd3b2"
     },
     {
       "path": "lib/guard.sh",
@@ -41,7 +41,7 @@
     },
     {
       "path": "lib/doctor.sh",
-      "sha256": "51496661042a7f523f681458c11da7f70dda0095094e1a342f919b9a6ddb44f7"
+      "sha256": "31c155162b8bc7d02b58847934d27f4163894b390b2a5b5964ff0b7e2e44c2ae"
     },
     {
       "path": "lib/verify.sh",
@@ -49,7 +49,7 @@
     },
     {
       "path": "lib/teardown.sh",
-      "sha256": "080ece0d21f3185cbd40cdf47d278bdd8909486fb9f7f06eecea2317aaa15214"
+      "sha256": "087652ecdf3c2cfed7c1ee892ff4c6156723a2c0a634e2001b721bae51726c9e"
     },
     {
       "path": "lib/discovery.sh",
@@ -61,7 +61,7 @@
     },
     {
       "path": "lib/completion.sh",
-      "sha256": "b39af773d123ece238da672daf4f2b9fe0ea4b34da323bc3a3a7efaf87933f48"
+      "sha256": "b3a85f1beb9281de564e26a9c5061be640d3d98ecf419799313706eb63f1662c"
     }
   ]
 }

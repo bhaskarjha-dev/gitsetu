@@ -784,6 +784,8 @@ ${BOLD}USAGE${RESET}
                                      --force: Bypass confirmation prompt
     gitsetu guard --install          Install pre-commit identity guard hook
     gitsetu guard --uninstall        Remove the guard hook (explicit policy opt-out)
+    gitsetu explain [path]           Trace identity origin and effective config
+    gitsetu import [--yes]           Adopt unmanaged includeIf identity routes
     gitsetu --help, -h               Show this help
     gitsetu --version, -v            Show version
 
@@ -911,6 +913,7 @@ cmd_status() {
             is_active=true
         fi
         printf '{\n'
+        printf '  "schema_version": "1.0.0",\n'
         printf '  "managed": %s,\n' "$is_managed"
         printf '  "profile": %s,\n' "$prof_name"
         printf '  "directory": "%s",\n' "$cwd"

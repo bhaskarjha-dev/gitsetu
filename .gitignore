@@ -35,6 +35,7 @@ ehthumbs.db
 
 # --- Temporary test directories ---
 tmp/
+temp/
 test_tmp/
 test_dir/
 

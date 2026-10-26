@@ -99,25 +99,52 @@ namespace GitSetuLauncher {
             string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
             string programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
             string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            string[] roots = new string[] {
-                Path.Combine(programFiles, "Git"),
-                Path.Combine(programFilesX86, "Git"),
-                Path.Combine(localAppData, "Programs", "Git")
-            };
+            List<string> rootList = new List<string>();
+            if (!String.IsNullOrWhiteSpace(programFiles)) rootList.Add(Path.Combine(programFiles, "Git"));
+            if (!String.IsNullOrWhiteSpace(programFilesX86)) rootList.Add(Path.Combine(programFilesX86, "Git"));
+            if (!String.IsNullOrWhiteSpace(localAppData)) rootList.Add(Path.Combine(localAppData, "Programs", "Git"));
+
+            string[] regKeys = new string[] { @"SOFTWARE\GitForWindows", @"SOFTWARE\WOW6432Node\GitForWindows" };
+            foreach (string regKey in regKeys) {
+                try {
+                    using (var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(regKey)) {
+                        if (key != null) {
+                            string p = key.GetValue("InstallPath") as string;
+                            if (!String.IsNullOrWhiteSpace(p) && Directory.Exists(p)) rootList.Add(p);
+                        }
+                    }
+                } catch { }
+                try {
+                    using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(regKey)) {
+                        if (key != null) {
+                            string p = key.GetValue("InstallPath") as string;
+                            if (!String.IsNullOrWhiteSpace(p) && Directory.Exists(p)) rootList.Add(p);
+                        }
+                    }
+                } catch { }
+            }
+
+            string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (!String.IsNullOrWhiteSpace(userProfile)) {
+                string scoopGit = Path.Combine(userProfile, "scoop", "apps", "git", "current");
+                if (Directory.Exists(scoopGit)) rootList.Add(scoopGit);
+            }
+
             string[] relatives = new string[] {
                 Path.Combine("bin", "bash.exe"),
                 Path.Combine("usr", "bin", "bash.exe")
             };
 
-            foreach (string root in roots) {
+            foreach (string root in rootList) {
                 if (String.IsNullOrWhiteSpace(root)) continue;
+                string allowedReparse = GetAllowedScoopCurrent(root);
                 foreach (string relative in relatives) {
                     string candidate = Path.GetFullPath(Path.Combine(root, relative));
                     string rootPrefix = Path.GetFullPath(root).TrimEnd('\\') + "\\";
                     if (!candidate.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase)) continue;
                     if (!File.Exists(candidate)) continue;
                     try {
-                        ValidateRegularFile(candidate, "Git for Windows Bash", false, null);
+                        ValidateRegularFile(candidate, "Git for Windows Bash", false, allowedReparse);
                         return candidate;
                     } catch (UnauthorizedAccessException) {
                         // An inaccessible/untrusted candidate is never promoted.

@@ -566,6 +566,7 @@ run_doctor_json() {
     fi
 
     printf '{\n'
+    printf '  "schema_version": "1.0.0",\n'
     printf '  "status": "%s",\n' "$overall_status"
     printf '  "issuesFound": %d,\n' "$issues"
     printf '  "checks": [\n'
@@ -613,7 +614,6 @@ _doctor_snapshot_file() {
             rm -f "$backup" 2>/dev/null || true
             return 1
         }
-        GITSETU_CLEANUP_FILES+=("$backup")
         doctor_rollback_paths+=("$backup")
         doctor_rollback_targets+=("$target")
         doctor_rollback_exists+=(1)
@@ -785,6 +785,17 @@ run_doctor_repair() {
     local doctor_rollback_exists=()
     local doctor_rollback_modes=()
 
+    # shellcheck disable=SC2329
+    _doctor_emergency_rollback() {
+        _doctor_rollback_files 2>/dev/null || true
+        _doctor_discard_rollbacks 2>/dev/null || true
+        if [[ "${lock_held:-0}" -eq 1 ]]; then
+            release_lock 2>/dev/null || true
+            lock_held=0
+        fi
+    }
+    trap '_doctor_emergency_rollback; gitsetu_early_cleanup' INT TERM HUP EXIT
+
     if [[ "$gitconfig_needs_repair" -eq 1 || "$cred_needs_repair" -eq 1 || "$v1_registry_needs_repair" -eq 1 ]] && ! _doctor_snapshot_file "$HOME/.gitconfig"; then
         print_error "Unable to create a rollback snapshot for ~/.gitconfig; repair was not started."
         release_lock || true
@@ -866,6 +877,7 @@ run_doctor_repair() {
         return 1
     fi
 
+    trap gitsetu_early_cleanup EXIT
     print_success "Repair complete. Required configuration was regenerated successfully."
     return 0
 }
