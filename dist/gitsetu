@@ -2595,6 +2595,11 @@ copy_to_clipboard() {
             return 0
         fi
         return 1
+    elif [[ -n "${WAYLAND_DISPLAY:-}" ]] && command -v wl-copy >/dev/null 2>&1; then
+        if printf "%s" "$text" | wl-copy >/dev/null 2>&1; then
+            return 0
+        fi
+        return 1
     elif command -v xclip >/dev/null 2>&1; then
         if printf "%s" "$text" | xclip -selection clipboard >/dev/null 2>&1; then
             return 0
@@ -2766,7 +2771,16 @@ print_key_box() {
     local label="${1:-}"
     local email="${2:-}"
     local pubkey_path="${3:-}"
+    local provider="${4:-}"
     local safe_label safe_email key_content
+    local add_url="https://github.com/settings/ssh/new"
+    local lower_provider
+    lower_provider=$(printf '%s' "$provider" | tr '[:upper:]' '[:lower:]')
+    if [[ "$lower_provider" == *"gitlab"* ]]; then
+        add_url="https://gitlab.com/-/user_settings/ssh_keys"
+    elif [[ "$lower_provider" == *"bitbucket"* ]]; then
+        add_url="https://bitbucket.org/account/settings/ssh-keys/"
+    fi
 
     if [[ ! -f "$pubkey_path" ]]; then
         print_error "Key file not found: $pubkey_path"
@@ -2785,11 +2799,11 @@ print_key_box() {
     printf >&2 '  %b└──────────────────────────────────────────┘%b\n' "$DIM" "$RESET"
 
     if copy_to_clipboard "$key_content"; then
-        printf >&2 '  %b%s%b %bCOPIED TO CLIPBOARD!%b Add it here: %bhttps://github.com/settings/ssh/new%b\n' \
-            "$GREEN" "$SYM_CHECK" "$RESET" "$BOLD" "$RESET" "$CYAN" "$RESET"
+        printf >&2 '  %b%s%b %bCOPIED TO CLIPBOARD!%b Add it here: %b%s%b\n' \
+            "$GREEN" "$SYM_CHECK" "$RESET" "$BOLD" "$RESET" "$CYAN" "$add_url" "$RESET"
     else
-        printf >&2 '  %b%s%b Copy and add at: %bhttps://github.com/settings/ssh/new%b\n' \
-            "$BLUE" "$SYM_INFO" "$RESET" "$BOLD" "$RESET"
+        printf >&2 '  %b%s%b Copy and add at: %b%s%b\n' \
+            "$BLUE" "$SYM_INFO" "$RESET" "$BOLD" "$add_url" "$RESET"
     fi
     printf >&2 '\n'
 }
@@ -6698,12 +6712,17 @@ display_public_keys() {
         }
 
         if [[ -f "$pubkey" ]]; then
-            print_key_box "$label" "$email" "$pubkey"
+            print_key_box "$label" "$email" "$pubkey" "$provider"
+            _ssh_preseed_known_hosts "$provider"
             if [[ "$provider" == *"github"* ]]; then
                 local puser="${PROFILE_USERS[$i]:-}"
                 if ! try_gh_key_upload "$label" "$pubkey" "$puser"; then
                     print_info "To add key manually, copy the key above and add at: https://github.com/settings/ssh/new"
                 fi
+            elif [[ "$provider" == *"gitlab"* ]]; then
+                print_info "To add key manually, copy the key above and add at: https://gitlab.com/-/user_settings/ssh_keys"
+            elif [[ "$provider" == *"bitbucket"* ]]; then
+                print_info "To add key manually, copy the key above and add at: https://bitbucket.org/account/settings/ssh-keys/"
             fi
         else
             print_warning "Key not found for '$label': $pubkey"
@@ -6901,6 +6920,32 @@ auto_register_ssh_keys() {
     fi
 
     return 0
+}
+
+# ------------------------------------------------------------------------------
+# _ssh_preseed_known_hosts — Pre-seed known_hosts for provider to prevent prompts
+# ------------------------------------------------------------------------------
+_ssh_preseed_known_hosts() {
+    # Skip in test environments unless explicitly forced, or in dry-run mode
+    if [[ -n "${GITSETU_TEST:-}" && -z "${GITSETU_TEST_SSH_PRESEED:-}" ]] || [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
+        return 0
+    fi
+    local host="${1:-}"
+    [[ -n "$host" ]] || return 0
+    # Strip any user@ or protocol prefix
+    host="${host#*@}"
+    host="${host%%:*}"
+    [[ "$host" =~ ^[a-zA-Z0-9.-]+$ ]] || return 0
+
+    local known_hosts="${HOME}/.ssh/known_hosts"
+    mkdir -p "${HOME}/.ssh" 2>/dev/null || true
+    chmod 700 "${HOME}/.ssh" 2>/dev/null || true
+    if command -v ssh-keyscan >/dev/null 2>&1; then
+        if ! grep -q "^$host " "$known_hosts" 2>/dev/null; then
+            ssh-keyscan -H "$host" 2>/dev/null >> "$known_hosts" || true
+            chmod 600 "$known_hosts" 2>/dev/null || true
+        fi
+    fi
 }
 
 # ------------------------------------------------------------------------------
@@ -8279,9 +8324,18 @@ $raw_hooks
 RAW_EOF
     fi
 
+    if [[ -n "$DISPLACED" && "$DISPLACED" != /* && ! "$DISPLACED" =~ ^[a-zA-Z]:[/\\] ]]; then
+        TOP_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+        DISPLACED="$TOP_DIR/$DISPLACED"
+    fi
+
     if [[ -z "$DISPLACED" ]]; then
         COMMON_DIR="$(git rev-parse --git-common-dir 2>/dev/null || true)"
         if [[ -n "$COMMON_DIR" ]]; then
+            if [[ "$COMMON_DIR" != /* && ! "$COMMON_DIR" =~ ^[a-zA-Z]:[/\\] ]]; then
+                TOP_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+                COMMON_DIR="$TOP_DIR/$COMMON_DIR"
+            fi
             DISPLACED="$COMMON_DIR/hooks"
         fi
     fi
@@ -8540,6 +8594,91 @@ _doctor_active_profile() {
 }
 
 # ------------------------------------------------------------------------------
+# Diagnostic Environment Check Helpers
+# ------------------------------------------------------------------------------
+
+doctor_check_clipboard() {
+    local tool="None"
+    if command -v pbcopy >/dev/null 2>&1; then
+        tool="pbcopy"
+    elif command -v clip.exe >/dev/null 2>&1; then
+        tool="clip.exe"
+    elif [[ -n "${WAYLAND_DISPLAY:-}" ]] && command -v wl-copy >/dev/null 2>&1; then
+        tool="wl-copy"
+    elif command -v xclip >/dev/null 2>&1; then
+        tool="xclip"
+    elif command -v xsel >/dev/null 2>&1; then
+        tool="xsel"
+    fi
+    printf '%s' "$tool"
+}
+
+doctor_check_known_hosts() {
+    local kh="$HOME/.ssh/known_hosts"
+    if [[ ! -f "$kh" || ! -s "$kh" ]]; then
+        printf 'missing'
+        return 1
+    fi
+    local found=()
+    if grep -q "github\.com" "$kh" 2>/dev/null; then
+        found+=("github.com")
+    fi
+    if grep -q "gitlab\.com" "$kh" 2>/dev/null; then
+        found+=("gitlab.com")
+    fi
+    if grep -q "bitbucket\.org" "$kh" 2>/dev/null; then
+        found+=("bitbucket.org")
+    fi
+    if grep -q "^|1|" "$kh" 2>/dev/null; then
+        found+=("hashed")
+    fi
+    if [[ ${#found[@]} -eq 0 ]]; then
+        printf 'no-major-hosts'
+        return 1
+    fi
+    local IFS=", "
+    printf '%s' "${found[*]}"
+    return 0
+}
+
+doctor_check_git_version() {
+    if ! command -v git >/dev/null 2>&1; then
+        printf 'missing'
+        return 1
+    fi
+    local ver_str major minor
+    ver_str=$(git --version 2>/dev/null || true)
+    if [[ "$ver_str" =~ ([0-9]+)\.([0-9]+) ]]; then
+        major="${BASH_REMATCH[1]}"
+        minor="${BASH_REMATCH[2]}"
+        if [[ "$major" -gt 2 || ( "$major" -eq 2 && "$minor" -ge 36 ) ]]; then
+            printf '%s' "$ver_str"
+            return 0
+        else
+            printf '%s (< 2.36)' "$ver_str"
+            return 2
+        fi
+    fi
+    printf '%s' "${ver_str:-unknown}"
+    return 0
+}
+
+doctor_check_openssl() {
+    if ! command -v openssl >/dev/null 2>&1; then
+        printf 'missing'
+        return 1
+    fi
+    local ver
+    ver=$(openssl version 2>/dev/null || true)
+    if ! openssl enc -ciphers 2>/dev/null | grep -qi "aes-256-ctr" && ! openssl enc -aes-256-ctr -help >/dev/null 2>&1; then
+        printf '%s (missing aes-256-ctr)' "$ver"
+        return 1
+    fi
+    printf '%s' "$ver"
+    return 0
+}
+
+# ------------------------------------------------------------------------------
 # run_doctor — required offline checks determine the exit status
 # ------------------------------------------------------------------------------
 
@@ -8571,6 +8710,43 @@ run_doctor() {
         printf >&2 "    Matched Rule: No mapped profile directory; using global fallback.\n"
     else
         printf >&2 "    Matched Rule: %s\n" "$(_doctor_safe_display "$ACTIVE_DOCTOR_DIR")"
+    fi
+    printf >&2 '\n'
+
+    printf >&2 "  %bSystem & Cryptographic Environment:%b\n" "$BOLD" "$RESET"
+    local git_ver git_ver_status=0
+    git_ver=$(doctor_check_git_version) || git_ver_status=$?
+    if [[ "$git_ver_status" -eq 1 ]]; then
+        printf >&2 "    Git Version: %bERROR (not installed or in PATH)%b\n" "$RED" "$RESET"
+        issues_found=1
+    elif [[ "$git_ver_status" -eq 2 ]]; then
+        printf >&2 "    Git Version: %bWARNING (%s; version >= 2.36 recommended)%b\n" "$YELLOW" "$git_ver" "$RESET"
+    else
+        printf >&2 "    Git Version: OK (%s)\n" "$git_ver"
+    fi
+
+    local openssl_ver openssl_status=0
+    openssl_ver=$(doctor_check_openssl) || openssl_status=$?
+    if [[ "$openssl_status" -ne 0 ]]; then
+        printf >&2 "    OpenSSL / Ciphers: %bWARNING (%s)%b\n" "$YELLOW" "$openssl_ver" "$RESET"
+    else
+        printf >&2 "    OpenSSL / Ciphers: OK (%s)\n" "$openssl_ver"
+    fi
+
+    local clip_tool
+    clip_tool=$(doctor_check_clipboard)
+    if [[ "$clip_tool" == "None" ]]; then
+        printf >&2 "    Clipboard Tool: None (auto-copy disabled)\n"
+    else
+        printf >&2 "    Clipboard Tool: OK (%s)\n" "$clip_tool"
+    fi
+
+    local kh_status=0 kh_info
+    kh_info=$(doctor_check_known_hosts) || kh_status=$?
+    if [[ "$kh_status" -ne 0 ]]; then
+        printf >&2 "    Known Hosts: %bWARNING (%s)%b\n" "$YELLOW" "$kh_info" "$RESET"
+    else
+        printf >&2 "    Known Hosts: OK (%s)\n" "$kh_info"
     fi
     printf >&2 '\n'
 
@@ -8771,6 +8947,120 @@ run_doctor() {
     fi
 
     print_success "All required offline diagnostics passed."
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# run_doctor_json — Machine-readable diagnostics in JSON format
+# ------------------------------------------------------------------------------
+run_doctor_json() {
+    local issues=0
+    local checks=()
+
+    # 1. git_version
+    local git_ver git_status="pass" git_ver_rc=0
+    git_ver=$(doctor_check_git_version) || git_ver_rc=$?
+    if [[ "$git_ver_rc" -eq 1 ]]; then
+        git_status="fail"
+        issues=$((issues + 1))
+    elif [[ "$git_ver_rc" -eq 2 ]]; then
+        git_status="warn"
+    fi
+    checks+=("{\"name\": \"git_version\", \"status\": \"$git_status\", \"details\": \"$git_ver\"}")
+
+    # 2. openssl
+    local openssl_ver openssl_status="pass" openssl_rc=0
+    openssl_ver=$(doctor_check_openssl) || openssl_rc=$?
+    if [[ "$openssl_rc" -ne 0 ]]; then
+        openssl_status="warn"
+    fi
+    checks+=("{\"name\": \"openssl\", \"status\": \"$openssl_status\", \"details\": \"$openssl_ver\"}")
+
+    # 3. clipboard
+    local clip_tool clip_status="pass"
+    clip_tool=$(doctor_check_clipboard)
+    if [[ "$clip_tool" == "None" ]]; then
+        clip_status="warn"
+    fi
+    checks+=("{\"name\": \"clipboard\", \"status\": \"$clip_status\", \"details\": \"$clip_tool\"}")
+
+    # 4. known_hosts
+    local kh_info kh_status="pass" kh_rc=0
+    kh_info=$(doctor_check_known_hosts) || kh_rc=$?
+    if [[ "$kh_rc" -ne 0 ]]; then
+        kh_status="warn"
+    fi
+    checks+=("{\"name\": \"known_hosts\", \"status\": \"$kh_status\", \"details\": \"$kh_info\"}")
+
+    # 5. profiles_registry
+    local reg_status="pass" reg_details="v2 registry valid (${PROFILE_COUNT:-0} profiles)"
+    if [[ ! -f "$GITSETU_PROFILES_CONF" || -L "$GITSETU_PROFILES_CONF" ]]; then
+        reg_status="fail"
+        reg_details="registry missing or unsafe"
+        issues=$((issues + 1))
+    elif [[ "$(head -n 1 "$GITSETU_PROFILES_CONF" 2>/dev/null || true)" != "# gitsetu-registry-v2" ]]; then
+        reg_status="fail"
+        reg_details="registry header missing or unsupported"
+        issues=$((issues + 1))
+    elif [[ "${PROFILE_COUNT:-0}" -eq 0 ]]; then
+        reg_status="fail"
+        reg_details="registry contains no complete profiles"
+        issues=$((issues + 1))
+    fi
+    checks+=("{\"name\": \"profiles_registry\", \"status\": \"$reg_status\", \"details\": \"$reg_details\"}")
+
+    # 6. gitconfig
+    local gc_status="pass" gc_details="managed blocks valid"
+    if [[ ! -f "$HOME/.gitconfig" || -L "$HOME/.gitconfig" ]]; then
+        gc_status="fail"
+        gc_details="gitconfig missing or unsafe"
+        issues=$((issues + 1))
+    else
+        local head_start head_end tail_start tail_end
+        head_start=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_HEAD_START:-# [gitsetu:managed:head:start]}")
+        head_end=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_HEAD_END:-# [gitsetu:managed:head:end]}")
+        tail_start=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_START:-# [gitsetu:managed:start]}")
+        tail_end=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_END:-# [gitsetu:managed:end]}")
+        if ! [[ "$tail_start" == "1" && "$tail_end" == "1" && ( ( "$head_start" == "1" && "$head_end" == "1" ) || ( "$head_start" == "0" && "$head_end" == "0" ) ) ]]; then
+            gc_status="fail"
+            gc_details="managed markers missing or duplicated"
+            issues=$((issues + 1))
+        fi
+    fi
+    checks+=("{\"name\": \"gitconfig\", \"status\": \"$gc_status\", \"details\": \"$gc_details\"}")
+
+    # 7. ssh_config
+    local sc_status="pass" sc_details="gitsetu include present"
+    if [[ ! -f "$HOME/.ssh/config" || -L "$HOME/.ssh/config" ]] || ! _doctor_ssh_include_present || ! _doctor_ssh_config_valid; then
+        sc_status="fail"
+        sc_details="gitsetu include missing or invalid"
+        issues=$((issues + 1))
+    fi
+    checks+=("{\"name\": \"ssh_config\", \"status\": \"$sc_status\", \"details\": \"$sc_details\"}")
+
+    local overall_status="healthy"
+    if [[ "$issues" -gt 0 ]]; then
+        overall_status="unhealthy"
+    fi
+
+    printf '{\n'
+    printf '  "status": "%s",\n' "$overall_status"
+    printf '  "issuesFound": %d,\n' "$issues"
+    printf '  "checks": [\n'
+    local ci
+    for (( ci=0; ci<${#checks[@]}; ci++ )); do
+        if [[ "$ci" -lt $((${#checks[@]} - 1)) ]]; then
+            printf '    %s,\n' "${checks[$ci]}"
+        else
+            printf '    %s\n' "${checks[$ci]}"
+        fi
+    done
+    printf '  ]\n'
+    printf '}\n'
+
+    if [[ "$issues" -gt 0 ]]; then
+        return 1
+    fi
     return 0
 }
 
@@ -12818,7 +13108,7 @@ _gitsetu() {
     prev="${COMP_WORDS[COMP_CWORD-1]:-}"
     command="${COMP_WORDS[1]:-}"
     subcommand="${COMP_WORDS[2]:-}"
-    opts="setup init add remove status verify doctor run teardown guard profile backup restore credential prompt update --help --version -h -v"
+    opts="setup init add remove status audit verify doctor run teardown guard profile backup restore credential prompt update --help --version -h -v"
 
     if [[ ${COMP_CWORD:-0} -eq 1 ]]; then
         # shellcheck disable=SC2207
@@ -12830,6 +13120,13 @@ _gitsetu() {
         setup|init)
             # shellcheck disable=SC2207
             COMPREPLY=( $(compgen -W "--auto --yes --dry-run" -- "$cur") )
+            ;;
+        status)
+            # shellcheck disable=SC2207
+            COMPREPLY=( $(compgen -W "--porcelain --json" -- "$cur") )
+            ;;
+        audit)
+            COMPREPLY=()
             ;;
         profile)
             if [[ ${COMP_CWORD:-0} -eq 2 ]]; then
@@ -12876,7 +13173,7 @@ _gitsetu() {
             ;;
         doctor)
             # shellcheck disable=SC2207
-            COMPREPLY=( $(compgen -W "--repair --dry-run" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--repair --dry-run --json" -- "$cur") )
             ;;
         update)
             # shellcheck disable=SC2207
@@ -12989,9 +13286,11 @@ ${BOLD}USAGE${RESET}
     gitsetu credential <get|store|erase>
                                      Git credential-helper protocol
     gitsetu remove <label>           Remove a profile
-    gitsetu status                   Show current identity configuration
+    gitsetu status [--porcelain] [--json]
+                                     Show current identity configuration
+    gitsetu audit [count]            Audit last N commits for identity mismatches
     gitsetu verify                   Test SSH keys and git config
-    gitsetu doctor [--repair] [--dry-run]
+    gitsetu doctor [--repair] [--dry-run] [--json]
                                      Run diagnostic checks or auto-heal configuration
     gitsetu update --development     Verify a clean local development checkout
     gitsetu prompt                   Print active profile for \$PS1
@@ -13108,6 +13407,50 @@ cmd_status() {
         printf 'email=%s\n' "$current_email"
         printf 'key=%s\n' "$key_val"
         printf 'guard=%s\n' "$guard_val"
+        return 0
+    fi
+
+    if [[ "${2:-0}" -eq 1 ]]; then
+        local is_managed=false is_active=false
+        local exp_email="" act_email=""
+        local prof_name="null"
+        if [[ -n "$active_context" ]]; then
+            is_managed=true
+            prof_name="\"$active_context\""
+            local pconf="$GITSETU_PROFILES_DIR/${active_context}.gitconfig"
+            if [[ -f "$pconf" ]]; then
+                exp_email=$(git config --file "$pconf" user.email 2>/dev/null || true)
+            fi
+        fi
+        if [[ -n "$current_email" ]]; then
+            act_email="$current_email"
+        fi
+        if [[ "$is_managed" = true && -n "$exp_email" && "$exp_email" == "$act_email" ]]; then
+            is_active=true
+        fi
+        printf '{\n'
+        printf '  "managed": %s,\n' "$is_managed"
+        printf '  "profile": %s,\n' "$prof_name"
+        printf '  "directory": "%s",\n' "$cwd"
+        if [[ -n "$exp_email" ]]; then
+            printf '  "expectedEmail": "%s",\n' "$exp_email"
+        else
+            printf '  "expectedEmail": null,\n'
+        fi
+        if [[ -n "$act_email" ]]; then
+            printf '  "actualEmail": "%s",\n' "$act_email"
+        else
+            printf '  "actualEmail": null,\n'
+        fi
+        printf '  "active": %s,\n' "$is_active"
+        printf '  "profiles": ['
+        local pi
+        for (( pi=0; pi<${PROFILE_COUNT:-0}; pi++ )); do
+            if [[ "$pi" -gt 0 ]]; then printf ', '; fi
+            printf '"%s"' "${PROFILE_LABELS[$pi]}"
+        done
+        printf ']\n'
+        printf '}\n'
         return 0
     fi
 
@@ -13748,18 +14091,126 @@ cmd_credential() {
 }
 
 # ------------------------------------------------------------------------------
+# cmd_audit — Retrospectively audit recent commit author/committer identities
+# Usage: gitsetu audit [count]
+# ------------------------------------------------------------------------------
+cmd_audit() {
+    local count="${1:-10}"
+    if [[ ! "$count" =~ ^[1-9][0-9]*$ ]]; then
+        print_error "Invalid commit count: $count (must be a positive integer)"
+        return 1
+    fi
+
+    detect_os
+    if ! load_profiles; then
+        print_error "The profile registry is invalid or uses an unsupported format."
+        return 1
+    fi
+
+    if ! command -v git >/dev/null 2>&1; then
+        print_error "Git is not installed or not in PATH."
+        return 1
+    fi
+
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        print_error "Not inside a git repository."
+        return 1
+    fi
+
+    if ! git rev-parse HEAD >/dev/null 2>&1; then
+        print_info "Repository has no commits to audit."
+        return 0
+    fi
+
+    local toplevel
+    toplevel=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+
+    local guard_status=0
+    _guard_managed_profile_for_path "$toplevel" || guard_status=$?
+
+    if [[ "$guard_status" -ne 0 || -z "${GUARD_PROFILE_LABEL:-}" ]]; then
+        print_info "Repository at $toplevel is not managed by GitSetu."
+        return 0
+    fi
+
+    local profile_label="$GUARD_PROFILE_LABEL"
+    local profile_config="$GUARD_PROFILE_CONFIG"
+    local expected_email="" expected_name=""
+    if [[ -f "$profile_config" ]]; then
+        expected_email=$(git config --file "$profile_config" user.email 2>/dev/null || true)
+        expected_name=$(git config --file "$profile_config" user.name 2>/dev/null || true)
+    fi
+
+    if [[ -z "$expected_email" ]]; then
+        print_error "Managed profile '$profile_label' has no configured email in $profile_config"
+        return 1
+    fi
+
+    local log_lines
+    log_lines=$(git log -n "$count" --format='%H%x09%an%x09%ae%x09%cn%x09%ce%x09%s' 2>/dev/null || true)
+    if [[ -z "$log_lines" ]]; then
+        print_info "No commits found to audit."
+        return 0
+    fi
+
+    print_section "GitSetu Commit History Identity Audit"
+    printf >&2 "  Repository:       %s\n" "$toplevel"
+    printf >&2 "  Managed Profile:  %s\n" "$profile_label"
+    printf >&2 "  Expected Email:   %s\n" "$expected_email"
+    printf >&2 "  Auditing last %d commit(s)...\n\n" "$count"
+
+    local mismatches=0 total=0
+    local hash an ae cn ce subj short_hash commit_ok
+    while IFS=$'\t' read -r hash an ae cn ce subj || [[ -n "$hash" ]]; do
+        [[ -n "$hash" ]] || continue
+        total=$((total + 1))
+        short_hash="${hash:0:8}"
+        commit_ok=1
+
+        if [[ "$ae" != "$expected_email" || "$ce" != "$expected_email" ]]; then
+            commit_ok=0
+            mismatches=$((mismatches + 1))
+        fi
+
+        if [[ "$commit_ok" -eq 1 ]]; then
+            printf >&2 "  %b%s%b %s - %s (%s)\n" "$GREEN" "$SYM_CHECK" "$RESET" "$short_hash" "$subj" "$ae"
+        else
+            printf >&2 "  %b%s%b %s - %s\n" "$RED" "$SYM_CROSS" "$RESET" "$short_hash" "$subj"
+            if [[ "$ae" != "$expected_email" ]]; then
+                printf >&2 "      %bAuthor:%b    %s <%s> %b(expected: <%s>)%b\n" "$RED" "$RESET" "$an" "$ae" "$YELLOW" "$expected_email" "$RESET"
+            fi
+            if [[ "$ce" != "$expected_email" ]]; then
+                printf >&2 "      %bCommitter:%b %s <%s> %b(expected: <%s>)%b\n" "$RED" "$RESET" "$cn" "$ce" "$YELLOW" "$expected_email" "$RESET"
+            fi
+        fi
+    done <<< "$log_lines"
+
+    printf >&2 '\n'
+    if [[ "$mismatches" -gt 0 ]]; then
+        printf >&2 "  %bAudit Result: FAILED (%d of %d commit(s) contain identity mismatches)%b\n\n" "$RED" "$mismatches" "$total" "$RESET"
+        printf >&2 "  To fix author/committer identity on the most recent commit:\n"
+        printf >&2 "    git commit --amend --reset-author --no-edit\n\n"
+        return 1
+    else
+        printf >&2 "  %bAudit Result: PASSED (All %d commit(s) match profile '%s' <%s>)%b\n\n" "$GREEN" "$total" "$profile_label" "$expected_email" "$RESET"
+        return 0
+    fi
+}
+
+# ------------------------------------------------------------------------------
 # cmd_doctor — Run diagnostics or repair configuration
 # ------------------------------------------------------------------------------
 cmd_doctor() {
-    local repair=0
+    local repair=0 json_mode=0
     local arg
     for arg in "$@"; do
         case "$arg" in
             --repair) repair=1 ;;
             --dry-run) GITSETU_DRY_RUN=1 ;;
+            --json) json_mode=1 ;;
             *)
                 print_error "Unknown doctor option: $arg"
-                printf >&2 'Usage: gitsetu doctor [--repair] [--dry-run]\n'
+                printf >&2 'Usage: gitsetu doctor [--repair] [--dry-run] [--json]\n'
                 return 1
                 ;;
         esac
@@ -13772,6 +14223,8 @@ cmd_doctor() {
     fi
     if [[ "$repair" -eq 1 ]]; then
         run_doctor_repair
+    elif [[ "$json_mode" -eq 1 ]]; then
+        run_doctor_json
     else
         run_doctor
     fi
@@ -13784,7 +14237,8 @@ show_brief_usage() {
     printf >&2 '%bgitsetu%b v%s — One command. All identities. Every machine.\n\n' \
         "$BOLD" "$RESET" "$GITSETU_VERSION"
     printf >&2 'Usage: gitsetu setup [--auto] [--dry-run]    Start the setup wizard\n'
-    printf >&2 '       gitsetu status               Show current identity\n'
+    printf >&2 '       gitsetu status [--json]      Show current identity\n'
+    printf >&2 '       gitsetu audit [count]        Audit recent commits for identity\n'
     printf >&2 '       gitsetu profile <action>     Manage v2 profiles\n'
     printf >&2 '       gitsetu credential <action>  Git credential helper protocol\n'
     printf >&2 '       gitsetu verify               Test SSH and git config\n'
@@ -13854,19 +14308,23 @@ main() {
             cmd_add "$@"
             ;;
         status)
-            local porcelain=0
+            local porcelain=0 json_mode=0
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --porcelain) porcelain=1 ;;
+                    --json) json_mode=1 ;;
                     *)
                         print_error "Unknown status option: $1"
-                        printf >&2 'Usage: gitsetu status [--porcelain]\n'
+                        printf >&2 'Usage: gitsetu status [--porcelain] [--json]\n'
                         return 1
                         ;;
                 esac
                 shift
             done
-            cmd_status "$porcelain"
+            cmd_status "$porcelain" "$json_mode"
+            ;;
+        audit)
+            cmd_audit "$@"
             ;;
         verify)
             while [[ $# -gt 0 ]]; do

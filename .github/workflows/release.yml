@@ -57,13 +57,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sha256sum dist/gitsetu install.sh uninstall.sh > SHA256SUMS
+          sha256sum dist/gitsetu dist/gitsetu.manifest.json install.sh uninstall.sh > SHA256SUMS
 
       - name: Attest POSIX build provenance
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
           subject-path: |
             dist/gitsetu
+            dist/gitsetu.manifest.json
             install.sh
             uninstall.sh
             SHA256SUMS
@@ -93,6 +94,7 @@ jobs:
           name: posix-artifacts
           path: |
             dist/gitsetu
+            dist/gitsetu.manifest.json
             install.sh
             uninstall.sh
             SHA256SUMS
@@ -128,17 +130,25 @@ jobs:
           
           # Create zip archive
           & .\packaging\windows\build_release_zip.ps1 -SourceDir $sourceRoot -OutFile "dist\gitsetu-windows.zip"
+          Copy-Item -LiteralPath "install.ps1" -Destination "dist\install.ps1"
+          Copy-Item -LiteralPath "uninstall.ps1" -Destination "dist\uninstall.ps1"
 
       - name: Attest Windows build provenance
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
-          subject-path: dist/gitsetu-windows.zip
+          subject-path: |
+            dist/gitsetu-windows.zip
+            dist/install.ps1
+            dist/uninstall.ps1
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: windows-artifacts
-          path: dist/gitsetu-windows.zip
+          path: |
+            dist/gitsetu-windows.zip
+            dist/install.ps1
+            dist/uninstall.ps1
 
   publish-release:
     name: Publish GitHub Release
@@ -173,9 +183,12 @@ jobs:
           fi
           gh release create "$TAG" \
             gitsetu \
+            gitsetu.manifest.json \
             gitsetu-windows.zip \
             install.sh \
             uninstall.sh \
+            install.ps1 \
+            uninstall.ps1 \
             SHA256SUMS \
             --title "GitSetu $TAG" \
             --generate-notes \

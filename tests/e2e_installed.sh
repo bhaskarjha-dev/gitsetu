@@ -201,9 +201,23 @@ case_crit11_vault() {
 # CRIT-12: v1.0.0 state keeps working after upgrading.
 case_crit12_v1_registry() {
   new_home crit12-v1-registry || return
-  mkdir -p "$T/v1" && git -C "$REPO" archive v1.0.0 | tar -x -C "$T/v1"
   repo "$HOME/work/r"
-  must bash "$T/v1/gitsetu" add work "Pat Example" pat.work@example.com "$HOME/work" || return
+  if git -C "$REPO" rev-parse --verify -q v1.0.0^{commit} >/dev/null 2>&1; then
+    mkdir -p "$T/v1" && git -C "$REPO" archive v1.0.0 | tar -x -C "$T/v1"
+    must bash "$T/v1/gitsetu" add work "Pat Example" pat.work@example.com "$HOME/work" || return
+  else
+    # Self-contained fixture fallback when running in a shallow clone without historical tags
+    mkdir -p "$HOME/.config/gitsetu/profiles" "$HOME/.ssh" "$HOME/work"
+    chmod 700 "$HOME/.ssh"
+    touch "$HOME/.ssh/id_ed25519_work" && chmod 600 "$HOME/.ssh/id_ed25519_work"
+    git config --global user.name "Pat Example"
+    git config --global user.email "pat.personal@example.com"
+    git config -f "$HOME/.config/gitsetu/profiles/work.gitconfig" user.name "Pat Example"
+    git config -f "$HOME/.config/gitsetu/profiles/work.gitconfig" user.email "pat.work@example.com"
+    printf '%s\n' '# gitsetu profile registry — generated on 2026-01-01' \
+      "work:pat.work@example.com:${HOME}/work:github.com:0:${HOME}/.ssh/id_ed25519_work:legacy_user" \
+      > "$HOME/.config/gitsetu/profiles.conf"
+  fi
   notty "$GS" status > "$T/status" 2>&1; local rc=$?
   [[ $rc -eq 0 ]] && grep -q work "$T/status" && ok || bad "status after v1.0.0 setup rc=$rc: $(grep -m1 -E 'legacy|✗' "$T/status" 2>/dev/null)"
 }
@@ -212,7 +226,13 @@ case_crit12_v1_registry() {
 case_crit13_installer() {
   [[ "$MODE" == "installed" ]] || return
   bare_home crit13-installer
-  git clone -q "$REPO" "$HOME/.local/share/gitsetu" && git -C "$HOME/.local/share/gitsetu" checkout -q v1.0.0
+  if git -C "$REPO" rev-parse --verify -q v1.0.0^{commit} >/dev/null 2>&1; then
+    git clone -q "$REPO" "$HOME/.local/share/gitsetu" && git -C "$HOME/.local/share/gitsetu" checkout -q v1.0.0
+  else
+    mkdir -p "$HOME/.local/share/gitsetu"
+    printf '#!/bin/sh\necho "gitsetu v1.0.0"\n' > "$HOME/.local/share/gitsetu/gitsetu"
+    chmod +x "$HOME/.local/share/gitsetu/gitsetu"
+  fi
   mkdir -p "$HOME/.local/bin" && ln -sf "$HOME/.local/share/gitsetu/gitsetu" "$HOME/.local/bin/gitsetu"
   copy_repo "$T/src"
   (cd "$T/src" && bash install.sh) > "$T/out" 2>&1; local rc=$?

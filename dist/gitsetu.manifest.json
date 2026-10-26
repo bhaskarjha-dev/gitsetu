@@ -3,9 +3,9 @@
   "name": "gitsetu",
   "version": "1.1.0",
   "releaseState": "development",
-  "sourceCommit": "c0fa7b734a13fa8f94d88615f826f8b1b39136d6",
+  "sourceCommit": "5b6ab5135f543f4546f96359da2041d95579866e",
   "sourceDirty": "clean",
-  "bundleSha256": "13803874f2fc1941e41ff1de166f72442d6ffcda19cc2f1bf4cad60b76735ffa",
+  "bundleSha256": "5046c1356aff12e76e40c21fac60ba1d1c37bbf1fc18e3e4f0c05bce2ff483f1",
   "modules": [
     {
       "path": "lib/core.sh",
@@ -13,11 +13,11 @@
     },
     {
       "path": "lib/platform.sh",
-      "sha256": "6fe536530f16d43b1f5795b76a2f3522b59a09ca4563c12d8415da0e1faa34f1"
+      "sha256": "139dec26afa2ffca2d061f80bd9c1b3de38ed89c526375328fc5ee5f3114d896"
     },
     {
       "path": "lib/ui.sh",
-      "sha256": "7e6420f50a9d0922f1787e9747c880588a326c4bab2523b3e1e1d8d89f0bc205"
+      "sha256": "9d976d84bb8be1e48fe6c35e4a5d9d390ee56945e34e7409d2625008f144a39f"
     },
     {
       "path": "lib/validate.sh",
@@ -29,7 +29,7 @@
     },
     {
       "path": "lib/ssh.sh",
-      "sha256": "90ba681fa18afd6925b6cce9938c95aee66689db3a6b46d65a61670d9585e38e"
+      "sha256": "9560ed62bb4a36a1208b231c233f3753720e2543fed804321a4dd193c11a65ab"
     },
     {
       "path": "lib/gitconfig.sh",
@@ -37,11 +37,11 @@
     },
     {
       "path": "lib/guard.sh",
-      "sha256": "a82c013355f3051fbf6539d3d285ca29789330c28a970829c2ff3844bb401960"
+      "sha256": "18645720cf8772ce750e6c242c571178fb43bcf2b100ea83f941383c8adcde7f"
     },
     {
       "path": "lib/doctor.sh",
-      "sha256": "694014f7690e3b661971b727563398d515b926edea904edf70dac2d694a26dd7"
+      "sha256": "51496661042a7f523f681458c11da7f70dda0095094e1a342f919b9a6ddb44f7"
     },
     {
       "path": "lib/verify.sh",
@@ -61,7 +61,7 @@
     },
     {
       "path": "lib/completion.sh",
-      "sha256": "a1ee9f99c877134d9c71d25b9318124bee1d95ff2272e10c66cbba931181b00d"
+      "sha256": "b39af773d123ece238da672daf4f2b9fe0ea4b34da323bc3a3a7efaf87933f48"
     }
   ]
 }

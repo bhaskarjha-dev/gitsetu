@@ -487,6 +487,7 @@ try {
     # Invoke the verified native launcher by an installation-root-relative path.
     # A bare command would be resolved from the caller's current directory or PATH.
     $cmdShim = "@echo off`r`nREM gitsetu-managed-installation v1`r`n`"%~dp0..\releases\$releaseId\gitsetu.exe`" %*`r`nexit /b %errorlevel%`r`n"
+    $psShim = "# gitsetu-managed-installation v1`r`n`$ErrorActionPreference = `"Stop`"`r`n`$exe = Join-Path `$PSScriptRoot `"`..\releases\$releaseId\gitsetu.exe`"`r`nif (-not (Test-Path -LiteralPath `$exe -PathType Leaf)) { throw `"GitSetu release executable is missing: `$exe`" }`r`n& `$exe @args`r`nexit `$LASTEXITCODE`r`n"
     $utf8NoBom = New-Object Text.UTF8Encoding($false)
     foreach ($name in @("gitsetu", "git-setu")) {
         $target = Join-Path $binDir $name
@@ -494,7 +495,7 @@ try {
             $item = Get-Item -LiteralPath $target -Force
             if ($item.PSIsContainer -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { Stop-Install "Refusing unrelated executable: $target" }
         }
-        Remove-Item -LiteralPath (Join-Path $binDir "$name.ps1") -Force -ErrorAction SilentlyContinue
+        [IO.File]::WriteAllText((Join-Path $binDir "$name.ps1"), $psShim, $utf8NoBom)
         [IO.File]::WriteAllText((Join-Path $binDir "$name.cmd"), $cmdShim, $utf8NoBom)
     }
 

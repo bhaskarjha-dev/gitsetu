@@ -19,6 +19,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: '20.19.4'
@@ -57,6 +58,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: '20.19.4'
@@ -68,9 +70,11 @@ jobs:
           /bin/bash -c 'test "${BASH_VERSINFO[0]}" -eq 3 && test "${BASH_VERSINFO[1]}" -eq 2'
       - name: Run native-Bash tests
         run: /bin/bash tests/run_all.sh
+      - name: Run cleanroom installed-copy E2E suite
+        run: /bin/bash tests/e2e_installed.sh --source
 
   windows:
-    name: Windows native launcher, PowerShell, Scoop, and extension
+    name: Windows native launcher, PowerShell installers, and shims
     runs-on: windows-latest
     timeout-minutes: 40
     defaults:
@@ -80,6 +84,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: '20.19.4'
