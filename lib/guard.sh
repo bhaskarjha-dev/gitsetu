@@ -125,11 +125,64 @@ _guard_managed_profile_for_path() {
         fi
     done
 
-    [[ "$best_len" -ge 0 ]] || return 1
-    GUARD_PROFILE_LABEL="$best_label"
-    GUARD_PROFILE_DIR="$best_dir"
-    GUARD_MATCH_LENGTH="$best_len"
-    GUARD_PROFILE_CONFIG="${GITSETU_PROFILES_DIR:-${GITSETU_CONFIG_DIR:-${HOME}/.config/gitsetu}/profiles}/${best_label}.gitconfig"
+    if [[ "$best_len" -ge 0 ]]; then
+        GUARD_PROFILE_LABEL="$best_label"
+        GUARD_PROFILE_DIR="$best_dir"
+        GUARD_MATCH_LENGTH="$best_len"
+        GUARD_PROFILE_CONFIG="${GITSETU_PROFILES_DIR:-${GITSETU_CONFIG_DIR:-${HOME}/.config/gitsetu}/profiles}/${best_label}.gitconfig"
+        return 0
+    fi
+
+    # Check remote URL routing if not matched by directory
+    local remotes_dir="${GITSETU_CONFIG_DIR:-$HOME/.config/gitsetu}/remotes"
+    if [[ -d "$remotes_dir" ]] && command -v git >/dev/null 2>&1; then
+        if git rev-parse --git-dir >/dev/null 2>&1; then
+            local rem_urls
+            rem_urls=$(git config --get-regexp '^remote\..*\.url$' 2>/dev/null | awk '{print $2}' || true)
+            if [[ -n "$rem_urls" ]]; then
+                local rf r_label r_pat rem_match_label=""
+                for rf in "$remotes_dir"/*.remotes; do
+                    [[ -f "$rf" ]] || continue
+                    r_label=$(basename "$rf" .remotes)
+                    local is_valid_profile=0 p_idx
+                    for (( p_idx=0; p_idx<PROFILE_COUNT; p_idx++ )); do
+                        if [[ "${PROFILE_LABELS[$p_idx]:-}" == "$r_label" ]]; then
+                            is_valid_profile=1
+                            break
+                        fi
+                    done
+                    [[ "$is_valid_profile" -eq 1 ]] || continue
+
+                    while IFS= read -r r_pat || [[ -n "$r_pat" ]]; do
+                        r_pat=$(printf '%s' "$r_pat" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+                        [[ -n "$r_pat" && "$r_pat" != \#* ]] || continue
+                        local u
+                        while IFS= read -r u || [[ -n "$u" ]]; do
+                            [[ -n "$u" ]] || continue
+                            case "$u" in
+                                $r_pat)
+                                    if [[ -n "$rem_match_label" && "$rem_match_label" != "$r_label" ]]; then
+                                        return 2
+                                    fi
+                                    rem_match_label="$r_label"
+                                    ;;
+                            esac
+                        done <<< "$rem_urls"
+                    done < "$rf"
+                done
+
+                if [[ -n "$rem_match_label" ]]; then
+                    GUARD_PROFILE_LABEL="$rem_match_label"
+                    GUARD_PROFILE_DIR=""
+                    GUARD_MATCH_LENGTH=0
+                    GUARD_PROFILE_CONFIG="${GITSETU_PROFILES_DIR:-${GITSETU_CONFIG_DIR:-${HOME}/.config/gitsetu}/profiles}/${rem_match_label}.gitconfig"
+                    return 0
+                fi
+            fi
+        fi
+    fi
+
+    return 1
 }
 
 # ------------------------------------------------------------------------------
@@ -342,7 +395,7 @@ STUB_EOF
     cat <<'STUB_EOF'
 fi
 
-if [[ "$HOOK_NAME" == "pre-commit" ]]; then
+if [[ "$HOOK_NAME" == "pre-commit" || "$HOOK_NAME" == "pre-merge-commit" ]]; then
     if [[ -z "$ENTRYPOINT" || ! -x "$ENTRYPOINT" ]]; then
         printf 'GitSetu guard: gitsetu not found at %s; commit allowed (failsafe). Run gitsetu doctor.\n' "${ENTRYPOINT:-<empty>}" >&2
     else

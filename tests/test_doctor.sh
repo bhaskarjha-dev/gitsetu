@@ -124,6 +124,7 @@ test_doctor_json_output() {
     output=$(run_doctor_json) || rc=$?
     assert_equals "0" "$rc" "run_doctor_json exits 0 for clean state" || return 1
     assert_contains "$output" '"status": "healthy"' "json reports healthy status" || return 1
+    assert_contains "$output" '"issues_found": 0' "json reports issues_found 0" || return 1
     assert_contains "$output" '"issuesFound": 0' "json reports 0 issues" || return 1
     assert_contains "$output" '"checks": [' "json reports checks array" || return 1
     assert_contains "$output" '"name": "git_version"' "json contains git_version check" || return 1
@@ -135,6 +136,7 @@ test_doctor_json_output() {
     output=$(run_doctor_json) || rc=$?
     assert_equals "1" "$rc" "run_doctor_json exits 1 for missing registry" || return 1
     assert_contains "$output" '"status": "unhealthy"' "json reports unhealthy status" || return 1
+    assert_contains "$output" '"issues_found":' "json reports issues_found count" || return 1
     assert_contains "$output" '"issuesFound":' "json reports issues count" || return 1
 }
 
@@ -151,6 +153,40 @@ EOF
     assert_not_contains "$output" "Discovered unmanaged identity route" || return 1
 }
 
+test_cmd_import_supports_case_insensitive_and_sanitizes_labels() {
+    cat <<'EOF' > "$HOME/.gitconfig"
+[includeIf "gitdir/i:~/my_client_repos/"]
+    path = ~/.gitconfig-client
+EOF
+    cat <<'EOF' > "$HOME/.gitconfig-client"
+[user]
+    name = Client Dev
+    email = dev@client.com
+EOF
+
+    local output
+    output=$(cmd_import --yes 2>&1 || true)
+    assert_contains "$output" "Discovered unmanaged identity route" "detects gitdir/i: unmanaged route" || return 1
+    assert_contains "$output" "Successfully imported" "successfully imported sanitized profile" || return 1
+}
+
+test_doctor_json_cli_corrupted_registry() {
+    local gitsetu_exe
+    gitsetu_exe="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/gitsetu"
+    gitsetu_exe="${gitsetu_exe%$'\r'}"
+
+    # Corrupt profiles.conf
+    mkdir -p "$(dirname "$GITSETU_PROFILES_CONF")"
+    printf 'corrupted-unversioned-garbage\n' > "$GITSETU_PROFILES_CONF"
+
+    local output rc=0
+    output=$(bash "$gitsetu_exe" doctor --json 2>&1) || rc=$?
+    assert_equals "1" "$rc" "doctor --json exits 1 on corrupted registry" || return 1
+    assert_contains "$output" '"status": "unhealthy"' "doctor --json outputs valid JSON unhealthy status on corrupted registry" || return 1
+    assert_contains "$output" '"issues_found":' "doctor --json contains issues_found count on corrupted registry" || return 1
+    assert_contains "$output" '"schema_version": "1.0.0"' "doctor --json outputs valid schema_version on corrupted registry" || return 1
+}
+
 printf '\n%btest_doctor.sh%b\n' "$T_BOLD" "$T_RESET"
 run_test "doctor detects missing registry" test_doctor_detects_missing_registry
 run_test "doctor detects missing ssh agent" test_doctor_detects_missing_ssh_agent
@@ -159,4 +195,6 @@ run_test "doctor reports OK for clean state" test_doctor_success_state
 run_test "doctor environment checks report tool details" test_doctor_environment_checks
 run_test "doctor --json outputs structured telemetry" test_doctor_json_output
 run_test "import ignores GitSetu managed includeIf blocks" test_cmd_import_ignores_gitsetu_managed_blocks
+run_test "doctor import supports gitdir/i: and sanitizes labels" test_cmd_import_supports_case_insensitive_and_sanitizes_labels
+run_test "doctor --json CLI produces parseable JSON on corrupted registry" test_doctor_json_cli_corrupted_registry
 print_results "Doctor tests"

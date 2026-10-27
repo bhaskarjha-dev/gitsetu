@@ -111,6 +111,16 @@ test_teardown_removes_sshconfig_blocks() {
     assert_file_contains "$HOME/.ssh/config" "Host my-server"
 }
 
+test_teardown_removes_quoted_sshconfig_include() {
+    setup
+    printf 'Include "~/.config/gitsetu/profiles/ssh_config"\nHost my-server\n    HostName example.com\n' > "$HOME/.ssh/config"
+    
+    teardown_sshconfig >/dev/null 2>&1
+    
+    assert_file_not_contains "$HOME/.ssh/config" "gitsetu" "quoted include removed" || return 1
+    assert_file_contains "$HOME/.ssh/config" "Host my-server" "user host kept" || return 1
+}
+
 test_teardown_removes_config_dir() {
     setup
     
@@ -241,6 +251,7 @@ test_teardown_rejects_unbalanced_managed_markers() {
 
 run_test "teardown_gitconfig removes managed block but keeps user content" test_teardown_removes_gitconfig_block
 run_test "teardown_sshconfig removes managed blocks but keeps user content" test_teardown_removes_sshconfig_blocks
+run_test "teardown_sshconfig removes quoted include directive" test_teardown_removes_quoted_sshconfig_include
 run_test "teardown_config_dir completely removes ~/.config/gitsetu" test_teardown_removes_config_dir
 run_test "uninstall_guard removes hook and unsets core.hooksPath" test_teardown_uninstalls_guard
 run_test "teardown_all leaves generated SSH keys intact for safety" test_teardown_keeps_ssh_keys

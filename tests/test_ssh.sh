@@ -361,7 +361,11 @@ EOF
     chmod +x "$mock_bin/ssh-keyscan"
 
     local old_path="$PATH"
-    export PATH="$mock_bin:$PATH"
+    local mock_path="$mock_bin"
+    if command -v cygpath >/dev/null 2>&1; then
+        mock_path=$(cygpath -u "$mock_bin")
+    fi
+    export PATH="$mock_path:$PATH"
     export GITSETU_TEST_SSH_PRESEED=1
 
     _ssh_preseed_known_hosts "gitlab.com"
@@ -379,6 +383,31 @@ EOF
     # Second call should be idempotent (mock ssh-keyscan won't be called if host exists)
     rm -f "$mock_bin/ssh-keyscan"
     _ssh_preseed_known_hosts "gitlab.com"
+
+    # Test hashed host detection via ssh-keygen -F
+    cat << 'EOF' > "$mock_bin/ssh-keyscan"
+#!/usr/bin/env bash
+echo "$2 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAImockknownhost"
+EOF
+    chmod +x "$mock_bin/ssh-keyscan"
+    cat << 'EOF' > "$mock_bin/ssh-keygen"
+#!/usr/bin/env bash
+if [[ "$*" == *"-F gitlab.com"* ]]; then
+    exit 0
+fi
+exit 1
+EOF
+    chmod +x "$mock_bin/ssh-keygen"
+
+    local pre_lines post_lines
+    pre_lines=$(wc -l < "$known_hosts")
+    _ssh_preseed_known_hosts "gitlab.com"
+    post_lines=$(wc -l < "$known_hosts")
+    assert_equals "$pre_lines" "$post_lines" "preseed is idempotent when ssh-keygen finds host" || {
+        export PATH="$old_path"
+        unset GITSETU_TEST_SSH_PRESEED
+        return 1
+    }
 
     export PATH="$old_path"
     unset GITSETU_TEST_SSH_PRESEED

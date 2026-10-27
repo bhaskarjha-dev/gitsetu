@@ -484,6 +484,39 @@ cmd_prompt() {
     done < "$conf_file"
 
     [[ "$header_seen" -eq 1 ]] || return 0
+
+    if [[ -z "$matched_profile" ]]; then
+        local remotes_dir="${xdg_config}/gitsetu/remotes"
+        if [[ -d "$remotes_dir" ]] && command -v git >/dev/null 2>&1; then
+            if git rev-parse --git-dir >/dev/null 2>&1; then
+                local rem_urls
+                rem_urls=$(git config --get-regexp '^remote\..*\.url$' 2>/dev/null | awk '{print $2}' || true)
+                if [[ -n "$rem_urls" ]]; then
+                    local rf r_label r_pat
+                    for rf in "$remotes_dir"/*.remotes; do
+                        [[ -f "$rf" ]] || continue
+                        r_label=$(basename "$rf" .remotes)
+                        while IFS= read -r r_pat || [[ -n "$r_pat" ]]; do
+                            r_pat=$(printf '%s' "$r_pat" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+                            [[ -n "$r_pat" && "$r_pat" != \#* ]] || continue
+                            local u
+                            while IFS= read -r u || [[ -n "$u" ]]; do
+                                [[ -n "$u" ]] || continue
+                                case "$u" in
+                                    $r_pat)
+                                        matched_profile="$r_label"
+                                        GITSETU_PROMPT_PROFILE="$r_label"
+                                        break 3
+                                        ;;
+                                esac
+                            done <<< "$rem_urls"
+                        done < "$rf"
+                    done
+                fi
+            fi
+        fi
+    fi
+
     if [[ -n "$matched_profile" ]]; then
         GITSETU_PROMPT_STATE="matched"
         printf '%s\n' "$matched_profile"
@@ -920,13 +953,17 @@ cmd_status() {
         printf '  "profile": %s,\n' "$prof_name"
         printf '  "directory": "%s",\n' "$escaped_cwd"
         if [[ -n "$exp_email" ]]; then
+            printf '  "expected_email": "%s",\n' "$exp_email"
             printf '  "expectedEmail": "%s",\n' "$exp_email"
         else
+            printf '  "expected_email": null,\n'
             printf '  "expectedEmail": null,\n'
         fi
         if [[ -n "$act_email" ]]; then
+            printf '  "actual_email": "%s",\n' "$act_email"
             printf '  "actualEmail": "%s",\n' "$act_email"
         else
+            printf '  "actual_email": null,\n'
             printf '  "actualEmail": null,\n'
         fi
         printf '  "active": %s,\n' "$is_active"
@@ -1746,13 +1783,15 @@ cmd_doctor() {
 
     local registry_status=0
     load_profiles || registry_status=$?
+    if [[ "$json_mode" -eq 1 ]]; then
+        run_doctor_json
+        return $?
+    fi
     if [[ "$registry_status" -ne 0 ]]; then
         return "$registry_status"
     fi
     if [[ "$repair" -eq 1 ]]; then
         run_doctor_repair
-    elif [[ "$json_mode" -eq 1 ]]; then
-        run_doctor_json
     else
         run_doctor
     fi

@@ -92,8 +92,18 @@ test_profile_gitconfig_content() {
     assert_contains "$content" "name = Pro User" "has name" &&
     assert_contains "$content" "email = pro@test.com" "has email" &&
     assert_contains "$content" "sshCommand = ssh -o IdentitiesOnly=yes -i '~/.ssh/id_ed25519_pro'" "has safely quoted sshCommand" &&
+    assert_contains "$content" "gpgsign = false" "suppresses gpgsign when signing is disabled" &&
     assert_contains "$content" "[gitsetu:managed:start] Profile: pro" "has start marker" &&
     assert_contains "$content" "[gitsetu:managed:end] Profile: pro" "has end marker"
+}
+
+test_profile_gitconfig_content_signing() {
+    local content
+    content=$(build_profile_gitconfig "work" "Work User" "work@test.com" "1" "${HOME}/.ssh/id_ed25519_work")
+
+    assert_contains "$content" "gpgsign = true" "enables gpgsign when sign is 1" &&
+    assert_contains "$content" "format = ssh" "configures ssh gpg format" &&
+    assert_contains "$content" "signingkey = " "configures signingkey"
 }
 
 test_write_global_gitconfig_creates_file() {
@@ -319,6 +329,7 @@ run_test "includeIf paths are securely escaped" test_path_escaping
 run_test "includeIf paths strip newlines" test_path_injection_newlines
 run_test "global block has managed markers" test_global_block_has_managed_markers
 run_test "profile gitconfig has correct content" test_profile_gitconfig_content
+run_test "profile gitconfig with signing has signing keys" test_profile_gitconfig_content_signing
 run_test "write creates ~/.gitconfig" test_write_global_gitconfig_creates_file
 run_test "write is idempotent (no duplicates)" test_write_global_gitconfig_idempotent
 run_test "write preserves user content" test_write_global_gitconfig_preserves_user_content

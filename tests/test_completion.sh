@@ -96,9 +96,30 @@ test_completion_legacy_registry_not_offered() {
     assert_not_contains "${COMPREPLY[*]:-}" "work" "legacy labels are never offered" || return 1
 }
 
+test_completion_offers_guard_and_remote_flags() {
+    # shellcheck disable=SC1090
+    source "$COMPLETION_SCRIPT"
+
+    # Test setup completions include --guard and --no-guard
+    COMP_WORDS=(gitsetu setup "")
+    COMP_CWORD=2
+    _gitsetu
+    local setup_flags="${COMPREPLY[*]}"
+    assert_contains "$setup_flags" "--guard" "setup completion offers --guard" || return 1
+    assert_contains "$setup_flags" "--no-guard" "setup completion offers --no-guard" || return 1
+
+    # Test profile add completions include --remote=
+    COMP_WORDS=(gitsetu profile add "")
+    COMP_CWORD=3
+    _gitsetu
+    local add_flags="${COMPREPLY[*]}"
+    assert_contains "$add_flags" "--remote=" "profile add completion offers --remote=" || return 1
+}
+
 printf '\n%btest_completion.sh%b\n' "$T_BOLD" "$T_RESET"
 run_test "completion sources repeatedly without resetting shell state" test_completion_sources_idempotently
 run_test "completion offers supported top-level commands" test_completion_top_level_commands
 run_test "profile completion separates actions and v2 labels" test_completion_profile_actions_and_labels
 run_test "completion rejects legacy registry labels" test_completion_legacy_registry_not_offered
+run_test "completion offers --guard, --no-guard, and --remote= flags" test_completion_offers_guard_and_remote_flags
 print_results "Completion tests"

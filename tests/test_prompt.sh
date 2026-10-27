@@ -164,6 +164,27 @@ test_prompt_rejects_unresolved_profile_identity() {
     assert_equals "" "$output" "missing profile identity suppresses prompt output" || return 1
 }
 
+test_prompt_routes_remote_url_match() {
+    write_prompt_registry
+    local remotes_dir="${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu/remotes"
+    mkdir -p "$remotes_dir"
+    printf 'git@github.com:acme/*\n' > "$remotes_dir/work.remotes"
+
+    local external_repo="$HOME/external_prompt_repo"
+    mkdir -p "$external_repo"
+    git -C "$external_repo" init -q
+    git -C "$external_repo" remote add origin git@github.com:acme/proj.git
+
+    cd "$external_repo"
+    local output
+    output=$(bash "$GITSETU_EXE" prompt)
+    assert_equals "work" "$output" "remote url match routes prompt outside profile directory" || {
+        rm -rf "$external_repo" "$remotes_dir"
+        return 1
+    }
+    rm -rf "$external_repo" "$remotes_dir"
+}
+
 printf '\n%btest_prompt.sh%b\n' "$T_BOLD" "$T_RESET"
 run_test "prompt empty registry safely" test_prompt_empty_registry
 run_test "prompt routes longest v2 directory match" test_prompt_v2_longest_match
@@ -172,4 +193,5 @@ run_test "prompt rejects legacy registry without compatibility fallback" test_pr
 run_test "prompt rejects malformed v2 records" test_prompt_rejects_malformed_v2_record
 run_test "prompt rejects noncanonical key paths" test_prompt_rejects_noncanonical_key_path
 run_test "prompt rejects unresolved profile identities" test_prompt_rejects_unresolved_profile_identity
+run_test "prompt routes remote URL match outside profile directories" test_prompt_routes_remote_url_match
 print_results "Prompt tests"

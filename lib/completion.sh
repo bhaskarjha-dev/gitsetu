@@ -115,7 +115,7 @@ _gitsetu() {
     case "$command" in
         setup|init)
             # shellcheck disable=SC2207
-            COMPREPLY=( $(compgen -W "--auto --yes --dry-run" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--auto --yes --dry-run --guard --no-guard" -- "$cur") )
             ;;
         status)
             # shellcheck disable=SC2207
@@ -132,7 +132,7 @@ _gitsetu() {
                 case "$subcommand" in
                     add|edit)
                         # shellcheck disable=SC2207
-                        COMPREPLY=( $(compgen -W "--name= --email= --dir= --provider= --key= --fido2 --sign --no-sign" -- "$cur") )
+                        COMPREPLY=( $(compgen -W "--name= --email= --dir= --provider= --key= --fido2 --sign --no-sign --remote=" -- "$cur") )
                         ;;
                     remove)
                         local labels

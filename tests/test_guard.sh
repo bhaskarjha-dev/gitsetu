@@ -253,6 +253,97 @@ EOF
     rm -rf "$HOME/work/.husky" "$HOME/work/packages"
 }
 
+test_guard_blocks_mismatch_remote_url() {
+    GITSETU_DRY_RUN=0
+    seed_v2_work_profile "$HOME/work" "Test" "work@example.com"
+    install_guard 2>/dev/null
+
+    local remotes_dir="${GITSETU_CONFIG_DIR:-$HOME/.config/gitsetu}/remotes"
+    mkdir -p "$remotes_dir"
+    printf 'git@github.com:acme/*\n' > "$remotes_dir/work.remotes"
+
+    local external_repo="$HOME/external_client_repo"
+    setup_repo "$external_repo"
+    git -C "$external_repo" remote add origin git@github.com:acme/project.git
+    git -C "$external_repo" config user.email "wrong@example.com"
+    git -C "$external_repo" config user.name "Test"
+
+    # In external repo with remote matching work.remotes, guard must block mismatched email
+    local status=0
+    (cd "$external_repo" && _guard_execute) >/dev/null 2>&1 || status=$?
+    assert_equals "65" "$status" "guard blocks mismatched email on remote-routed repo with code 65" || return 1
+
+    # When email matches profile, guard must allow
+    git -C "$external_repo" config user.email "work@example.com"
+    status=0
+    (cd "$external_repo" && _guard_execute) >/dev/null 2>&1 || status=$?
+    assert_equals "0" "$status" "guard allows matched email on remote-routed repo" || return 1
+    rm -rf "$external_repo" "$remotes_dir"
+}
+
+test_guard_blocks_mismatch_pre_merge_commit() {
+    GITSETU_DRY_RUN=0
+    seed_v2_work_profile "$HOME/work" "Test" "work@example.com"
+    install_guard 2>/dev/null
+
+    setup_repo "$HOME/work"
+    git -C "$HOME/work" config user.email "wrong@example.com"
+    git -C "$HOME/work" config user.name "Test"
+
+    local stub_content
+    stub_content=$(_guard_generate_stub_content "gitsetu" "pre-merge-commit")
+    assert_contains "$stub_content" 'if [[ "$HOOK_NAME" == "pre-commit" || "$HOOK_NAME" == "pre-merge-commit" ]]; then' "stub checks pre-merge-commit" || return 1
+}
+
+test_guard_blocks_ambiguous_remote_url() {
+    GITSETU_DRY_RUN=0
+    setup_test_home
+    _TEST_GITSETU_LIBS_READY=0
+    source_gitsetu_libs || return 1
+
+    local global_key work_key personal_key
+    global_key=$(normalize_path "$HOME/.ssh/id_global")
+    work_key=$(normalize_path "$HOME/.ssh/id_work")
+    personal_key=$(normalize_path "$HOME/.ssh/id_personal")
+    mkdir -p "$HOME/.ssh"
+    touch "$global_key" "$global_key.pub" "$work_key" "$work_key.pub" "$personal_key" "$personal_key.pub"
+
+    PROFILE_COUNT=3
+    PROFILE_LABELS=(global work personal)
+    PROFILE_NAMES=("Global" "Work" "Personal")
+    PROFILE_EMAILS=(global@example.com work@example.com personal@example.com)
+    PROFILE_DIRS=("" "$HOME/work" "$HOME/personal")
+    PROFILE_PROVIDERS=(github.com github.com github.com)
+    PROFILE_SIGNS=(0 0 0)
+    PROFILE_KEYS=("$global_key" "$work_key" "$personal_key")
+    PROFILE_USERS=("" "" "")
+    PROFILE_PATS=("" "" "")
+    write_profiles_conf
+    write_profile_gitconfig "work" "Work" "work@example.com"
+    write_profile_gitconfig "personal" "Personal" "personal@example.com"
+
+    local remotes_dir="${GITSETU_CONFIG_DIR:-$HOME/.config/gitsetu}/remotes"
+    mkdir -p "$remotes_dir"
+    printf 'git@github.com:work/*\n' > "$remotes_dir/work.remotes"
+    printf 'git@github.com:personal/*\n' > "$remotes_dir/personal.remotes"
+
+    local external_repo="$HOME/ambiguous_repo"
+    setup_repo "$external_repo"
+    git -C "$external_repo" remote add origin git@github.com:work/proj.git
+    git -C "$external_repo" remote add upstream git@github.com:personal/proj.git
+    git -C "$external_repo" config user.email "work@example.com"
+    git -C "$external_repo" config user.name "Work"
+
+    # Ambiguous match across 2 different profiles must return 2 and block commit fail-closed
+    local status=0
+    (cd "$external_repo" && _guard_execute) >/dev/null 2>&1 || status=$?
+    assert_equals "65" "$status" "ambiguous remote URL routes fail closed with code 65" || {
+        rm -rf "$external_repo" "$remotes_dir"
+        return 1
+    }
+    rm -rf "$external_repo" "$remotes_dir"
+}
+
 printf '\n%btest_guard.sh%b\n' "$T_BOLD" "$T_RESET"
 run_test "install_guard links hook" test_install_guard
 run_test "guard blocks mismatched email" test_guard_blocks_mismatch
@@ -266,4 +357,8 @@ run_test "guard prompt skipped if already installed" test_guard_prompt_skipped_i
 run_test "guard prompt defaults to no" test_guard_prompt_default_no
 run_test "guard preserves prior core.hooksPath" test_guard_preserves_existing_hooks_path
 run_test "corrupt managed registry fails closed" test_guard_fails_closed_for_corrupt_managed_registry
+run_test "guard blocks mismatched email on remote-routed repo" test_guard_blocks_mismatch_remote_url
+run_test "guard hook stub checks pre-merge-commit" test_guard_blocks_mismatch_pre_merge_commit
+run_test "guard blocks ambiguous remote URL matching multiple profiles" test_guard_blocks_ambiguous_remote_url
 print_results "Guard tests"
+

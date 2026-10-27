@@ -17,7 +17,7 @@ if ($PSVersionTable.PSVersion.Major -ge 3 -and -not $env:GITSETU_EXECUTION_POLIC
     $scopePolicy = Get-ExecutionPolicy -Scope Process
     if ($scopePolicy -eq 'Restricted' -or $scopePolicy -eq 'Undefined') {
         $effectivePolicy = Get-ExecutionPolicy
-        if ($effectivePolicy -eq 'Restricted') {
+        if ($effectivePolicy -eq 'Restricted' -or $effectivePolicy -eq 'AllSigned') {
             if (-not [string]::IsNullOrEmpty($PSCommandPath) -and (Test-Path -LiteralPath $PSCommandPath)) {
                 $env:GITSETU_EXECUTION_POLICY_BYPASSED = "1"
                 $forwardArgs = @()

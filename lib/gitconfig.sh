@@ -735,6 +735,18 @@ EOF
 
 [commit]
     gpgsign = true
+
+[tag]
+    gpgsign = true
+EOF
+    else
+        cat <<EOF
+
+[commit]
+    gpgsign = false
+
+[tag]
+    gpgsign = false
 EOF
     fi
 

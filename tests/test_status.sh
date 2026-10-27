@@ -156,8 +156,10 @@ test_status_json_output() {
     assert_equals "0" "$status" "status --json exits 0" || return 1
     assert_contains "$output" '"managed": true' "json reports managed true" || return 1
     assert_contains "$output" '"profile": "work"' "json reports active profile" || return 1
-    assert_contains "$output" '"expectedEmail": "alice@corp.com"' "json reports expected email" || return 1
-    assert_contains "$output" '"actualEmail": "alice@corp.com"' "json reports actual email" || return 1
+    assert_contains "$output" '"expected_email": "alice@corp.com"' "json reports expected_email snake_case" || return 1
+    assert_contains "$output" '"expectedEmail": "alice@corp.com"' "json reports expectedEmail camelCase" || return 1
+    assert_contains "$output" '"actual_email": "alice@corp.com"' "json reports actual_email snake_case" || return 1
+    assert_contains "$output" '"actualEmail": "alice@corp.com"' "json reports actualEmail camelCase" || return 1
     assert_contains "$output" '"active": true' "json reports active true" || return 1
     assert_contains "$output" '"profiles": [' "json reports profiles array" || return 1
     assert_contains "$output" '"work"' "json lists work in profiles" || return 1

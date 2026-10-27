@@ -568,6 +568,7 @@ run_doctor_json() {
     printf '{\n'
     printf '  "schema_version": "1.0.0",\n'
     printf '  "status": "%s",\n' "$overall_status"
+    printf '  "issues_found": %d,\n' "$issues"
     printf '  "issuesFound": %d,\n' "$issues"
     printf '  "checks": [\n'
     local ci
@@ -1018,8 +1019,8 @@ cmd_import() {
         fi
         [[ "$in_managed" -eq 0 ]] || continue
 
-        if [[ "$line" =~ ^\[includeIf[[:space:]]+\"gitdir:(.+)\"\] ]]; then
-            raw_gitdir="${BASH_REMATCH[1]}"
+        if [[ "$line" =~ ^\[includeIf[[:space:]]+\"gitdir(/i)?:(.+)\"\] ]]; then
+            raw_gitdir="${BASH_REMATCH[2]}"
             raw_gitdir="${raw_gitdir%/\*\*}"
             raw_gitdir="${raw_gitdir%/\*}"
             raw_gitdir="${raw_gitdir%/}"
@@ -1047,7 +1048,14 @@ cmd_import() {
                 else
                     imp_label=$(basename "$current_gitdir")
                 fi
-                imp_label=$(printf '%s' "$imp_label" | tr '[:upper:]' '[:lower:]')
+                imp_label=$(printf '%s' "$imp_label" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9-]/-/g' -e 's/^-*//' -e 's/-*$//')
+                imp_label="${imp_label:0:20}"
+                if [[ -z "$imp_label" || ! "$imp_label" =~ ^[a-z] ]]; then
+                    imp_label="p-${imp_label:0:18}"
+                fi
+                while [[ "$imp_label" == *- ]]; do
+                    imp_label="${imp_label%-}"
+                done
 
                 if [[ -n "$imp_email" ]]; then
                     print_info "Discovered unmanaged identity route:"
@@ -1066,9 +1074,12 @@ cmd_import() {
                     if [[ "$proceed" -eq 1 ]]; then
                         local cmd_args=("$imp_label" "--email=$imp_email" "--dir=$current_gitdir")
                         [[ -n "$imp_name" ]] && cmd_args+=("--name=$imp_name")
-                        cmd_profile add "${cmd_args[@]}"
-                        print_success "Imported profile '$imp_label'."
-                        imported_count=$((imported_count + 1))
+                        if cmd_profile add "${cmd_args[@]}"; then
+                            print_success "Imported profile '$imp_label'."
+                            imported_count=$((imported_count + 1))
+                        else
+                            print_error "Failed to import profile '$imp_label'."
+                        fi
                     fi
                 fi
             fi

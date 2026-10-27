@@ -158,10 +158,27 @@ teardown_sshconfig() {
     elif [[ "$isolated_config" =~ (\.config/.*)$ ]]; then
         include_path="~/${BASH_REMATCH[1]}"
     fi
-    local include_directive="Include ${include_path}"
+    local raw_directive="Include ${include_path}"
+    local quoted_directive="Include \"${include_path}\""
+    local portable_directive="" portable_quoted=""
+    if declare -f _ssh_portable_path >/dev/null 2>&1; then
+        local p_path
+        p_path=$(_ssh_portable_path "$isolated_config")
+        portable_directive="Include ${p_path}"
+        portable_quoted="Include \"${p_path}\""
+    fi
 
-    if [[ -f "$target_ssh" ]] && \
-       grep -q -F -x "$include_directive" "$target_ssh" 2>/dev/null; then
+    local has_include=0
+    if [[ -f "$target_ssh" ]]; then
+        if grep -q -F -x "$raw_directive" "$target_ssh" 2>/dev/null || \
+           grep -q -F -x "$quoted_directive" "$target_ssh" 2>/dev/null || \
+           { [[ -n "$portable_directive" ]] && grep -q -F -x "$portable_directive" "$target_ssh" 2>/dev/null; } || \
+           { [[ -n "$portable_quoted" ]] && grep -q -F -x "$portable_quoted" "$target_ssh" 2>/dev/null; }; then
+            has_include=1
+        fi
+    fi
+
+    if [[ "$has_include" -eq 1 ]]; then
         if [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
             print_info "[DRY RUN] Would remove Include directive from: $ssh_config"
         else
@@ -179,8 +196,9 @@ teardown_sshconfig() {
             GITSETU_CLEANUP_FILES+=("$tmp_file")
 
             local filter_rc=0
-            grep -v -F -x "$include_directive" "$target_ssh" > "$tmp_file" || filter_rc=$?
-            if [[ "$filter_rc" -gt 1 ]]; then
+            awk -v r1="$raw_directive" -v r2="$quoted_directive" -v r3="$portable_directive" -v r4="$portable_quoted" \
+                '$0 != r1 && $0 != r2 && (r3 == "" || $0 != r3) && (r4 == "" || $0 != r4)' "$target_ssh" > "$tmp_file" || filter_rc=$?
+            if [[ "$filter_rc" -gt 0 ]]; then
                 rm -f "$tmp_file"
                 print_error "Failed to stage ~/.ssh/config cleanup; original was preserved."
                 return 1
