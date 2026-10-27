@@ -98,5 +98,4 @@ GitSetu loads distinct library dependencies dynamically during runtime compilati
 | **`backup.sh`** | Managed state snapshots, authenticated v2 vault export/import, staging, and rollback. |
 | **`teardown.sh`** | Profile removal, managed block cleanup, deep local-repo identity stripping. |
 | **`discovery.sh`** | Auto-discovery: SSH key email extraction, gitconfig identity parsing, workspace detection. |
-| **`keychain.sh`** | Namespaced native credential routing with an explicit, warned plaintext zero-dependency backend. |
 | **`completion.sh`** | TAB completion for Bash/Zsh: subcommands and profile name completion. |

@@ -385,6 +385,29 @@ EOF
     rm -rf "$mock_bin"
 }
 
+test_write_ssh_config_rejects_provider_prefix_collision() {
+    GITSETU_DRY_RUN=0
+    PROFILE_LABELS=("work")
+    PROFILE_PROVIDERS=("github.com")
+    PROFILE_KEYS=("$HOME/.ssh/id_ed25519_work")
+    PROFILE_COUNT=1
+
+    mkdir -p "$HOME/.ssh"
+    printf 'Host github-work\n    HostName github.com\n' > "$HOME/.ssh/config"
+
+    local status=0
+    write_ssh_config >/dev/null 2>&1 || status=$?
+    assert_equals "1" "$status" "provider prefix collision (github-work) is rejected" || return 1
+
+    printf 'Host gitsetu-work\n    HostName github.com\n' > "$HOME/.ssh/config"
+    status=0
+    write_ssh_config >/dev/null 2>&1 || status=$?
+    assert_equals "1" "$status" "gitsetu prefix collision (gitsetu-work) is rejected" || return 1
+
+    rm -f "$HOME/.ssh/config"
+    return 0
+}
+
 # --- Run ---
 
 printf '\n%btest_ssh.sh%b\n' "$T_BOLD" "$T_RESET"
@@ -403,6 +426,7 @@ run_test "write SSH config is deterministic and leaves legacy content" test_writ
 run_test "write SSH config rejects missing v2 fields" test_write_ssh_config_rejects_missing_v2_fields
 run_test "write SSH config rejects symlink components" test_write_ssh_config_rejects_symlink_components
 run_test "write SSH config rejects symlinked profiles directory" test_write_ssh_config_rejects_symlink_profiles_directory
+run_test "write SSH config rejects provider prefix collision" test_write_ssh_config_rejects_provider_prefix_collision
 run_test "Git Bash reparse cache is bounded and fast" test_ssh_reparse_cache_is_bounded_and_fast_on_gitbash
 run_test "FIDO2 failure never downgrades to software" test_generate_key_fido2_no_software_fallback
 run_test "_ssh_preseed_known_hosts populates known_hosts safely" test_ssh_preseed_known_hosts

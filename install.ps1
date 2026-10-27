@@ -153,11 +153,29 @@ function Resolve-TrustedGitBash {
     $programFiles = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
     $programFilesX86 = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFilesX86)
     $localAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
-    $roots = @(
+    $roots = [System.Collections.Generic.List[string]]@(
         (Join-Path $programFiles "Git"),
         (Join-Path $programFilesX86 "Git"),
         (Join-Path $localAppData "Programs\Git")
     )
+    if ($env:ProgramW6432) {
+        $roots.Add((Join-Path $env:ProgramW6432 "Git"))
+    }
+    foreach ($regKey in @('SOFTWARE\GitForWindows', 'SOFTWARE\WOW6432Node\GitForWindows')) {
+        try {
+            $base64 = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, [Microsoft.Win32.RegistryView]::Registry64)
+            $k = $base64.OpenSubKey($regKey)
+            if ($k) { $val = $k.GetValue('InstallPath'); if ($val -and (Test-Path -LiteralPath $val)) { $roots.Add($val) } }
+        } catch {}
+        try {
+            $k = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($regKey)
+            if ($k) { $val = $k.GetValue('InstallPath'); if ($val -and (Test-Path -LiteralPath $val)) { $roots.Add($val) } }
+        } catch {}
+        try {
+            $k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($regKey)
+            if ($k) { $val = $k.GetValue('InstallPath'); if ($val -and (Test-Path -LiteralPath $val)) { $roots.Add($val) } }
+        } catch {}
+    }
     $relativeCandidates = @("bin\bash.exe", "usr\bin\bash.exe")
 
     if ($env:GITSETU_TEST_MODE -eq "1" -and $env:GITSETU_TEST_GIT_BASH) {

@@ -1479,6 +1479,15 @@ cmd_run() {
             count=$((count + 1))
         fi
         export "GIT_CONFIG_COUNT=$count"
+    else
+        local count="${GIT_CONFIG_COUNT:-0}"
+        export "GIT_CONFIG_KEY_${count}=commit.gpgsign"
+        export "GIT_CONFIG_VALUE_${count}=false"
+        count=$((count + 1))
+        export "GIT_CONFIG_KEY_${count}=tag.gpgsign"
+        export "GIT_CONFIG_VALUE_${count}=false"
+        count=$((count + 1))
+        export "GIT_CONFIG_COUNT=$count"
     fi
 
     gitsetu_global_cleanup
@@ -1755,7 +1764,7 @@ cmd_doctor() {
 show_brief_usage() {
     printf >&2 '%bgitsetu%b v%s — One command. All identities. Every machine.\n\n' \
         "$BOLD" "$RESET" "$GITSETU_VERSION"
-    printf >&2 'Usage: gitsetu setup [--auto] [--dry-run]    Start the setup wizard\n'
+    printf >&2 'Usage: gitsetu setup [--auto] [--dry-run] [--guard|--no-guard]  Start setup\n'
     printf >&2 '       gitsetu status [--json]      Show current identity\n'
     printf >&2 '       gitsetu audit [count]        Audit recent commits for identity\n'
     printf >&2 '       gitsetu profile <action>     Manage v2 profiles\n'

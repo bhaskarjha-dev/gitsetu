@@ -756,6 +756,22 @@ _vault_stage_backup_payload() {
     (umask 077 && mkdir -p "$profiles_root" "$hooks_root" "$keys_root") 2>/dev/null || return 1
     _vault_copy_regular "$GITSETU_PROFILES_CONF" "$state_root/profiles.conf" 600 || return 1
 
+    local remotes_dir="${GITSETU_CONFIG_DIR:-$HOME/.config/gitsetu}/remotes"
+    if [[ -d "$remotes_dir" ]]; then
+        local remotes_root="$state_root/remotes"
+        local r_idx rem_file rem_created=0
+        for (( r_idx=0; r_idx<PROFILE_COUNT; r_idx++ )); do
+            rem_file="$remotes_dir/${PROFILE_LABELS[$r_idx]}.remotes"
+            if [[ -f "$rem_file" ]]; then
+                if [[ "$rem_created" -eq 0 ]]; then
+                    (umask 077 && mkdir -p "$remotes_root") 2>/dev/null || return 1
+                    rem_created=1
+                fi
+                _vault_copy_regular "$rem_file" "$remotes_root/${PROFILE_LABELS[$r_idx]}.remotes" 600 || return 1
+            fi
+        done
+    fi
+
     local i label source_path public_path private_archive public_archive manifest_home
     local private_count=0 public_count=0
     for (( i=0; i<PROFILE_COUNT; i++ )); do
@@ -834,10 +850,16 @@ _vault_archive_member_broad_allowed() {
         gitsetu-v2/state|gitsetu-v2/state/|\
         gitsetu-v2/state/profiles|gitsetu-v2/state/profiles/|\
         gitsetu-v2/state/hooks|gitsetu-v2/state/hooks/|\
+        gitsetu-v2/state/remotes|gitsetu-v2/state/remotes/|\
         gitsetu-v2/keys|gitsetu-v2/keys/|\
         gitsetu-v2/manifest|gitsetu-v2/state/profiles.conf|\
         gitsetu-v2/state/.tokens|gitsetu-v2/state/profiles/ssh_config|\
         gitsetu-v2/state/hooks/pre-commit) return 0 ;;
+        gitsetu-v2/state/remotes/*.remotes)
+            local remote_name="${member#gitsetu-v2/state/remotes/}"
+            [[ "$remote_name" =~ ^[a-z][a-z0-9-]*\.remotes$ ]] || return 1
+            return 0
+            ;;
         gitsetu-v2/state/profiles/*.gitconfig)
             local profile_name="${member#gitsetu-v2/state/profiles/}"
             [[ "$profile_name" =~ ^[a-z][a-z0-9-]*\.gitconfig$ ]] || return 1
@@ -1087,6 +1109,15 @@ _vault_validate_extracted_tree() {
     [[ "$_VAULT_MANIFEST_SSH" -eq 0 ]] || _VAULT_ALLOWED_MEMBERS+=("gitsetu-v2/state/profiles/ssh_config")
     [[ "$_VAULT_MANIFEST_HOOK" -eq 0 ]] || _VAULT_ALLOWED_MEMBERS+=("gitsetu-v2/state/hooks/pre-commit")
     [[ "$_VAULT_MANIFEST_TOKENS" -eq 0 ]] || _VAULT_ALLOWED_MEMBERS+=("gitsetu-v2/state/.tokens")
+    if [[ -d "$archive_root/state/remotes" ]]; then
+        _VAULT_ALLOWED_MEMBERS+=("gitsetu-v2/state/remotes")
+        for (( i=0; i<_VAULT_MANIFEST_COUNT; i++ )); do
+            local rem_candidate="state/remotes/${PROFILE_LABELS[$i]}.remotes"
+            if [[ -f "$archive_root/$rem_candidate" ]]; then
+                _VAULT_ALLOWED_MEMBERS+=("gitsetu-v2/$rem_candidate")
+            fi
+        done
+    fi
 
     (cd "$extract_root" && find . -type f -print 2>/dev/null | sed 's#^\./##') > "$names_list" || return 1
     while IFS= read -r member || [[ -n "$member" ]]; do
@@ -1621,6 +1652,19 @@ _vault_prepare_transaction() {
 
     _vault_copy_regular "$archive_root/state/profiles.conf" "$transaction_dir/new-state/profiles.conf" 600 || return 1
     (umask 077 && mkdir -p "$transaction_dir/new-state/profiles" "$transaction_dir/new-state/hooks") || return 1
+    if [[ -d "$archive_root/state/remotes" ]]; then
+        local r_src r_created=0
+        for (( i=0; i<_VAULT_MANIFEST_COUNT; i++ )); do
+            r_src="$archive_root/state/remotes/${PROFILE_LABELS[$i]}.remotes"
+            if [[ -f "$r_src" ]]; then
+                if [[ "$r_created" -eq 0 ]]; then
+                    (umask 077 && mkdir -p "$transaction_dir/new-state/remotes") || return 1
+                    r_created=1
+                fi
+                _vault_copy_regular "$r_src" "$transaction_dir/new-state/remotes/${PROFILE_LABELS[$i]}.remotes" 600 || return 1
+            fi
+        done
+    fi
     local i
     for (( i=0; i<_VAULT_MANIFEST_COUNT; i++ )); do
         _vault_copy_regular "$archive_root/${_VAULT_MANIFEST_CONFIGS[$i]}" \
@@ -1665,7 +1709,7 @@ _vault_snapshot_globals() {
 _vault_move_state_side() {
     local txn="$1" name="$2" source="$3" destination="$4"
     if [[ -e "$source" || -L "$source" ]]; then
-        if [[ "$name" == "profiles" || "$name" == "hooks" ]]; then
+        if [[ "$name" == "profiles" || "$name" == "hooks" || "$name" == "remotes" ]]; then
             [[ -d "$source" && ! -L "$source" ]] || return 1
         else
             [[ -f "$source" && ! -L "$source" ]] || return 1
@@ -1685,19 +1729,20 @@ _vault_state_path() {
         profiles.conf) printf '%s' "$GITSETU_PROFILES_CONF" ;;
         profiles) printf '%s' "$GITSETU_PROFILES_DIR" ;;
         hooks) printf '%s' "$GITSETU_HOOKS_DIR" ;;
+        remotes) printf '%s' "${GITSETU_CONFIG_DIR:-$HOME/.config/gitsetu}/remotes" ;;
         .tokens) printf '%s' "$GITSETU_CONFIG_DIR/.tokens" ;;
     esac
 }
 
 _vault_commit_state() {
     local txn="$1" name current old new
-    for name in profiles.conf profiles hooks .tokens; do
+    for name in profiles.conf profiles hooks remotes .tokens; do
         current=$(_vault_state_path "$name") || return 1
         old="$txn/old-state/$name"
         new="$txn/new-state/$name"
         _vault_move_state_side "$txn" "$name" "$current" "$old" || return 1
         if [[ -e "$new" || -L "$new" ]]; then
-            if [[ "$name" == "profiles" || "$name" == "hooks" ]]; then
+            if [[ "$name" == "profiles" || "$name" == "hooks" || "$name" == "remotes" ]]; then
                 [[ -d "$new" && ! -L "$new" ]] || return 1
             else
                 [[ -f "$new" && ! -L "$new" ]] || return 1
@@ -1857,13 +1902,13 @@ _vault_rollback_transaction() {
         fi
     done
 
-    for name in .tokens hooks profiles profiles.conf; do
+    for name in .tokens remotes hooks profiles profiles.conf; do
         current=$(_vault_state_path "$name") || { failed=1; continue; }
         local old_path="$txn/old-state/$name"
         old_state="$txn/old-state/$name.state"
         if [[ -f "$old_state" ]]; then
             if grep -q '^present$' "$old_state" 2>/dev/null; then
-                if [[ "$name" == "profiles" || "$name" == "hooks" ]]; then
+                if [[ "$name" == "profiles" || "$name" == "hooks" || "$name" == "remotes" ]]; then
                     [[ -d "$old_path" && ! -L "$old_path" ]] || { failed=1; continue; }
                 else
                     [[ -f "$old_path" && ! -L "$old_path" ]] || { failed=1; continue; }
@@ -1873,7 +1918,7 @@ _vault_rollback_transaction() {
                 continue
             fi
         elif [[ -e "$old_path" || -L "$old_path" ]]; then
-            if [[ "$name" == "profiles" || "$name" == "hooks" ]]; then
+            if [[ "$name" == "profiles" || "$name" == "hooks" || "$name" == "remotes" ]]; then
                 [[ -d "$old_path" && ! -L "$old_path" ]] || { failed=1; continue; }
             else
                 [[ -f "$old_path" && ! -L "$old_path" ]] || { failed=1; continue; }
@@ -1886,7 +1931,7 @@ _vault_rollback_transaction() {
             failed=1
             continue
         fi
-        if [[ "$name" == "profiles" || "$name" == "hooks" ]]; then
+        if [[ "$name" == "profiles" || "$name" == "hooks" || "$name" == "remotes" ]]; then
             rm -rf "$current" 2>/dev/null || failed=1
         else
             rm -f "$current" 2>/dev/null || failed=1

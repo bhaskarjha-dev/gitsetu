@@ -9,14 +9,15 @@ GitSetu is a Bash CLI for directory-scoped Git identities, SSH keys, and credent
 
 ## Provisioning and setup
 
-### `gitsetu setup [--auto] [--dry-run]`
+### `gitsetu setup [--auto] [--dry-run] [--guard|--no-guard]`
 
-Alias: `gitsetu init [--auto] [--dry-run]`
+Alias: `gitsetu init [--auto] [--dry-run] [--guard|--no-guard]`
 
 Interactive profile setup and repair. `--auto` discovers identities and
 applies the resulting blueprint without interactive input in non-TTY use (a
 TTY setup can still ask about guard installation or an explicit FIDO2
-fallback). `--dry-run` validates and previews changes without persisting state
+fallback). `--guard` and `--no-guard` explicitly enable or disable pre-commit
+identity guard hook deployment. `--dry-run` validates and previews changes without persisting state
 or contacting remote services.
 
 The setup flow can create profiles, generate Ed25519 or FIDO2 keys, write scoped Git configuration, and offer guard installation. A FIDO2 downgrade is never silent: if hardware-key setup cannot proceed, the command reports the failure and requires an explicit choice before using a software-key alternative.
@@ -48,34 +49,9 @@ force flag.
 
 ### `gitsetu credential <get|store|erase>`
 
-Implements the Git credential-helper protocol. It handles HTTPS requests and
-resolves the active profile from the current directory. The broker keys records
-by the exact `(profile, host, path)` tuple, including Git's `path=` attribute
-when present. `GITSETU_CREDENTIAL_PATH` can explicitly override the protocol
-path for wrappers and controlled tests. Requests outside a mapped profile, or
-for another protocol, produce no credential.
+In GitSetu v1.1.0, HTTPS credential management is delegated to Git's native platform helpers (Git Credential Manager on Windows, Apple Keychain on macOS, or Secret Service on Linux) by configuring per-profile `[credential "https://<provider>"] username = <name>` routing.
 
-The default backend is native-only: macOS Keychain, Linux Secret Service, or
-Windows Git Credential Manager. A missing native backend fails closed; it does
-not silently select a file. To deliberately use the zero-dependency plaintext
-backend, select it explicitly:
-
-```bash
-# With Git credential-protocol input on stdin:
-GITSETU_CREDENTIAL_BACKEND=file gitsetu credential store
-```
-
-That backend writes the v2 record file at
-`${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu/.tokens`, with a private `0700`
-directory and `0600` file, and warns on every operation. It is plaintext, not
-an encrypted vault. `GITSETU_ALLOW_PLAINTEXT=1` is an equivalent explicit
-opt-in. Windows GCM is native and is not emulated by the file backend.
-
-When compiling the managed Git configuration, GitSetu preserves an existing
-user or system `credential.helper` policy and adds no helper. Only when no
-such policy exists does it add its exact, shell-quoted canonical
-`gitsetu credential` helper. Profile configs may add a provider-scoped
-`credential` username, but that does not replace the helper policy above.
+The `gitsetu credential` command is retained as an inert backwards-compatibility shim for installations upgrading from v1.0.0 (where global `credential.helper = gitsetu credential` may have been installed). When invoked by Git's credential protocol, it drains `stdin` to `/dev/null` and returns exit code `0` to prevent breaking existing Git workflows. Run `gitsetu doctor --repair` to inspect and clean any legacy GitSetu credential helper configuration.
 
 ## Diagnostics and verification
 
@@ -105,6 +81,14 @@ when a required check fails. `--repair` regenerates recognized managed Git/SSH
 state and registers missing keys under the mutation lock, with rollback on a
 failed repair. `gitsetu doctor --repair --dry-run` previews the planned
 repairs without taking the lock or changing files.
+
+### `gitsetu explain [path]`
+
+Traces identity resolution and effective Git/SSH configuration for a given directory (defaults to current working directory). Shows exactly which profile matches, whether routing occurred via `gitdir` or `hasconfig:remote.*.url`, the effective `user.name`, `user.email`, `core.sshCommand`, and the specific config file source where each directive originates.
+
+### `gitsetu import [--yes|-y]`
+
+Scans `~/.gitconfig` for existing unmanaged `[includeIf "gitdir:..."]` rules outside GitSetu's managed blocks and offers to adopt them into GitSetu profile management. In non-interactive mode or when passed `--yes`, automatically imports valid unmanaged identities into the v2 profile registry and rewrites managed include blocks cleanly.
 
 ### `gitsetu verify`
 

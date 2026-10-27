@@ -679,6 +679,43 @@ test_backup_rejects_path_traversal() {
     unset GITSETU_TEST_VAULT_MODE GITSETU_TEST_VAULT_PASS
 }
 
+# ==============================================================================
+# Verify backup and restore preserve the remotes/ directory and its contents
+# ==============================================================================
+test_backup_preserves_remotes_directory() {
+    export GITSETU_TEST_VAULT_MODE=1
+    export GITSETU_TEST_VAULT_PASS="remotes_vault_pass"
+
+    test_v2_profile_config global "Global User" "global@example.com"
+    test_v2_profile_config work "Work User" "work@example.com"
+    {
+        test_v2_registry_header
+        test_v2_registry_line global "" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_global" ""
+        test_v2_registry_line work "$HOME/work" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_work" ""
+    } > "$GITSETU_PROFILES_CONF"
+
+    mkdir -p "$HOME/.ssh" "$GITSETU_CONFIG_DIR/remotes"
+    touch "$HOME/.ssh/id_ed25519_work"
+    printf 'work git@github-work:user/repo.git\n' > "$GITSETU_CONFIG_DIR/remotes/work.remotes"
+
+    local vault_file="$TEST_HOME/remotes_vault.enc"
+    cmd_backup "$vault_file" || return 1
+
+    # Wipe remotes directory
+    rm -rf "$GITSETU_CONFIG_DIR/remotes"
+
+    cmd_restore "$vault_file" || return 1
+
+    assert_file_exists "$GITSETU_CONFIG_DIR/remotes/work.remotes" "remotes file restored" || return 1
+    assert_file_contains "$GITSETU_CONFIG_DIR/remotes/work.remotes" "work git@github-work:user/repo.git" "remotes file content preserved" || return 1
+
+    rm -f "$vault_file"
+    unset GITSETU_TEST_VAULT_MODE GITSETU_TEST_VAULT_PASS
+    return 0
+}
+
 # --- Run ---
 
 printf '\n%btest_backup.sh%b\n' "$T_BOLD" "$T_RESET"
@@ -696,6 +733,7 @@ run_backup_test "vault ciphertext permissions 600" test_backup_vault_file_permis
 run_backup_test "restore cleanup on decryption failure" test_backup_restore_cleanup_on_decryption_failure
 run_backup_test "backup does not leak env var" test_backup_does_not_leak_env_var
 run_backup_test "restore rejects path traversal" test_backup_rejects_path_traversal
+run_backup_test "backup preserves remotes directory and files" test_backup_preserves_remotes_directory
 run_backup_test "GNU and BSD tar listing sizes parse identically" test_vault_verbose_listing_size_layouts
 
 print_results "Backup tests"

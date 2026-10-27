@@ -600,7 +600,9 @@ write_ssh_config() {
                     local j
                     for (( j=0; j<${PROFILE_COUNT:-0}; j++ )); do
                         local expected_alias="gitsetu-${PROFILE_LABELS[j]}"
-                        if [[ "$host_entry" == "$expected_alias" ]]; then
+                        local p_host="${PROFILE_PROVIDERS[j]:-}"
+                        local p_prefix="${p_host%%.*}"
+                        if [[ "$host_entry" == "$expected_alias" || ( -n "$p_prefix" && "$p_prefix" != "gitsetu" && "$host_entry" == "${p_prefix}-${PROFILE_LABELS[j]}" ) ]]; then
                             print_error "SSH alias collision: Host '$host_entry' already exists in $ssh_config at line $check_line; refusing to overwrite."
                             return 1
                         fi

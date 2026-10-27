@@ -99,13 +99,25 @@ namespace GitSetuLauncher {
             string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
             string programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
             string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            string programW6432 = Environment.GetEnvironmentVariable("ProgramW6432");
             List<string> rootList = new List<string>();
             if (!String.IsNullOrWhiteSpace(programFiles)) rootList.Add(Path.Combine(programFiles, "Git"));
             if (!String.IsNullOrWhiteSpace(programFilesX86)) rootList.Add(Path.Combine(programFilesX86, "Git"));
+            if (!String.IsNullOrWhiteSpace(programW6432)) rootList.Add(Path.Combine(programW6432, "Git"));
             if (!String.IsNullOrWhiteSpace(localAppData)) rootList.Add(Path.Combine(localAppData, "Programs", "Git"));
 
             string[] regKeys = new string[] { @"SOFTWARE\GitForWindows", @"SOFTWARE\WOW6432Node\GitForWindows" };
             foreach (string regKey in regKeys) {
+                try {
+                    using (var baseKey = Microsoft.Win32.RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.LocalMachine, Microsoft.Win32.RegistryView.Registry64)) {
+                        using (var key = baseKey.OpenSubKey(regKey)) {
+                            if (key != null) {
+                                string p = key.GetValue("InstallPath") as string;
+                                if (!String.IsNullOrWhiteSpace(p) && Directory.Exists(p)) rootList.Add(p);
+                            }
+                        }
+                    }
+                } catch { }
                 try {
                     using (var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(regKey)) {
                         if (key != null) {

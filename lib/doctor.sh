@@ -999,11 +999,20 @@ cmd_import() {
     local raw_gitdir raw_path
 
     while IFS= read -r line || [[ -n "$line" ]]; do
-        if [[ "$line" == *"# --- GitSetu Identity Routing (Managed) ---"* || \
+        if [[ "$line" == *"${GITSETU_MANAGED_START:-# [gitsetu:managed:start]}"* || \
+              "$line" == *"${GITSETU_MANAGED_HEAD_START:-# [gitsetu:managed:head:start]}"* || \
+              "$line" == *"# [gitsetu:managed"* || \
+              "$line" == *"[gitsetu:managed:start]"* || \
+              "$line" == *"[gitsetu:managed:head:start]"* || \
+              "$line" == *"# --- GitSetu Identity Routing (Managed) ---"* || \
               "$line" == *"# --- GitSetu Global Setup (Managed) ---"* ]]; then
             in_managed=1
             continue
-        elif [[ "$line" == *"# --- End GitSetu"* ]]; then
+        elif [[ "$line" == *"${GITSETU_MANAGED_END:-# [gitsetu:managed:end]}"* || \
+              "$line" == *"${GITSETU_MANAGED_HEAD_END:-# [gitsetu:managed:head:end]}"* || \
+              "$line" == *"[gitsetu:managed:end]"* || \
+              "$line" == *"[gitsetu:managed:head:end]"* || \
+              "$line" == *"# --- End GitSetu"* ]]; then
             in_managed=0
             continue
         fi

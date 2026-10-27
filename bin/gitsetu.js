@@ -104,7 +104,9 @@ function validatePackageContract() {
   // package's own ancestors to be symlink-free.
   const scriptArg = process.argv[1];
   const scriptDir = path.dirname(scriptArg);
-  if (hasReparseComponent(scriptDir)) {
+  const isScoopRoot = /[\\\/]scoop[\\\/]apps[\\\/]gitsetu[\\\/]current$/i.test(rootDir);
+  const allowedReparse = isScoopRoot ? rootDir : null;
+  if (hasReparseComponent(scriptDir, allowedReparse)) {
     throw new Error('npm wrapper was invoked through a redirected package path');
   }
   let resolvedScript;
@@ -118,7 +120,7 @@ function validatePackageContract() {
     throw new Error('npm wrapper was invoked through a redirected package path');
   }
   const rootStat = fs.lstatSync(rootDir);
-  if (!rootStat.isDirectory() || rootStat.isSymbolicLink() || !isTrustedPackageOwner(rootStat) || hasReparseComponent(rootDir)) {
+  if (!rootStat.isDirectory() || (rootStat.isSymbolicLink() && !isScoopRoot) || !isTrustedPackageOwner(rootStat) || hasReparseComponent(rootDir, allowedReparse)) {
     throw new Error('npm package root is redirected or is not a real directory');
   }
   if (fs.existsSync(path.join(rootDir, '.git')) && process.env.GITSETU_NPM_TEST_MODE !== '1') {
@@ -145,7 +147,7 @@ function validatePackageContract() {
   if (!fs.existsSync(entryScript)) targetScript = bundleScript;
   assertPathContained(rootDir, targetScript);
   assertRegularFile(targetScript, 'GitSetu package target');
-  if (hasReparseComponent(targetScript)) throw new Error('GitSetu package target has a symlink/reparse component');
+  if (hasReparseComponent(targetScript, allowedReparse)) throw new Error('GitSetu package target has a symlink/reparse component');
 
   const libDir = path.join(rootDir, 'lib');
   if (fs.existsSync(libDir)) {
@@ -191,7 +193,15 @@ $roots = [System.Collections.Generic.List[string]]@(
   (Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFilesX86)) 'Git'),
   (Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) 'Programs\\Git')
 )
+if ($env:ProgramW6432) {
+  $roots.Add((Join-Path $env:ProgramW6432 'Git'))
+}
 foreach ($regKey in @('SOFTWARE\\GitForWindows', 'SOFTWARE\\WOW6432Node\\GitForWindows')) {
+  try {
+    $base64 = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, [Microsoft.Win32.RegistryView]::Registry64)
+    $k = $base64.OpenSubKey($regKey)
+    if ($k) { $val = $k.GetValue('InstallPath'); if ($val -and (Test-Path -LiteralPath $val)) { $roots.Add($val) } }
+  } catch {}
   try {
     $k = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($regKey)
     if ($k) { $val = $k.GetValue('InstallPath'); if ($val -and (Test-Path -LiteralPath $val)) { $roots.Add($val) } }
@@ -264,6 +274,9 @@ function findTrustedWindowsBash() {
     path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Git'),
     path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Git')
   ];
+  if (process.env.ProgramW6432) {
+    roots.push(path.join(process.env.ProgramW6432, 'Git'));
+  }
   if (process.env.USERPROFILE) {
     roots.push(path.join(process.env.USERPROFILE, 'scoop', 'apps', 'git', 'current'));
   }
@@ -276,20 +289,24 @@ function findTrustedWindowsBash() {
       'HKCU\\SOFTWARE\\WOW6432Node\\GitForWindows'
     ];
     for (const key of regKeys) {
-      try {
-        const query = spawnSync(regExe, ['query', key, '/v', 'InstallPath'], {
-          encoding: 'utf8',
-          windowsHide: true,
-          stdio: ['ignore', 'pipe', 'ignore']
-        });
-        if (!query.error && query.status === 0 && query.stdout) {
-          const match = query.stdout.match(/InstallPath\s+REG_\w+\s+(.+)/i);
-          if (match && match[1]) {
-            const p = match[1].trim();
-            if (p && !roots.includes(p)) roots.push(p);
+      for (const viewFlag of ['', '/reg:64', '/reg:32']) {
+        try {
+          const regArgs = ['query', key, '/v', 'InstallPath'];
+          if (viewFlag) regArgs.push(viewFlag);
+          const query = spawnSync(regExe, regArgs, {
+            encoding: 'utf8',
+            windowsHide: true,
+            stdio: ['ignore', 'pipe', 'ignore']
+          });
+          if (!query.error && query.status === 0 && query.stdout) {
+            const match = query.stdout.match(/InstallPath\s+REG_\w+\s+(.+)/i);
+            if (match && match[1]) {
+              const p = match[1].trim();
+              if (p && !roots.includes(p)) roots.push(p);
+            }
           }
-        }
-      } catch {}
+        } catch {}
+      }
     }
   }
   const scoopCurrent = process.env.USERPROFILE

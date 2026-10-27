@@ -3,9 +3,9 @@
   "name": "gitsetu",
   "version": "1.1.0",
   "releaseState": "development",
-  "sourceCommit": "ea770906c2dec80470dab02e08dd975075691c1c",
+  "sourceCommit": "2edf0ce9f67c1edf30417d799f13b1d9f3f9d2a7",
   "sourceDirty": "dirty",
-  "bundleSha256": "332902cbaaf4e0f4e8e6fd64bd5b27be0ce7b2cd5a4d39f80bf91ec3d7aa8bda",
+  "bundleSha256": "455a7617f4faa511c4d1531c16db8f7e20d2ac52a7a12e5aa2e222ce7d2c840a",
   "modules": [
     {
       "path": "lib/core.sh",
@@ -25,11 +25,11 @@
     },
     {
       "path": "lib/backup.sh",
-      "sha256": "425004a9f52fc5a880c4ab35d7b826a9c65d229d301f2a44542b261b4be8336a"
+      "sha256": "07542ab2f71883108c207f7b0ef11e8fe2b3919cf55e9b0ed56fb46a8a656fe9"
     },
     {
       "path": "lib/ssh.sh",
-      "sha256": "6a9763531852eb2f79327f32f928a8e77347c596470c73174a55b507ede0ff82"
+      "sha256": "b3df44efdf268de19c6091838bddb59eb13bb62c2f87116ff6fe9e31a4714b6f"
     },
     {
       "path": "lib/gitconfig.sh",
@@ -37,11 +37,11 @@
     },
     {
       "path": "lib/guard.sh",
-      "sha256": "18645720cf8772ce750e6c242c571178fb43bcf2b100ea83f941383c8adcde7f"
+      "sha256": "7712caef5f4b727e58093b50b40887b51b9e0b7e583321c1b30e2af634109a82"
     },
     {
       "path": "lib/doctor.sh",
-      "sha256": "30ba38bbd9c4c7fcf1177581474308fddea0fe40ad100b6d8c19adf0c6f22475"
+      "sha256": "48bd7dd8a1b2f019f3cc5b2492c2250348cf6a9608a8734dfab44988f67294ee"
     },
     {
       "path": "lib/verify.sh",

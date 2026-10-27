@@ -1,54 +1,35 @@
-# Credential Broker Engine
+# Credential Architecture & Platform Delegation
 
-GitSetu provides a per-profile credential helper for HTTPS Personal Access Tokens (PATs). The broker namespaces records by the exact profile, host, and Git `path=` tuple. `GITSETU_CREDENTIAL_PATH` can explicitly override the protocol path for a controlled wrapper or test.
+In GitSetu v1.1.0, HTTPS credential management is intentionally delegated to Git's native credential-helper ecosystem (Git Credential Manager, `git-credential-osxkeychain`, and `git-credential-libsecret`) via standardized per-profile configuration, rather than maintaining a custom intermediary broker.
 
-## Why native stores need namespacing
+## Native Delegation via Per-Profile Username Routing
 
-Git sends a credential request such as:
+Git natively routes credentials using its `credential.https://<host>.username` configuration mechanism. When Git encounters an authenticated HTTPS request, it queries the system's authoritative credential helper with both the hostname and the profile-specific username.
 
-```text
-protocol=https
-host=github.com
-```
-
-A native keychain queried only by `github.com` may return a personal token when a company repository expects a different one. GitSetu includes Git's `path=` value in the record key, so repository-level requests remain isolated. Use the explicit environment override only when a wrapper intentionally needs a different scope.
-
-## Managed Git configuration
-
-A managed profile can contain a scoped helper entry equivalent to:
+Each managed profile configuration (`~/.config/gitsetu/profiles/<label>.gitconfig`) defines the profile's provider username:
 
 ```ini
-[credential]
-    helper = gitsetu credential
+[credential "https://github.com"]
+    username = dev-user
 ```
 
-The helper reads Git's credential protocol from standard input, resolves the active profile from the working directory, and returns a matching record. It never scans or prints unrelated native keychain entries. GitSetu installs this helper only when no distinct user/system credential-helper policy is already configured; an existing helper remains authoritative.
+When invoking operations inside a repository mapped to this profile:
+1. Git's `includeIf` mechanism activates the profile's configuration.
+2. Git supplies the configured username (`dev-user`) to the system credential helper (e.g. Git Credential Manager on Windows, Apple Keychain on macOS, or Secret Service on Linux).
+3. The platform credential manager retrieves the isolated token associated with `dev-user@github.com`.
 
-Native backends are preferred:
+This zero-custom-broker design eliminates plaintext token leaks, respects OS keychain security policies, and avoids breaking on Git 2.46+ extended credential protocol attributes.
 
-- macOS Keychain (`security`);
-- Windows Git Credential Manager;
-- Linux Secret Service (`secret-tool`).
+## Legacy Compatibility Shim (`gitsetu credential`)
 
-## Token lifecycle
-
-Interactive setup and the standard Git credential protocol can store a token:
+For backwards compatibility with installations upgrading from v1.0.0 (where global `credential.helper = gitsetu credential` may have been installed), the CLI retains an inert compatibility shim:
 
 ```bash
-printf 'protocol=https\nhost=github.com\nusername=dev\npassword=PAT_TOKEN\n\n' \
-  | gitsetu credential store
+gitsetu credential <get|store|erase>
 ```
 
-The `get` and `erase` actions use the same profile/host/path namespace at the keychain API boundary. The CLI passes the protocol's exact `path=` value, while `GITSETU_CREDENTIAL_PATH` is an explicit wrapper/test override. Records are versioned and fields are encoded so delimiters, whitespace, and Unicode values cannot be confused with record structure.
-
-## Explicit zero-dependency fallback
-
-Minimal Linux systems and containers may not provide a keychain daemon. GitSetu supports a deliberately selected plaintext backend for those environments:
-
-```bash
-GITSETU_CREDENTIAL_BACKEND=file gitsetu credential store
-```
-
-The file backend writes `~/.config/gitsetu/.tokens` with mode `0600` in a directory with mode `0700`, rejects symlinks and unsafe permissions, and warns on every use. It is **plaintext**, not encrypted storage, and is not enabled as a silent native-store fallback. Anyone who can read the file as the same operating-system user can recover the token.
-
-If no native backend is available and the explicit file backend was not selected, credential operations fail with instructions for choosing one. Do not describe the plaintext file as an encrypted vault or as protected by the OS keychain.
+When invoked:
+- Standard input is drained to `/dev/null`.
+- The command exits cleanly with status code `0`.
+- Stale `helper = ... gitsetu credential` lines do not cause fatal Git errors.
+- `gitsetu doctor` detects any remaining GitSetu helper lines outside the managed block, and `gitsetu doctor --repair` removes them.
