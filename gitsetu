@@ -912,11 +912,13 @@ cmd_status() {
         if [[ "$is_managed" = true && -n "$exp_email" && "$exp_email" == "$act_email" ]]; then
             is_active=true
         fi
+        local escaped_cwd="${cwd//\\/\\\\}"
+        escaped_cwd="${escaped_cwd//\"/\\\"}"
         printf '{\n'
         printf '  "schema_version": "1.0.0",\n'
         printf '  "managed": %s,\n' "$is_managed"
         printf '  "profile": %s,\n' "$prof_name"
-        printf '  "directory": "%s",\n' "$cwd"
+        printf '  "directory": "%s",\n' "$escaped_cwd"
         if [[ -n "$exp_email" ]]; then
             printf '  "expectedEmail": "%s",\n' "$exp_email"
         else
@@ -1447,6 +1449,38 @@ cmd_run() {
     export GIT_COMMITTER_EMAIL="$email"
     export GIT_SSH_COMMAND="ssh -o IdentitiesOnly=yes -i ${quoted_key}"
 
+    local gpgsign tagsign signing_key gpgformat
+    gpgsign=$(git config -f "$config_file" commit.gpgsign 2>/dev/null || true)
+    tagsign=$(git config -f "$config_file" tag.gpgsign 2>/dev/null || true)
+    signing_key=$(git config -f "$config_file" user.signingkey 2>/dev/null || true)
+    gpgformat=$(git config -f "$config_file" gpg.format 2>/dev/null || true)
+    if [[ "$gpgsign" == "true" || "$tagsign" == "true" ]]; then
+        local count="${GIT_CONFIG_COUNT:-0}"
+        if [[ "$gpgsign" == "true" ]]; then
+            export "GIT_CONFIG_KEY_${count}=commit.gpgsign"
+            export "GIT_CONFIG_VALUE_${count}=true"
+            count=$((count + 1))
+        fi
+        if [[ "$tagsign" == "true" ]]; then
+            export "GIT_CONFIG_KEY_${count}=tag.gpgsign"
+            export "GIT_CONFIG_VALUE_${count}=true"
+            count=$((count + 1))
+        fi
+        export "GIT_CONFIG_KEY_${count}=gpg.format"
+        export "GIT_CONFIG_VALUE_${count}=${gpgformat:-ssh}"
+        count=$((count + 1))
+        if [[ -n "$signing_key" ]]; then
+            export "GIT_CONFIG_KEY_${count}=user.signingkey"
+            export "GIT_CONFIG_VALUE_${count}=$signing_key"
+            count=$((count + 1))
+        elif [[ -f "${found_key_path}.pub" ]]; then
+            export "GIT_CONFIG_KEY_${count}=user.signingkey"
+            export "GIT_CONFIG_VALUE_${count}=${found_key_path}.pub"
+            count=$((count + 1))
+        fi
+        export "GIT_CONFIG_COUNT=$count"
+    fi
+
     gitsetu_global_cleanup
     exec "$@"
 }
@@ -1638,11 +1672,11 @@ cmd_audit() {
         return 0
     fi
 
-    print_section "GitSetu Commit History Identity Audit"
-    printf >&2 "  Repository:       %s\n" "$toplevel"
-    printf >&2 "  Managed Profile:  %s\n" "$profile_label"
-    printf >&2 "  Expected Email:   %s\n" "$expected_email"
-    printf >&2 "  Auditing last %d commit(s)...\n\n" "$count"
+    printf "\n  %bGitSetu Commit History Identity Audit%b\n" "${BOLD:-}" "${RESET:-}"
+    printf "  Repository:       %s\n" "$toplevel"
+    printf "  Managed Profile:  %s\n" "$profile_label"
+    printf "  Expected Email:   %s\n" "$expected_email"
+    printf "  Auditing last %d commit(s)...\n\n" "$count"
 
     local mismatches=0 total=0
     local hash an ae cn ce subj short_hash commit_ok
@@ -1658,26 +1692,26 @@ cmd_audit() {
         fi
 
         if [[ "$commit_ok" -eq 1 ]]; then
-            printf >&2 "  %b%s%b %s - %s (%s)\n" "$GREEN" "$SYM_CHECK" "$RESET" "$short_hash" "$subj" "$ae"
+            printf "  %b%s%b %s - %s (%s)\n" "$GREEN" "$SYM_CHECK" "$RESET" "$short_hash" "$subj" "$ae"
         else
-            printf >&2 "  %b%s%b %s - %s\n" "$RED" "$SYM_CROSS" "$RESET" "$short_hash" "$subj"
+            printf "  %b%s%b %s - %s\n" "$RED" "$SYM_CROSS" "$RESET" "$short_hash" "$subj"
             if [[ "$ae" != "$expected_email" ]]; then
-                printf >&2 "      %bAuthor:%b    %s <%s> %b(expected: <%s>)%b\n" "$RED" "$RESET" "$an" "$ae" "$YELLOW" "$expected_email" "$RESET"
+                printf "      %bAuthor:%b    %s <%s> %b(expected: <%s>)%b\n" "$RED" "$RESET" "$an" "$ae" "$YELLOW" "$expected_email" "$RESET"
             fi
             if [[ "$ce" != "$expected_email" ]]; then
-                printf >&2 "      %bCommitter:%b %s <%s> %b(expected: <%s>)%b\n" "$RED" "$RESET" "$cn" "$ce" "$YELLOW" "$expected_email" "$RESET"
+                printf "      %bCommitter:%b %s <%s> %b(expected: <%s>)%b\n" "$RED" "$RESET" "$cn" "$ce" "$YELLOW" "$expected_email" "$RESET"
             fi
         fi
     done <<< "$log_lines"
 
-    printf >&2 '\n'
+    printf '\n'
     if [[ "$mismatches" -gt 0 ]]; then
-        printf >&2 "  %bAudit Result: FAILED (%d of %d commit(s) contain identity mismatches)%b\n\n" "$RED" "$mismatches" "$total" "$RESET"
-        printf >&2 "  To fix author/committer identity on the most recent commit:\n"
-        printf >&2 "    git commit --amend --reset-author --no-edit\n\n"
+        printf "  %bAudit Result: FAILED (%d of %d commit(s) contain identity mismatches)%b\n\n" "$RED" "$mismatches" "$total" "$RESET"
+        printf "  To fix author/committer identity on the most recent commit:\n"
+        printf "    git commit --amend --reset-author --no-edit\n\n"
         return 1
     else
-        printf >&2 "  %bAudit Result: PASSED (All %d commit(s) match profile '%s' <%s>)%b\n\n" "$GREEN" "$total" "$profile_label" "$expected_email" "$RESET"
+        printf "  %bAudit Result: PASSED (All %d commit(s) match profile '%s' <%s>)%b\n\n" "$GREEN" "$total" "$profile_label" "$expected_email" "$RESET"
         return 0
     fi
 }

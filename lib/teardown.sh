@@ -114,6 +114,11 @@ teardown_gitconfig() {
 
     if ! grep -q '[^[:space:]]' "$tmp_file" 2>/dev/null; then
         rm -f "$tmp_file"
+        if [[ -L "$gitconfig" ]]; then
+            : > "$target"
+            print_success "Emptied ~/.gitconfig target (it was empty after cleanup, preserving symlink)"
+            return 0
+        fi
         if ! rm -f "$target"; then
             print_error "Failed to remove empty ~/.gitconfig."
             return 1
@@ -183,11 +188,16 @@ teardown_sshconfig() {
 
             if ! grep -q '[^[:space:]]' "$tmp_file" 2>/dev/null; then
                 rm -f "$tmp_file"
-                if ! rm -f "$target_ssh"; then
-                    print_error "Failed to remove empty ~/.ssh/config."
-                    return 1
+                if [[ -L "$ssh_config" ]]; then
+                    : > "$target_ssh"
+                    print_success "Emptied ~/.ssh/config target (it was empty after cleanup, preserving symlink)"
+                else
+                    if ! rm -f "$target_ssh"; then
+                        print_error "Failed to remove empty ~/.ssh/config."
+                        return 1
+                    fi
+                    print_success "Removed ~/.ssh/config (it was empty after cleanup)"
                 fi
-                print_success "Removed ~/.ssh/config (it was empty after cleanup)"
             elif ! _teardown_replace_file "$tmp_file" "$target_ssh"; then
                 rm -f "$tmp_file"
                 print_error "Failed to install cleaned ~/.ssh/config; original was preserved."

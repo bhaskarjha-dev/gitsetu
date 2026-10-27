@@ -55,12 +55,6 @@ _ssh_portable_path() {
         printf '~'
     elif [[ -n "$home_mixed" && "$path" == "$home_mixed/"* ]]; then
         printf '~/%s' "${path#"$home_mixed"/}"
-    elif [[ "$path" =~ ^([a-zA-Z]):/(.*) ]]; then
-        local drive="${BASH_REMATCH[1]}"
-        local rest="${BASH_REMATCH[2]}"
-        local drive_lower
-        drive_lower=$(printf '%s' "$drive" | tr '[:upper:]' '[:lower:]')
-        printf '/%s/%s' "$drive_lower" "$rest"
     else
         printf '%s' "$path"
     fi
@@ -524,28 +518,32 @@ build_ssh_host_block() {
     local prefix
     prefix=${hostname%%.*}
 
+    local host_aliases="gitsetu-${label}"
+    if [[ -n "$prefix" && "$prefix" != "gitsetu" ]]; then
+        host_aliases="gitsetu-${label} ${prefix}-${label}"
+    fi
+
     # Port 443 routing is an explicit GitHub.com endpoint policy, not a
     # substring match. Deceptive hosts such as github.com.evil must retain
     # their literal HostName and never be redirected to ssh.github.com.
-    # CRIT-08: Use Host gitsetu-${label} to prevent collision with user's own Host aliases.
-    # CRIT-07: Do not emit AddKeysToAgent yes.
-    # CRIT-09: Do not emit UseKeychain yes.
     if [[ "${GITSETU_PORT443_NEEDED:-0}" -eq 1 ]] && [[ "$hostname" == "github.com" ]]; then
         cat <<EOF
-Host gitsetu-${label}
+Host ${host_aliases}
     HostName ssh.github.com
     Port 443
     User git
     IdentityFile ${quoted_key}
     IdentitiesOnly yes
+    AddKeysToAgent yes
 EOF
     else
         cat <<EOF
-Host gitsetu-${label}
+Host ${host_aliases}
     HostName ${hostname}
     User git
     IdentityFile ${quoted_key}
     IdentitiesOnly yes
+    AddKeysToAgent yes
 EOF
     fi
 }

@@ -52,7 +52,7 @@ provider produces `github-work`:
 
 ```ini
 # ~/.config/gitsetu/profiles/ssh_config (generated)
-Host github-work
+Host gitsetu-work github-work
     HostName github.com
     User git
     IdentityFile ~/.ssh/id_ed25519_work

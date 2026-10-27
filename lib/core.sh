@@ -1218,8 +1218,12 @@ _load_v1_profiles() {
             return 1
         fi
 
-        if ! validate_user_name "$loaded_name" || ! validate_email "$loaded_email"; then
-            _gitsetu_registry_error "unsupported or legacy registry format. Unrecognized profile registry at ${registry}. Move it aside and run gitsetu setup, or run gitsetu teardown --force."
+        if ! validate_user_name "$loaded_name"; then
+            _gitsetu_registry_error "unsupported or legacy profile identity format: profile '${label}' on registry line ${line_number} has an invalid or missing user.name ('${loaded_name}'). Check '${GITSETU_PROFILES_DIR}/${label}.gitconfig'."
+            return 1
+        fi
+        if ! validate_email "$loaded_email"; then
+            _gitsetu_registry_error "unsupported or legacy profile identity format: profile '${label}' on registry line ${line_number} has an invalid or missing user.email ('${loaded_email}'). Check '${GITSETU_PROFILES_DIR}/${label}.gitconfig'."
             return 1
         fi
 
@@ -1256,8 +1260,8 @@ _load_v1_profiles() {
         local g_name g_email g_key
         g_name=$(git config --global --get user.name 2>/dev/null || true)
         g_email=$(git config --global --get user.email 2>/dev/null || true)
-        [[ -n "$g_name" ]] || g_name="${names[0]:-Pat Example}"
-        [[ -n "$g_email" ]] || g_email="${emails[0]:-pat.work@example.com}"
+        [[ -n "$g_name" ]] || g_name="${names[0]:-}"
+        [[ -n "$g_email" ]] || g_email="${emails[0]:-}"
         g_key="$HOME/.ssh/id_ed25519"
 
         labels=("global" "${labels[@]}")
@@ -1556,3 +1560,20 @@ remove_profile_at_index() {
     PROFILE_COUNT=$((profile_count - 1))
     return 0
 }
+
+# ------------------------------------------------------------------------------
+# Early cleanup fallback when sourced in test harnesses or library mode
+# ------------------------------------------------------------------------------
+if ! declare -F gitsetu_early_cleanup >/dev/null 2>&1; then
+    gitsetu_early_cleanup() {
+        local f d
+        for f in ${GITSETU_CLEANUP_FILES[@]+"${GITSETU_CLEANUP_FILES[@]}"}; do
+            [[ -n "$f" && "$f" != "/" && "$f" != "$HOME" ]] || continue
+            rm -f "$f" 2>/dev/null || true
+        done
+        for d in ${GITSETU_CLEANUP_DIRS[@]+"${GITSETU_CLEANUP_DIRS[@]}"}; do
+            [[ -n "$d" && "$d" != "/" && "$d" != "$HOME" && "$d" != "." ]] || continue
+            rm -rf "$d" 2>/dev/null || true
+        done
+    }
+fi

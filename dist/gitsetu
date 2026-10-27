@@ -1737,8 +1737,12 @@ _load_v1_profiles() {
             return 1
         fi
 
-        if ! validate_user_name "$loaded_name" || ! validate_email "$loaded_email"; then
-            _gitsetu_registry_error "unsupported or legacy registry format. Unrecognized profile registry at ${registry}. Move it aside and run gitsetu setup, or run gitsetu teardown --force."
+        if ! validate_user_name "$loaded_name"; then
+            _gitsetu_registry_error "unsupported or legacy profile identity format: profile '${label}' on registry line ${line_number} has an invalid or missing user.name ('${loaded_name}'). Check '${GITSETU_PROFILES_DIR}/${label}.gitconfig'."
+            return 1
+        fi
+        if ! validate_email "$loaded_email"; then
+            _gitsetu_registry_error "unsupported or legacy profile identity format: profile '${label}' on registry line ${line_number} has an invalid or missing user.email ('${loaded_email}'). Check '${GITSETU_PROFILES_DIR}/${label}.gitconfig'."
             return 1
         fi
 
@@ -1775,8 +1779,8 @@ _load_v1_profiles() {
         local g_name g_email g_key
         g_name=$(git config --global --get user.name 2>/dev/null || true)
         g_email=$(git config --global --get user.email 2>/dev/null || true)
-        [[ -n "$g_name" ]] || g_name="${names[0]:-Pat Example}"
-        [[ -n "$g_email" ]] || g_email="${emails[0]:-pat.work@example.com}"
+        [[ -n "$g_name" ]] || g_name="${names[0]:-}"
+        [[ -n "$g_email" ]] || g_email="${emails[0]:-}"
         g_key="$HOME/.ssh/id_ed25519"
 
         labels=("global" "${labels[@]}")
@@ -2075,6 +2079,23 @@ remove_profile_at_index() {
     PROFILE_COUNT=$((profile_count - 1))
     return 0
 }
+
+# ------------------------------------------------------------------------------
+# Early cleanup fallback when sourced in test harnesses or library mode
+# ------------------------------------------------------------------------------
+if ! declare -F gitsetu_early_cleanup >/dev/null 2>&1; then
+    gitsetu_early_cleanup() {
+        local f d
+        for f in ${GITSETU_CLEANUP_FILES[@]+"${GITSETU_CLEANUP_FILES[@]}"}; do
+            [[ -n "$f" && "$f" != "/" && "$f" != "$HOME" ]] || continue
+            rm -f "$f" 2>/dev/null || true
+        done
+        for d in ${GITSETU_CLEANUP_DIRS[@]+"${GITSETU_CLEANUP_DIRS[@]}"}; do
+            [[ -n "$d" && "$d" != "/" && "$d" != "$HOME" && "$d" != "." ]] || continue
+            rm -rf "$d" 2>/dev/null || true
+        done
+    }
+fi
 
 }
 _gitsetu_bundle_module_1
@@ -5940,12 +5961,6 @@ _ssh_portable_path() {
         printf '~'
     elif [[ -n "$home_mixed" && "$path" == "$home_mixed/"* ]]; then
         printf '~/%s' "${path#"$home_mixed"/}"
-    elif [[ "$path" =~ ^([a-zA-Z]):/(.*) ]]; then
-        local drive="${BASH_REMATCH[1]}"
-        local rest="${BASH_REMATCH[2]}"
-        local drive_lower
-        drive_lower=$(printf '%s' "$drive" | tr '[:upper:]' '[:lower:]')
-        printf '/%s/%s' "$drive_lower" "$rest"
     else
         printf '%s' "$path"
     fi
@@ -6409,28 +6424,32 @@ build_ssh_host_block() {
     local prefix
     prefix=${hostname%%.*}
 
+    local host_aliases="gitsetu-${label}"
+    if [[ -n "$prefix" && "$prefix" != "gitsetu" ]]; then
+        host_aliases="gitsetu-${label} ${prefix}-${label}"
+    fi
+
     # Port 443 routing is an explicit GitHub.com endpoint policy, not a
     # substring match. Deceptive hosts such as github.com.evil must retain
     # their literal HostName and never be redirected to ssh.github.com.
-    # CRIT-08: Use Host gitsetu-${label} to prevent collision with user's own Host aliases.
-    # CRIT-07: Do not emit AddKeysToAgent yes.
-    # CRIT-09: Do not emit UseKeychain yes.
     if [[ "${GITSETU_PORT443_NEEDED:-0}" -eq 1 ]] && [[ "$hostname" == "github.com" ]]; then
         cat <<EOF
-Host gitsetu-${label}
+Host ${host_aliases}
     HostName ssh.github.com
     Port 443
     User git
     IdentityFile ${quoted_key}
     IdentitiesOnly yes
+    AddKeysToAgent yes
 EOF
     else
         cat <<EOF
-Host gitsetu-${label}
+Host ${host_aliases}
     HostName ${hostname}
     User git
     IdentityFile ${quoted_key}
     IdentitiesOnly yes
+    AddKeysToAgent yes
 EOF
     fi
 }
@@ -9424,6 +9443,7 @@ run_doctor_repair() {
         return 1
     fi
 
+    trap - INT TERM HUP
     trap gitsetu_early_cleanup EXIT
     print_success "Repair complete. Required configuration was regenerated successfully."
     return 0
@@ -10225,6 +10245,11 @@ teardown_gitconfig() {
 
     if ! grep -q '[^[:space:]]' "$tmp_file" 2>/dev/null; then
         rm -f "$tmp_file"
+        if [[ -L "$gitconfig" ]]; then
+            : > "$target"
+            print_success "Emptied ~/.gitconfig target (it was empty after cleanup, preserving symlink)"
+            return 0
+        fi
         if ! rm -f "$target"; then
             print_error "Failed to remove empty ~/.gitconfig."
             return 1
@@ -10294,11 +10319,16 @@ teardown_sshconfig() {
 
             if ! grep -q '[^[:space:]]' "$tmp_file" 2>/dev/null; then
                 rm -f "$tmp_file"
-                if ! rm -f "$target_ssh"; then
-                    print_error "Failed to remove empty ~/.ssh/config."
-                    return 1
+                if [[ -L "$ssh_config" ]]; then
+                    : > "$target_ssh"
+                    print_success "Emptied ~/.ssh/config target (it was empty after cleanup, preserving symlink)"
+                else
+                    if ! rm -f "$target_ssh"; then
+                        print_error "Failed to remove empty ~/.ssh/config."
+                        return 1
+                    fi
+                    print_success "Removed ~/.ssh/config (it was empty after cleanup)"
                 fi
-                print_success "Removed ~/.ssh/config (it was empty after cleanup)"
             elif ! _teardown_replace_file "$tmp_file" "$target_ssh"; then
                 rm -f "$tmp_file"
                 print_error "Failed to install cleaned ~/.ssh/config; original was preserved."
@@ -13520,11 +13550,13 @@ cmd_status() {
         if [[ "$is_managed" = true && -n "$exp_email" && "$exp_email" == "$act_email" ]]; then
             is_active=true
         fi
+        local escaped_cwd="${cwd//\\/\\\\}"
+        escaped_cwd="${escaped_cwd//\"/\\\"}"
         printf '{\n'
         printf '  "schema_version": "1.0.0",\n'
         printf '  "managed": %s,\n' "$is_managed"
         printf '  "profile": %s,\n' "$prof_name"
-        printf '  "directory": "%s",\n' "$cwd"
+        printf '  "directory": "%s",\n' "$escaped_cwd"
         if [[ -n "$exp_email" ]]; then
             printf '  "expectedEmail": "%s",\n' "$exp_email"
         else
@@ -14055,6 +14087,38 @@ cmd_run() {
     export GIT_COMMITTER_EMAIL="$email"
     export GIT_SSH_COMMAND="ssh -o IdentitiesOnly=yes -i ${quoted_key}"
 
+    local gpgsign tagsign signing_key gpgformat
+    gpgsign=$(git config -f "$config_file" commit.gpgsign 2>/dev/null || true)
+    tagsign=$(git config -f "$config_file" tag.gpgsign 2>/dev/null || true)
+    signing_key=$(git config -f "$config_file" user.signingkey 2>/dev/null || true)
+    gpgformat=$(git config -f "$config_file" gpg.format 2>/dev/null || true)
+    if [[ "$gpgsign" == "true" || "$tagsign" == "true" ]]; then
+        local count="${GIT_CONFIG_COUNT:-0}"
+        if [[ "$gpgsign" == "true" ]]; then
+            export "GIT_CONFIG_KEY_${count}=commit.gpgsign"
+            export "GIT_CONFIG_VALUE_${count}=true"
+            count=$((count + 1))
+        fi
+        if [[ "$tagsign" == "true" ]]; then
+            export "GIT_CONFIG_KEY_${count}=tag.gpgsign"
+            export "GIT_CONFIG_VALUE_${count}=true"
+            count=$((count + 1))
+        fi
+        export "GIT_CONFIG_KEY_${count}=gpg.format"
+        export "GIT_CONFIG_VALUE_${count}=${gpgformat:-ssh}"
+        count=$((count + 1))
+        if [[ -n "$signing_key" ]]; then
+            export "GIT_CONFIG_KEY_${count}=user.signingkey"
+            export "GIT_CONFIG_VALUE_${count}=$signing_key"
+            count=$((count + 1))
+        elif [[ -f "${found_key_path}.pub" ]]; then
+            export "GIT_CONFIG_KEY_${count}=user.signingkey"
+            export "GIT_CONFIG_VALUE_${count}=${found_key_path}.pub"
+            count=$((count + 1))
+        fi
+        export "GIT_CONFIG_COUNT=$count"
+    fi
+
     gitsetu_global_cleanup
     exec "$@"
 }
@@ -14246,11 +14310,11 @@ cmd_audit() {
         return 0
     fi
 
-    print_section "GitSetu Commit History Identity Audit"
-    printf >&2 "  Repository:       %s\n" "$toplevel"
-    printf >&2 "  Managed Profile:  %s\n" "$profile_label"
-    printf >&2 "  Expected Email:   %s\n" "$expected_email"
-    printf >&2 "  Auditing last %d commit(s)...\n\n" "$count"
+    printf "\n  %bGitSetu Commit History Identity Audit%b\n" "${BOLD:-}" "${RESET:-}"
+    printf "  Repository:       %s\n" "$toplevel"
+    printf "  Managed Profile:  %s\n" "$profile_label"
+    printf "  Expected Email:   %s\n" "$expected_email"
+    printf "  Auditing last %d commit(s)...\n\n" "$count"
 
     local mismatches=0 total=0
     local hash an ae cn ce subj short_hash commit_ok
@@ -14266,26 +14330,26 @@ cmd_audit() {
         fi
 
         if [[ "$commit_ok" -eq 1 ]]; then
-            printf >&2 "  %b%s%b %s - %s (%s)\n" "$GREEN" "$SYM_CHECK" "$RESET" "$short_hash" "$subj" "$ae"
+            printf "  %b%s%b %s - %s (%s)\n" "$GREEN" "$SYM_CHECK" "$RESET" "$short_hash" "$subj" "$ae"
         else
-            printf >&2 "  %b%s%b %s - %s\n" "$RED" "$SYM_CROSS" "$RESET" "$short_hash" "$subj"
+            printf "  %b%s%b %s - %s\n" "$RED" "$SYM_CROSS" "$RESET" "$short_hash" "$subj"
             if [[ "$ae" != "$expected_email" ]]; then
-                printf >&2 "      %bAuthor:%b    %s <%s> %b(expected: <%s>)%b\n" "$RED" "$RESET" "$an" "$ae" "$YELLOW" "$expected_email" "$RESET"
+                printf "      %bAuthor:%b    %s <%s> %b(expected: <%s>)%b\n" "$RED" "$RESET" "$an" "$ae" "$YELLOW" "$expected_email" "$RESET"
             fi
             if [[ "$ce" != "$expected_email" ]]; then
-                printf >&2 "      %bCommitter:%b %s <%s> %b(expected: <%s>)%b\n" "$RED" "$RESET" "$cn" "$ce" "$YELLOW" "$expected_email" "$RESET"
+                printf "      %bCommitter:%b %s <%s> %b(expected: <%s>)%b\n" "$RED" "$RESET" "$cn" "$ce" "$YELLOW" "$expected_email" "$RESET"
             fi
         fi
     done <<< "$log_lines"
 
-    printf >&2 '\n'
+    printf '\n'
     if [[ "$mismatches" -gt 0 ]]; then
-        printf >&2 "  %bAudit Result: FAILED (%d of %d commit(s) contain identity mismatches)%b\n\n" "$RED" "$mismatches" "$total" "$RESET"
-        printf >&2 "  To fix author/committer identity on the most recent commit:\n"
-        printf >&2 "    git commit --amend --reset-author --no-edit\n\n"
+        printf "  %bAudit Result: FAILED (%d of %d commit(s) contain identity mismatches)%b\n\n" "$RED" "$mismatches" "$total" "$RESET"
+        printf "  To fix author/committer identity on the most recent commit:\n"
+        printf "    git commit --amend --reset-author --no-edit\n\n"
         return 1
     else
-        printf >&2 "  %bAudit Result: PASSED (All %d commit(s) match profile '%s' <%s>)%b\n\n" "$GREEN" "$total" "$profile_label" "$expected_email" "$RESET"
+        printf "  %bAudit Result: PASSED (All %d commit(s) match profile '%s' <%s>)%b\n\n" "$GREEN" "$total" "$profile_label" "$expected_email" "$RESET"
         return 0
     fi
 }

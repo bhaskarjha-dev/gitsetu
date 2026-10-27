@@ -18,9 +18,23 @@ if ($PSVersionTable.PSVersion.Major -ge 3 -and -not $env:GITSETU_EXECUTION_POLIC
     if ($scopePolicy -eq 'Restricted' -or $scopePolicy -eq 'Undefined') {
         $effectivePolicy = Get-ExecutionPolicy
         if ($effectivePolicy -eq 'Restricted') {
-            $env:GITSETU_EXECUTION_POLICY_BYPASSED = "1"
-            & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath @args
-            exit $LASTEXITCODE
+            if (-not [string]::IsNullOrEmpty($PSCommandPath) -and (Test-Path -LiteralPath $PSCommandPath)) {
+                $env:GITSETU_EXECUTION_POLICY_BYPASSED = "1"
+                $forwardArgs = @()
+                foreach ($entry in $PSBoundParameters.GetEnumerator()) {
+                    if ($entry.Value -is [System.Management.Automation.SwitchParameter]) {
+                        if ($entry.Value.IsPresent) { $forwardArgs += "-$($entry.Key)" }
+                    } else {
+                        $forwardArgs += "-$($entry.Key)"
+                        $forwardArgs += [string]$entry.Value
+                    }
+                }
+                if ($args -and $args.Count -gt 0) {
+                    $forwardArgs += $args
+                }
+                & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath @forwardArgs
+                exit $LASTEXITCODE
+            }
         }
     }
 }

@@ -50,12 +50,17 @@ function canonicalizeWindowsChildEnvironment(env) {
   env.GITSETU_OS = 'gitbash';
 }
 
-function hasReparseComponent(candidate) {
+function hasReparseComponent(candidate, allowedReparse = null) {
   let current = path.resolve(candidate);
   const root = path.parse(current).root;
+  const allowedNorm = allowedReparse ? path.resolve(allowedReparse).toLowerCase() : null;
   while (current.length > root.length) {
     try {
-      if (fs.lstatSync(current).isSymbolicLink()) return true;
+      if (fs.lstatSync(current).isSymbolicLink()) {
+        if (!allowedNorm || path.resolve(current).toLowerCase() !== allowedNorm) {
+          return true;
+        }
+      }
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
     }
@@ -155,7 +160,7 @@ function validatePackageContract() {
   return pkg;
 }
 
-function trustedPowerShell() {
+function trustedSystemRoot() {
   const systemDrive = process.env.SystemDrive;
   if (!systemDrive || !/^[A-Za-z]:$/.test(systemDrive)) {
     throw new Error('Windows system drive is invalid');
@@ -165,6 +170,11 @@ function trustedPowerShell() {
   if (!configuredRoot || path.resolve(configuredRoot).toLowerCase() !== path.resolve(systemRoot).toLowerCase()) {
     throw new Error('Windows system root override is not approved');
   }
+  return systemRoot;
+}
+
+function trustedPowerShell() {
+  const systemRoot = trustedSystemRoot();
   const shell = path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   if (!fs.existsSync(shell) || hasReparseComponent(shell)) {
     throw new Error('Trusted Windows PowerShell path is unavailable');
@@ -248,18 +258,52 @@ function findTrustedWindowsBash() {
   }
 
   const powershell = trustedPowerShell();
+  const systemRoot = trustedSystemRoot();
   const roots = [
     path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git'),
     path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Git'),
     path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Git')
   ];
+  if (process.env.USERPROFILE) {
+    roots.push(path.join(process.env.USERPROFILE, 'scoop', 'apps', 'git', 'current'));
+  }
+  const regExe = path.join(systemRoot, 'System32', 'reg.exe');
+  if (fs.existsSync(regExe) && !hasReparseComponent(regExe)) {
+    const regKeys = [
+      'HKLM\\SOFTWARE\\GitForWindows',
+      'HKLM\\SOFTWARE\\WOW6432Node\\GitForWindows',
+      'HKCU\\SOFTWARE\\GitForWindows',
+      'HKCU\\SOFTWARE\\WOW6432Node\\GitForWindows'
+    ];
+    for (const key of regKeys) {
+      try {
+        const query = spawnSync(regExe, ['query', key, '/v', 'InstallPath'], {
+          encoding: 'utf8',
+          windowsHide: true,
+          stdio: ['ignore', 'pipe', 'ignore']
+        });
+        if (!query.error && query.status === 0 && query.stdout) {
+          const match = query.stdout.match(/InstallPath\s+REG_\w+\s+(.+)/i);
+          if (match && match[1]) {
+            const p = match[1].trim();
+            if (p && !roots.includes(p)) roots.push(p);
+          }
+        }
+      } catch {}
+    }
+  }
+  const scoopCurrent = process.env.USERPROFILE
+    ? path.resolve(path.join(process.env.USERPROFILE, 'scoop', 'apps', 'git', 'current'))
+    : null;
   const relativeCandidates = ['bin\\bash.exe', 'usr\\bin\\bash.exe'];
   const failures = [];
   for (const root of roots) {
+    const isScoopRoot = scoopCurrent && path.resolve(root).toLowerCase() === scoopCurrent.toLowerCase();
+    const allowedReparse = isScoopRoot ? scoopCurrent : null;
     for (const relative of relativeCandidates) {
       const candidate = path.join(root, relative);
       if (!fs.existsSync(candidate)) continue;
-      if (hasReparseComponent(candidate)) {
+      if (hasReparseComponent(candidate, allowedReparse)) {
         failures.push(`${candidate}: reparse-point path component`);
         continue;
       }

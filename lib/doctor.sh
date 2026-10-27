@@ -877,6 +877,7 @@ run_doctor_repair() {
         return 1
     fi
 
+    trap - INT TERM HUP
     trap gitsetu_early_cleanup EXIT
     print_success "Repair complete. Required configuration was regenerated successfully."
     return 0
