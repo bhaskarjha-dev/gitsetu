@@ -13988,8 +13988,9 @@ cmd_update() {
         fi
         local branch
         branch=$(_gitsetu_update_git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
-        if [[ -n "${GITSETU_DEVELOPMENT_BRANCH:-}" && "$branch" != "$GITSETU_DEVELOPMENT_BRANCH" && "$branch" != "main" && "$branch" != "master" ]]; then
-            print_error "Development branch drift detected (expected '$GITSETU_DEVELOPMENT_BRANCH', found '${branch:-detached}')."
+        local expected_branch="${GITSETU_DEVELOPMENT_BRANCH:-feature/v1.1.0-onboarding-overhaul}"
+        if [[ "$branch" != "$expected_branch" && "$branch" != "main" && "$branch" != "master" ]]; then
+            print_error "Development branch drift detected (expected '$expected_branch', found '${branch:-detached}')."
             return 1
         fi
         local commit
