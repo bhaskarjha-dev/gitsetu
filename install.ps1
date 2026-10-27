@@ -452,6 +452,7 @@ try {
             if ($LASTEXITCODE -ne 0) { Stop-Install "Windows artifact signature verification failed" }
         } elseif (Get-Command gh -ErrorAction SilentlyContinue) {
             gh attestation verify $artifactFile -R bhaskarjha-dev/gitsetu 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) { Stop-Install "Windows artifact attestation verification failed" }
         } else {
             Write-Host "Note: Provenance verification skipped (gh/cosign not installed)."
             Write-Host "Verify manually with: gh attestation verify $artifactFile -R bhaskarjha-dev/gitsetu"

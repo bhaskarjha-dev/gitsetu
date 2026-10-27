@@ -52,10 +52,10 @@ The inaugural General Availability (GA) production release of GitSetu — a zero
 - **Dual Routing Architecture (ADR-0001):** Combines directory-scoped `core.sshCommand` with `~/.ssh/config` host aliases to support external package manager clones (`go get`, `npm`, `cargo`) outside mapped directories.
 - **SSH Commit Signing:** Native support for SSH-based commit signatures (`gpg.format = ssh`, `commit.gpgsign = true`).
 
-#### Native Credential Broker
-- **Cross-Platform HTTPS Authentication:** Namespaced credential helper (`gitsetu credential`) proxying HTTPS Personal Access Tokens (PATs) to prevent cross-account token pollution.
-- **Native OS Keychain Integration:** Directly interfaces with macOS Keychain (`security`), Linux Secret Service (`secret-tool`), and Windows Credential Manager (`credential.helper = manager` via Git Credential Manager / DPAPI).
-- **Secure File Fallback:** Restrictive fallback token storage in `~/.config/gitsetu/.tokens` enforced with `chmod 600`.
+#### Native Credential Delegation
+- **Cross-Platform HTTPS Delegation:** Per-profile `credential.https://<host>.username` configuration delegating token authentication to Git's native credential ecosystem.
+- **Platform Credential Manager Integration:** Seamless integration with Git Credential Manager (Windows), Apple Keychain (`osxkeychain` on macOS), and Secret Service (`libsecret` on Linux).
+- **Compatibility Shim:** Inert `gitsetu credential` command draining stdin to `/dev/null` for backward compatibility with legacy v1.0.0 configurations.
 
 #### Security Guard Rails & Integrity
 - **Fail-Closed Pre-Commit Guard (`gitsetu guard`):** Global pre-commit hook (`core.hooksPath`) that blocks commits if `user.email` diverges from the expected profile for the repository directory.

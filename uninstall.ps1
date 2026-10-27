@@ -3,8 +3,7 @@
 [CmdletBinding()]
 param(
     [switch]$Force,
-    [switch]$KeepConfig,
-    [switch]$Teardown
+    [switch]$KeepConfig
 )
 
 # Self-healing execution policy bypass for restricted environments

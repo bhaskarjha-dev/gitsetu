@@ -109,7 +109,7 @@ GitSetu is a **configuration compiler**, not a daemon. It generates rules once; 
 | **Auto-Discovery** | `setup --auto` scans your machine for existing Git identities and SSH keys |
 | **Directory Routing** | `includeIf` rules auto-switch identity when you `cd` into a project |
 | **SSH Key Generation** | Ed25519 keypairs per profile, with FIDO2/YubiKey support |
-| **Credential Broker** | Per-profile HTTPS PAT routing via native OS stores; an explicitly selected zero-dependency plaintext fallback is warned about |
+| **Credential Routing** | Per-profile HTTPS username routing delegating authentication to Git's native credential ecosystem |
 | **Pre-Commit Guard** | Blocks commits in managed repositories when the effective identity is unresolved or divergent; unmanaged repositories fail open |
 | **Authenticated Backup** | `gitsetu backup` exports managed keys and configuration in an authenticated v2 vault; old vault formats are rejected |
 
@@ -129,7 +129,7 @@ GitSetu is a **configuration compiler**, not a daemon. It generates rules once; 
 |--|:-----:|:-----:|:-------:|
 | **Shell Support** | Bash, Zsh | Bash, Zsh | Git Bash, PowerShell, CMD, VS Code |
 | **SSH Keys** | ✓ | ✓ | ✓ (NTFS-aware permissions) |
-| **Credential Store** | secret-tool | Keychain | Credential Manager |
+| **Credential Delegation** | libsecret | Keychain (`osxkeychain`) | Git Credential Manager |
 | **CRLF Handling** | — | — | 4-tier self-healing cascade |
 | **Installer** | `install.sh` (local release-candidate checkout) | `install.sh` (local release-candidate checkout) | `install.ps1` (local release-candidate checkout) |
 

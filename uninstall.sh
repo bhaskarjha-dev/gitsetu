@@ -19,12 +19,10 @@ is_test_mode() {
 
 FORCE=0
 KEEP_CONFIG=0
-TEARDOWN=0
 for arg in "$@"; do
     case "$arg" in
         --force|-f|--yes|-y) FORCE=1 ;;
         --keep-config) KEEP_CONFIG=1 ;;
-        --teardown) TEARDOWN=1 ;;
         --help|-h)
             printf 'Usage: uninstall.sh [--force] [--keep-config]\n'
             printf '  --force        authorize removal in a non-interactive session\n'

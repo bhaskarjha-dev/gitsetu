@@ -213,60 +213,33 @@ time (for i in $(seq 100); do gitsetu prompt > /dev/null; done)
 
 ---
 
-## 8. Credential Broker (HTTPS PATs)
+## 8. Credential Delegation & Compatibility Shim
 
-> Verifies: `gitsetu credential` store/get/erase cycle
+> Verifies: Per-profile `credential.https://<host>.username` routing and `gitsetu credential` compatibility shim
+
+### Per-Profile Credential Routing Verification
+Verify that Git evaluates the active profile's configured HTTPS credential username:
 
 ```bash
-# During setup, provide a GitHub username and PAT when prompted.
-# Or test the native backend with a disposable value:
+# Inside a managed profile workspace (e.g. ~/work):
+git -C ~/work config --get credential.https://github.com.username
+```
 
-printf 'protocol=https\nhost=github.com\nusername=testuser\npassword=dummy-token-not-a-secret\n\n' | gitsetu credential store
+- [ ] Returns the configured profile username
+- [ ] Git delegates HTTPS token requests to the native platform helper (GCM, Keychain, or Secret Service) partitioned by username
+
+### Compatibility Shim Verification
+Verify that legacy helper invocations do not hang or fail:
+
+```bash
 printf 'protocol=https\nhost=github.com\n\n' | gitsetu credential get
+printf 'protocol=https\nhost=github.com\n\n' | gitsetu credential store
+printf 'protocol=https\nhost=github.com\n\n' | gitsetu credential erase
 ```
 
-- [ ] `credential store` exits cleanly (no hang, no error)
-- [ ] `credential get` returns `username=testuser` and
-      `password=dummy-token-not-a-secret`
-- [ ] With no explicit backend, the native store is used: macOS Keychain,
-      Linux Secret Service, or Windows Git Credential Manager
-- [ ] The native store is not silently replaced by a plaintext file
-- [ ] Git's `path=` field is part of the exact credential tuple; verify empty,
-      `/`, and a repository path do not cross-match
-- [ ] `GITSETU_CREDENTIAL_PATH` explicitly overrides the protocol path for a
-      wrapper or controlled test
-
-To test the deliberately selected zero-dependency backend, opt in on the
-GitSetu command (the environment assignment must be on the right side of the
-pipe):
-
-```bash
-printf 'protocol=https\nhost=github.com\nusername=testuser\npassword=dummy-token-not-a-secret\n\n' \
-  | GITSETU_CREDENTIAL_BACKEND=file gitsetu credential store
-cat "${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu/.tokens"
-```
-
-- [ ] The file backend warns that the store is plaintext
-- [ ] Its directory is `0700`, its file is `0600`, and it is not described as
-      encrypted or OS-keychain storage
-
-After the file-backend check, clean up both the native test record and the
-matching file-backend record:
-
-```bash
-printf 'protocol=https\nhost=github.com\nusername=testuser\npassword=dummy-token-not-a-secret\n\n' \
-  | gitsetu credential erase
-```
-
-```bash
-printf 'protocol=https\nhost=github.com\nusername=testuser\npassword=dummy-token-not-a-secret\n\n' \
-  | GITSETU_CREDENTIAL_BACKEND=file gitsetu credential erase
-printf 'protocol=https\nhost=github.com\n\n' \
-  | GITSETU_CREDENTIAL_BACKEND=file gitsetu credential get
-```
-
-- [ ] `credential erase` exits cleanly for the selected backend
-- [ ] `credential get` returns empty after the matching erase
+- [ ] `gitsetu credential` drains standard input to EOF and exits cleanly (`0`)
+- [ ] `gitsetu doctor` flags stale global GitSetu credential helper lines
+- [ ] `gitsetu doctor --repair` unsets stale GitSetu helper lines from `~/.gitconfig`
 
 ---
 

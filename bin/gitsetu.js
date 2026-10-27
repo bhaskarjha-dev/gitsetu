@@ -55,6 +55,9 @@ function hasReparseComponent(candidate, allowedReparse = null) {
   const root = path.parse(current).root;
   const allowedNorm = allowedReparse ? path.resolve(allowedReparse).toLowerCase() : null;
   while (current.length > root.length) {
+    if (process.platform === 'darwin' && (current === '/var' || current === '/tmp' || current === '/etc')) {
+      break;
+    }
     try {
       if (fs.lstatSync(current).isSymbolicLink()) {
         if (!allowedNorm || path.resolve(current).toLowerCase() !== allowedNorm) {
@@ -361,6 +364,13 @@ if (process.platform === 'win32') {
     fail('Git for Windows was not found in a trusted standard installation root. Install the official Git for Windows package.');
   }
   scriptArgument = targetScript.replace(/\\/g, '/');
+} else {
+  for (const candidate of ['/bin/bash', '/usr/bin/bash', '/usr/local/bin/bash']) {
+    if (fs.existsSync(candidate)) {
+      shellCommand = candidate;
+      break;
+    }
+  }
 }
 
 const childEnv = { ...process.env };

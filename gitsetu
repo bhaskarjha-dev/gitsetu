@@ -502,6 +502,7 @@ cmd_prompt() {
                             local u
                             while IFS= read -r u || [[ -n "$u" ]]; do
                                 [[ -n "$u" ]] || continue
+                                # shellcheck disable=SC2254
                                 case "$u" in
                                     $r_pat)
                                         matched_profile="$r_label"
@@ -1124,8 +1125,8 @@ cmd_update() {
         fi
         local branch
         branch=$(_gitsetu_update_git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
-        if [[ "$branch" != "${GITSETU_DEVELOPMENT_BRANCH:-feature/v1.1.0-onboarding-overhaul}" && "$branch" != "main" && "$branch" != "master" ]]; then
-            print_error "Development branch drift detected (expected '${GITSETU_DEVELOPMENT_BRANCH:-feature/v1.1.0-onboarding-overhaul}', found '${branch:-detached}')."
+        if [[ -n "${GITSETU_DEVELOPMENT_BRANCH:-}" && "$branch" != "$GITSETU_DEVELOPMENT_BRANCH" && "$branch" != "main" && "$branch" != "master" ]]; then
+            print_error "Development branch drift detected (expected '$GITSETU_DEVELOPMENT_BRANCH', found '${branch:-detached}')."
             return 1
         fi
         local commit
@@ -1214,31 +1215,37 @@ cmd_update() {
 
     if [[ -n "$install_root" && -f "$install_root/install.marker" ]]; then
         print_step "Checking for GitSetu release updates..."
-        local tmp_installer
-        tmp_installer=$(umask 077 && mktemp "${TMPDIR:-/tmp}/gitsetu-update.XXXXXX" 2>/dev/null) || {
-            print_error "Could not create temporary file for update installer."
+        local tmp_update_dir
+        tmp_update_dir=$(umask 077 && mktemp -d "${TMPDIR:-/tmp}/gitsetu-update.XXXXXX" 2>/dev/null) || {
+            print_error "Could not create temporary directory for update installer."
             return 1
         }
         local download_ok=0
         if command -v curl >/dev/null 2>&1; then
-            curl -fsSL --proto '=https' --tlsv1.2 "https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.sh" -o "$tmp_installer" && download_ok=1
+            if curl -fsSL --proto '=https' --tlsv1.2 "https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.sh" -o "$tmp_update_dir/install.sh" && \
+               curl -fsSL --proto '=https' --tlsv1.2 "https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/packaging/release.env" -o "$tmp_update_dir/release.env"; then
+                download_ok=1
+            fi
         elif command -v wget >/dev/null 2>&1; then
-            wget -qO "$tmp_installer" --https-only --secure-protocol=TLSv1_2 "https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.sh" && download_ok=1
+            if wget -qO "$tmp_update_dir/install.sh" --https-only --secure-protocol=TLSv1_2 "https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.sh" && \
+               wget -qO "$tmp_update_dir/release.env" --https-only --secure-protocol=TLSv1_2 "https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/packaging/release.env"; then
+                download_ok=1
+            fi
         fi
         if [[ "$download_ok" -ne 1 ]]; then
-            rm -f "$tmp_installer"
-            print_error "Could not download the latest release installer."
+            rm -rf "$tmp_update_dir"
+            print_error "Could not download the latest release installer and metadata."
             return 1
         fi
-        bash "$tmp_installer"
+        (cd "$tmp_update_dir" && bash ./install.sh)
         local update_rc=$?
-        rm -f "$tmp_installer"
+        rm -rf "$tmp_update_dir"
         return $update_rc
     fi
 
     # 5. Default / standalone
-    print_info "To install or update the latest GitSetu release, run:"
-    printf '  curl -fsSL https://gitsetu.bhaskarjha.dev/install | bash\n'
+    print_info "To install or update the latest GitSetu release, download the verified release archive from:"
+    printf '  https://github.com/bhaskarjha-dev/gitsetu/releases/latest\n'
     return 0
 }
 

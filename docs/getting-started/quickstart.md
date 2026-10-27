@@ -38,15 +38,16 @@ You **must** upload your newly generated public key to your provider, otherwise 
 2. Copy the entire output string and paste it into your [GitHub SSH Settings](https://github.com/settings/ssh/new).
 
 ### If you clone using HTTPS (`https://github.com/...`)
-If you rely on Personal Access Tokens (PATs) instead of SSH keys, you must securely bind your token to your profile so you aren't prompted for a password on every push.
+If you clone repositories using HTTPS instead of SSH, Git routes your authentication requests to your system's native credential helper (Git Credential Manager, Apple Keychain, or Linux Secret Service):
 
-1. Provision or update credentials:
-   You can provide PATs during the interactive `gitsetu setup` wizard, or pipe credentials into the broker. Headless `gitsetu profile add` does not accept a PAT or username-credential flag:
-   ```bash
-   printf "protocol=https\nhost=github.com\nusername=YOUR_USERNAME\npassword=YOUR_PAT\n" | gitsetu credential store
+1. **Profile Username Binding:**
+   During `gitsetu setup` or profile creation, specify your HTTPS provider username. GitSetu writes `credential.<provider>.username` into the profile configuration:
+   ```ini
+   [credential "https://github.com"]
+       username = YOUR_USERNAME
    ```
-   The normal broker resolves the active profile, host, and Git `path=` value from the current directory. Use an explicit `GITSETU_CREDENTIAL_PATH` only when a wrapper or controlled test must override the protocol path.
-2. On Windows, GitSetu's broker can use GCM with a namespaced synthetic target; it does not automatically replace an existing `credential.helper` policy. On macOS and Linux, native keychains are preferred; a user may explicitly select the zero-dependency file backend, which stores a warned-about plaintext `~/.config/gitsetu/.tokens` file with `chmod 600` and does not provide encryption.
+2. **First Push / Authentication:**
+   On your first `git push` or `git fetch` within the profile workspace, Git automatically invokes your operating system's native credential helper, pre-populating `YOUR_USERNAME`. Supply your Personal Access Token (PAT) when prompted; the native keychain securely stores it for future commands.
 
 ---
 

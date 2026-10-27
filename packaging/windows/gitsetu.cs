@@ -13,7 +13,6 @@ namespace GitSetuLauncher {
         private static readonly SecurityIdentifier SystemSid = new SecurityIdentifier("S-1-5-18");
         private static readonly SecurityIdentifier AdministratorsSid = new SecurityIdentifier("S-1-5-32-544");
         private static readonly SecurityIdentifier TrustedInstallerSid = new SecurityIdentifier("S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464");
-        private static readonly SecurityIdentifier AuthenticatedUsersSid = new SecurityIdentifier("S-1-5-11");
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern uint GetFinalPathNameByHandle(SafeFileHandle file, StringBuilder path, uint pathLength, uint flags);
@@ -60,6 +59,9 @@ namespace GitSetuLauncher {
             startInfo.RedirectStandardInput = false;
             startInfo.RedirectStandardOutput = false;
             startInfo.RedirectStandardError = false;
+            startInfo.EnvironmentVariables.Remove("GITSETU_BASH");
+            startInfo.EnvironmentVariables.Remove("GITSETU_DIR");
+            startInfo.EnvironmentVariables.Remove("GITSETU_SCRIPT_PATH");
             try {
                 using (Process process = Process.Start(startInfo)) {
                     if (process == null) {
@@ -253,7 +255,7 @@ namespace GitSetuLauncher {
         }
 
         private static bool IsTrustedSid(SecurityIdentifier sid) {
-            return sid.Equals(SystemSid) || sid.Equals(AdministratorsSid) || sid.Equals(TrustedInstallerSid) || sid.Equals(AuthenticatedUsersSid);
+            return sid.Equals(SystemSid) || sid.Equals(AdministratorsSid) || sid.Equals(TrustedInstallerSid);
         }
 
         // Quotes one argument using the inverse of the CommandLineToArgvW/MSVC

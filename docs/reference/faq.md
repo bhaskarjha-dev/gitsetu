@@ -70,12 +70,12 @@ and `gitsetu.exe`) so you can run `gitsetu` directly from **PowerShell**,
 Git Bash. Public package-manager shims remain withheld until release.
 1. **CLI Execution**: Run `gitsetu` commands from any Windows shell — PowerShell, CMD, Git Bash, or WSL.
 2. **Native Windows Experience**: Because GitSetu compiles canonical Windows paths (`C:/path`) and case-insensitive `gitdir/i:` rules into `~/.gitconfig` and OpenSSH `~/.ssh/config`, the automatic identity switching and SSH key routing work natively everywhere across Windows—including **PowerShell**, **Command Prompt (CMD)**, **Windows Terminal**, **VS Code**, and GUI Git clients.
-3. **Git Credential Manager (GCM)**: On Windows, GitSetu's broker can use GCM with a namespaced synthetic target. It does not replace or automatically install a user's existing Git credential-helper policy; review the effective helper configuration.
+3. **Git Credential Manager (GCM)**: On Windows, Git seamlessly routes HTTPS credentials to GCM, partitioned by each profile's configured username.
 4. **Isolated Testing**: Want to test without touching your machine? Run `.\sandbox\launch_sandbox.ps1` (or `launch_sandbox.bat`) to test GitSetu safely inside a disposable Windows Sandbox VM.
 
-**How does credential brokering work inside headless WSL or minimal Linux containers?**
+**How does HTTPS authentication work inside headless WSL or minimal Linux containers?**
 
-If native DBus secret tools or GUI keychains are unavailable, native-store operations fail with an explanation. A user who explicitly selects the zero-dependency backend can use `GITSETU_CREDENTIAL_BACKEND=file`; GitSetu then writes a warned-about **plaintext** `~/.config/gitsetu/.tokens` file with a `0700` directory and `0600` file. It is permission-restricted, not encrypted and not protected from another process running as the same user.
+GitSetu configures `credential.https://<host>.username` in each profile. In WSL, you can point Git's helper to Windows GCM (`git config --global credential.helper "/mnt/c/Program\ Files/Git/mingw64/bin/git-credential-manager.exe"`). In minimal Linux containers without GUI keychains, standard Git helpers like `cache` (in-memory storage) or `store` can be configured globally to manage credentials.
 
 ---
 

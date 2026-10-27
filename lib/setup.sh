@@ -1698,12 +1698,25 @@ cmd_profile() {
                     --provider-user=*) PROFILE_USERS[idx]="${1#*=}" ;;
                     --remote=*)
                         local r_val="${1#*=}"
-                        [[ -n "$r_val" ]] && profile_remotes+=("$r_val")
+                        if [[ -n "$r_val" ]]; then
+                            if [[ "$r_val" == *$'\n'* || "$r_val" == *$'\r'* || "$r_val" == *'"'* || "$r_val" == *'['* || "$r_val" == *']'* ]]; then
+                                print_error "Invalid remote pattern: contains control characters, quotes, or brackets."
+                                release_lock
+                                exit 1
+                            fi
+                            profile_remotes+=("$r_val")
+                        fi
                         ;;
                     --remote)
                         shift
                         if [[ $# -gt 0 && -n "$1" ]]; then
-                            profile_remotes+=("$1")
+                            local r_val="$1"
+                            if [[ "$r_val" == *$'\n'* || "$r_val" == *$'\r'* || "$r_val" == *'"'* || "$r_val" == *'['* || "$r_val" == *']'* ]]; then
+                                print_error "Invalid remote pattern: contains control characters, quotes, or brackets."
+                                release_lock
+                                exit 1
+                            fi
+                            profile_remotes+=("$r_val")
                         fi
                         ;;
                     *)

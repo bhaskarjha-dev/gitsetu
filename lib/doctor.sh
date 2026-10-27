@@ -998,6 +998,7 @@ cmd_import() {
     local in_managed=0 line current_gitdir="" inc_path
     local imported_count=0
     local raw_gitdir raw_path
+    local adopted_dirs=()
 
     while IFS= read -r line || [[ -n "$line" ]]; do
         if [[ "$line" == *"${GITSETU_MANAGED_START:-# [gitsetu:managed:start]}"* || \
@@ -1077,6 +1078,7 @@ cmd_import() {
                         if cmd_profile add "${cmd_args[@]}"; then
                             print_success "Imported profile '$imp_label'."
                             imported_count=$((imported_count + 1))
+                            adopted_dirs+=("$current_gitdir")
                         else
                             print_error "Failed to import profile '$imp_label'."
                         fi
@@ -1086,6 +1088,43 @@ cmd_import() {
             current_gitdir=""
         fi
     done < "$global_gitconfig"
+
+    # Deactivate unmanaged includeIf blocks for adopted profiles to prevent duplicates
+    if [[ ${#adopted_dirs[@]} -gt 0 ]]; then
+        local tmp_cfg
+        tmp_cfg=$(mktemp "${global_gitconfig}.tmp.XXXXXX" 2>/dev/null)
+        if [[ -n "$tmp_cfg" ]]; then
+            local in_m=0 in_tgt=0
+            while IFS= read -r l || [[ -n "$l" ]]; do
+                if [[ "$l" == *"[gitsetu:managed:start]"* || "$l" == *"# [gitsetu:managed"* ]]; then
+                    in_m=1
+                elif [[ "$l" == *"[gitsetu:managed:end]"* || "$l" == *"# --- End GitSetu"* ]]; then
+                    in_m=0
+                fi
+                local match_dir=""
+                if [[ "$in_m" -eq 0 && "$l" =~ ^\[includeIf[[:space:]]+\"gitdir(/i)?:(.*)\"\] ]]; then
+                    local matched_gitdir="${BASH_REMATCH[2]}"
+                    for ad in "${adopted_dirs[@]}"; do
+                        if [[ "$matched_gitdir" == *"$ad"* ]]; then
+                            match_dir="$ad"
+                            break
+                        fi
+                    done
+                fi
+                if [[ -n "$match_dir" ]]; then
+                    in_tgt=1
+                    printf '# [imported-by-gitsetu] %s\n' "$l"
+                elif [[ "$in_tgt" -eq 1 && "$l" =~ ^[[:space:]]*path[[:space:]]*= ]]; then
+                    in_tgt=0
+                    printf '# [imported-by-gitsetu] %s\n' "$l"
+                else
+                    in_tgt=0
+                    printf '%s\n' "$l"
+                fi
+            done < "$global_gitconfig" > "$tmp_cfg"
+            mv -f "$tmp_cfg" "$global_gitconfig" 2>/dev/null || rm -f "$tmp_cfg"
+        fi
+    fi
 
     if [[ "$imported_count" -eq 0 ]]; then
         print_info "No unmanaged includeIf profiles were found in ~/.gitconfig."

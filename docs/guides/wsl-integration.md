@@ -27,21 +27,17 @@ When profiles are configured with absolute Linux paths, Git evaluates the corres
 
 ---
 
-## HTTPS Credential Brokering in WSL
+## HTTPS Credential Routing in WSL
 
-The primary operational complexity introduced by headless WSL containers centers around mapping HTTPS Personal Access Tokens (PATs) securely. GitSetu's native WSL backend uses the Secret Service through `secret-tool`; it does not automatically turn a WSL installation into a native Windows GCM client.
-
-### Explicit plaintext fallback
-When a headless WSL instance has no D-Bus Secret Service, native credential operations fail by default. A user can explicitly select the zero-dependency file backend:
-
-```bash
-GITSETU_CREDENTIAL_BACKEND=file gitsetu credential store
-```
-
-The resulting `~/.config/gitsetu/.tokens` file is plaintext, with a `0700` directory and `0600` file. It is permission-restricted but not encrypted and cannot protect a token from malware or another process running as the same user.
+When operating inside WSL, HTTPS authentication is delegated to Git's native credential routing using per-profile `credential.https://<host>.username` directives.
 
 ### Microsoft Git Credential Manager (GCM) Interoperability
-If your environment separately configures Microsoft's cross-platform [Git Credential Manager](https://github.com/git-ecosystem/git-credential-manager) to proxy WSL Git operations into a native Windows Credential Store, review that helper policy separately. GitSetu's WSL native mode is `secret-tool`; its Windows broker uses a namespaced synthetic GCM target and is not equivalent to automatically configuring `credential.helper = manager` inside WSL.
+In WSL environments, the recommended pattern is configuring Git to route credentials to the Windows host's Git Credential Manager executable:
 
-> [!WARNING]
-> **GCM Identity Collisions:** Standard GCM pipelines may not partition tokens bound to identical overlapping hostnames. GitSetu's namespaced helper is the supported way to keep profile records separate; do not assume a generic GCM query can provide that isolation.
+```bash
+git config --global credential.helper "/mnt/c/Program\ Files/Git/mingw64/bin/git-credential-manager.exe"
+```
+
+GitSetu injects `credential.https://<host>.username` into each profile's configuration (`~/.config/gitsetu/profiles/<label>.gitconfig`). When Git queries GCM via the helper bridge, GCM partitions credentials by both hostname and the specific profile username, ensuring seamless multi-account isolation across WSL and Windows.
+
+Alternatively, headless Linux WSL environments without Windows GCM access can configure standard Linux credential helpers (such as `libsecret` or `cache`).

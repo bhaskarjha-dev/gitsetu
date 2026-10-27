@@ -316,7 +316,7 @@ if [[ "$LOCAL_DEVELOPMENT" -eq 0 ]] && ! is_test_mode; then
             --bundle "$DOWNLOAD_DIR/gitsetu.sigstore.json" \
             "$DOWNLOAD_DIR/gitsetu" >/dev/null 2>&1 || error "GitSetu artifact signature verification failed"
     elif command -v gh >/dev/null 2>&1; then
-        gh attestation verify "$DOWNLOAD_DIR/gitsetu" -R bhaskarjha-dev/gitsetu >/dev/null 2>&1 || true
+        gh attestation verify "$DOWNLOAD_DIR/gitsetu" -R bhaskarjha-dev/gitsetu >/dev/null 2>&1 || error "GitSetu artifact attestation verification failed"
     else
         printf 'Note: Provenance verification skipped (gh/cosign not installed). Verify manually with:\n'
         printf '  gh attestation verify %s -R bhaskarjha-dev/gitsetu\n' "$DOWNLOAD_DIR/gitsetu"

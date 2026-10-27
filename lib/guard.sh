@@ -159,6 +159,7 @@ _guard_managed_profile_for_path() {
                         local u
                         while IFS= read -r u || [[ -n "$u" ]]; do
                             [[ -n "$u" ]] || continue
+                            # shellcheck disable=SC2254
                             case "$u" in
                                 $r_pat)
                                     if [[ -n "$rem_match_label" && "$rem_match_label" != "$r_label" ]]; then

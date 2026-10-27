@@ -309,6 +309,10 @@ teardown_config_dir() {
         return 1
     fi
     print_success "Removed configuration directory: $GITSETU_CONFIG_DIR"
+    local state_dir="${HOME:-}/.gitsetu-state"
+    if [[ -d "$state_dir" && ! -L "$state_dir" && -O "$state_dir" ]]; then
+        rm -rf "$state_dir" 2>/dev/null || true
+    fi
 }
 
 # ------------------------------------------------------------------------------

@@ -58,10 +58,13 @@ All generated host configurations, identity file pointers, and verification flag
 
 `gitsetu guard --install` installs an opt-in generated pre-commit guard in the managed hooks directory and preserves a project hook when the identity check succeeds. For a repository selected by a managed profile, an unresolved or divergent effective name/email fails closed. A repository outside all managed profiles is unmanaged: the identity check fails open by policy and ordinary project hooks continue. Malformed managed state is treated as indeterminate and fails closed. A local `core.hooksPath`, `--no-verify`, direct writes, and history rewrites can bypass this client-side boundary.
 
-### 4. Namespaced Credential Brokering
-The credential API namespaces records by profile, host, and Git's exact `path=` value. `GITSETU_CREDENTIAL_PATH` is an explicit wrapper/test override when a caller intentionally needs a different scope.
-
-GitSetu injects itself as a scoped proxy credential helper. It evaluates the active directory context and requests a namespaced token from the selected backend, reducing cross-profile collisions; the operating system credential store and Git still control the final authentication exchange.
+### 4. Per-Profile Credential Routing
+GitSetu delegates HTTPS authentication directly to Git's native credential-helper ecosystem (Git Credential Manager, Apple Keychain via `git-credential-osxkeychain`, or Linux Secret Service via `git-credential-libsecret`) via standardized per-profile configuration:
+```ini
+[credential "https://github.com"]
+    username = dev-user
+```
+When invoking Git operations inside a managed profile directory, Git queries the platform credential manager with both the host and the configured profile username. This eliminates token leakage risks, respects native keychain access controls, and cleanly isolates multiple accounts across shared hosts without custom broker intermediaries.
 
 ---
 

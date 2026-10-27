@@ -425,9 +425,13 @@ EOF
             while IFS= read -r rem_pat || [[ -n "$rem_pat" ]]; do
                 rem_pat=$(printf '%s' "$rem_pat" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
                 [[ -n "$rem_pat" && "$rem_pat" != \#* ]] || continue
+                [[ "$rem_pat" != *$'\n'* && "$rem_pat" != *$'\r'* ]] || continue
+                local safe_rem_pat
+                safe_rem_pat="${rem_pat//\\/\\\\}"
+                safe_rem_pat="${safe_rem_pat//\"/\\\"}"
                 cat <<EOF
 
-[includeIf "hasconfig:remote.*.url:${rem_pat}"]
+[includeIf "hasconfig:remote.*.url:${safe_rem_pat}"]
     path = $(_gitconfig_quote_double_value "$path")
 EOF
             done < "$rem_file"
