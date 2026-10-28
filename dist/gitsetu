@@ -14078,33 +14078,10 @@ cmd_update() {
     fi
 
     if [[ -n "$install_root" && -f "$install_root/install.marker" ]]; then
-        print_step "Checking for GitSetu release updates..."
-        local tmp_update_dir
-        tmp_update_dir=$(umask 077 && mktemp -d "${TMPDIR:-/tmp}/gitsetu-update.XXXXXX" 2>/dev/null) || {
-            print_error "Could not create temporary directory for update installer."
-            return 1
-        }
-        local download_ok=0
-        if command -v curl >/dev/null 2>&1; then
-            if curl -fsSL --proto '=https' --tlsv1.2 "https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.sh" -o "$tmp_update_dir/install.sh" && \
-               curl -fsSL --proto '=https' --tlsv1.2 "https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/packaging/release.env" -o "$tmp_update_dir/release.env"; then
-                download_ok=1
-            fi
-        elif command -v wget >/dev/null 2>&1; then
-            if wget -qO "$tmp_update_dir/install.sh" --https-only --secure-protocol=TLSv1_2 "https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/install.sh" && \
-               wget -qO "$tmp_update_dir/release.env" --https-only --secure-protocol=TLSv1_2 "https://raw.githubusercontent.com/bhaskarjha-dev/gitsetu/main/packaging/release.env"; then
-                download_ok=1
-            fi
-        fi
-        if [[ "$download_ok" -ne 1 ]]; then
-            rm -rf "$tmp_update_dir"
-            print_error "Could not download the latest release installer and metadata."
-            return 1
-        fi
-        (cd "$tmp_update_dir" && bash ./install.sh)
-        local update_rc=$?
-        rm -rf "$tmp_update_dir"
-        return $update_rc
+        print_info "GitSetu was installed from a release package."
+        print_info "To install or update the latest GitSetu release, download the verified release archive from:"
+        printf '  https://github.com/bhaskarjha-dev/gitsetu/releases/latest\n'
+        return 0
     fi
 
     # 5. Default / standalone
