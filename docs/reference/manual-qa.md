@@ -427,13 +427,12 @@ Test-Path $GitSetuInstall
 
 ### macOS
 - [ ] `detect_os` returns `macos`
-- [ ] Credential broker uses `security` (Keychain)
+- [ ] Credential routing delegates to Apple Keychain via `git-credential-osxkeychain`
 - [ ] SSH key generation works with macOS `ssh-keygen`
 
 ### Linux
 - [ ] `detect_os` returns `linux`
-- [ ] Credential broker uses Secret Service by default; the plaintext file
-      backend is used only when explicitly selected
+- [ ] Credential routing delegates to Secret Service (`git-credential-libsecret`) or configured native helper
 - [ ] SSH key generation works
 
 ### Windows (Git Bash)

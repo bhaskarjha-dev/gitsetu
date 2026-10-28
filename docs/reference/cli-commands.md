@@ -119,7 +119,7 @@ is made.
 
 Creates an authenticated v2 vault from the managed registry, profile configs,
 managed SSH config, referenced SSH key pairs, and (when present) the managed
-`pre-commit` hook and explicit file-backend `.tokens` file. Native OS keychain
+`pre-commit` hook and legacy `.tokens` file. Native OS keychain
 and GCM records are not exported, and the user's global `~/.gitconfig` and
 `~/.ssh/config` are regenerated rather than copied into the vault. The
 archive is prepared and encrypted in private temporary storage and installed

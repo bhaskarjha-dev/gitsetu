@@ -14,7 +14,7 @@ A vault is built from an explicit allowlist of GitSetu-managed state:
 - the generated `profiles/ssh_config` file, when present;
 - the generated `hooks/pre-commit` file, when the guard is installed;
 - registered, validated SSH private/public key pairs; and
-- the explicit file-backend `.tokens` file, when that file exists.
+- the legacy `.tokens` file, when present from an earlier installation.
 
 The vault does **not** copy the user's global `~/.gitconfig` or
 `~/.ssh/config`; restore regenerates those managed views after validating the

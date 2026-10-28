@@ -43,7 +43,7 @@ GitSetu aims to provide a lightweight developer experience, bounded concurrency 
 ## Strict Non-Goals
 
 To maintain a focused reliability model, GitSetu explicitly rejects the following product additions:
-- **OAuth / Single Sign-On Orchestration:** GitSetu proxies Personal Access Tokens via native OS keychains, but intentionally avoids supervising web-based OAuth authentication loops.
+- **OAuth / Single Sign-On Orchestration:** GitSetu configures per-profile credential delegation for native OS helpers, but intentionally avoids supervising web-based OAuth authentication loops.
 - **Git Binary Wrapping:** It primarily acts through native Git/OpenSSH configuration, with optional `gitsetu run`, installer, npm, and GitHub CLI wrappers for explicit workflows rather than intercepting every shell command.
 - **General Workspace Dotfiles:** It strictly limits its operational domain to Git and OpenSSH identity structures.
 - **Persistent Daemonization:** It operates entirely as an ephemeral configuration compiler, leaving zero lingering background listener tasks.

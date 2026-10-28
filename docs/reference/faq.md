@@ -39,7 +39,7 @@ Run `gitsetu teardown`. It removes only recognized managed blocks and files, pre
 ### Security Boundaries
 
 **Where does GitSetu store HTTPS Personal Access Tokens?**
-GitSetu prefers native OS credential stores. On a minimal system without a native store, an explicitly selected zero-dependency backend can use a warned-about plaintext `~/.config/gitsetu/.tokens` file with strict permissions; it is not encrypted and does not protect against same-user malware.
+GitSetu does not store personal access tokens. Instead, it delegates HTTPS authentication directly to Git's native credential-helper ecosystem (Git Credential Manager on Windows, Apple Keychain on macOS, or Secret Service on Linux) by configuring per-profile `credential.https://<host>.username` directives.
 
 **Does GitSetu track telemetry or phone home?**
 No. GitSetu contains no telemetry or background daemon. Network access is limited to explicit operations such as first-use discovery/SSH verification and optional authenticated GitHub CLI actions. The current dry-run guards suppress the known remote probes and credential writes, but an offline guarantee still depends on the commands and environment selected by the operator.
