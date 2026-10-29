@@ -2058,6 +2058,30 @@ array_contains() {
 }
 
 # ------------------------------------------------------------------------------
+# _gitsetu_version_ge — Pure Bash semver comparison ($1 >= $2)
+# ------------------------------------------------------------------------------
+_gitsetu_version_ge() {
+    local v1="${1#v}" v2="${2#v}"
+    [[ "$v1" == "$v2" ]] && return 0
+    local IFS=.
+    local -a a1=($v1) a2=($v2)
+    local i n1 n2 len
+    len=${#a1[@]}
+    [[ ${#a2[@]} -gt $len ]] && len=${#a2[@]}
+    for (( i=0; i<len; i++ )); do
+        n1="${a1[i]:-0}"
+        n2="${a2[i]:-0}"
+        n1="${n1%%[!0-9]*}"
+        n2="${n2%%[!0-9]*}"
+        n1=$((10#${n1:-0}))
+        n2=$((10#${n2:-0}))
+        if [[ "$n1" -gt "$n2" ]]; then return 0; fi
+        if [[ "$n1" -lt "$n2" ]]; then return 1; fi
+    done
+    return 0
+}
+
+# ------------------------------------------------------------------------------
 # Helper: safely remove a profile by index (Bash 3.2 array slice drops empty strings)
 # Usage: remove_profile_at_index <idx>
 # ------------------------------------------------------------------------------
@@ -3121,36 +3145,7 @@ confirm() {
         [[ -z "$REPLY" ]] && REPLY="$default"
     fi
 
-    normalized="$REPLY"
-    case "$normalized" in
-        A|a) normalized="a" ;;
-        B|b) normalized="b" ;;
-        C|c) normalized="c" ;;
-        D|d) normalized="d" ;;
-        E|e) normalized="e" ;;
-        F|f) normalized="f" ;;
-        G|g) normalized="g" ;;
-        H|h) normalized="h" ;;
-        I|i) normalized="i" ;;
-        J|j) normalized="j" ;;
-        K|k) normalized="k" ;;
-        L|l) normalized="l" ;;
-        M|m) normalized="m" ;;
-        N|n) normalized="n" ;;
-        O|o) normalized="o" ;;
-        P|p) normalized="p" ;;
-        Q|q) normalized="q" ;;
-        R|r) normalized="r" ;;
-        S|s) normalized="s" ;;
-        T|t) normalized="t" ;;
-        U|u) normalized="u" ;;
-        V|v) normalized="v" ;;
-        W|w) normalized="w" ;;
-        X|x) normalized="x" ;;
-        Y|y) normalized="y" ;;
-        Z|z) normalized="z" ;;
-    esac
-
+    normalized=$(printf '%s' "$REPLY" | tr '[:upper:]' '[:lower:]')
     case "$normalized" in
         y|yes) REPLY="yes"; return 0 ;;
         *) REPLY="no"; return 1 ;;
@@ -3492,7 +3487,7 @@ validate_provider_host() {
 
 validate_sign_flag() {
     [[ $# -eq 1 ]] || return 1
-    [[ "$1" == "0" || "$1" == "1" ]]
+    [[ "$1" == "0" || "$1" == "1" || "$1" == "inherit" ]]
 }
 
 validate_sign_commits() {
@@ -3853,6 +3848,7 @@ _VAULT_PAYLOAD_LENGTH=0
 _VAULT_HEADER_BYTES=0
 _VAULT_ROOT_KEY=""
 _VAULT_ACTIVE_TEMP=""
+_VAULT_ITERATIONS="$GITSETU_VAULT_ITERATIONS"
 GITSETU_VAULT_ACTIVE_TRANSACTION=""
 
 _vault_file_size() {
@@ -4112,13 +4108,14 @@ _vault_random_hex() {
 _vault_derive_root_key() {
     local password="$1"
     local kdf_salt="$2"
+    local iters="${3:-$GITSETU_VAULT_ITERATIONS}"
     local salt_prefix="${kdf_salt:0:16}"
     local salt_suffix="${kdf_salt:16}"
     local derived key_hex
 
     derived=$(
         printf '%s%s\n' "$password" "$salt_suffix" |
-            openssl enc -aes-256-cbc -P -salt -pbkdf2 -iter "$GITSETU_VAULT_ITERATIONS" -md sha256 \
+            openssl enc -aes-256-cbc -P -salt -pbkdf2 -iter "$iters" -md sha256 \
                 -S "$salt_prefix" -pass stdin 2>/dev/null
     ) || return 1
     key_hex=$(printf '%s\n' "$derived" | sed -n 's/^key=//p' | head -n 1)
@@ -4128,10 +4125,11 @@ _vault_derive_root_key() {
 
 _vault_derive_mac_key() {
     local root_key="$1"
+    local iters="${2:-$GITSETU_VAULT_ITERATIONS}"
     local derived key_hex
     derived=$(
         printf 'gitsetu-v2-authentication:%s\n' "$root_key" |
-            openssl enc -aes-256-cbc -P -salt -pbkdf2 -iter "$GITSETU_VAULT_ITERATIONS" -md sha256 \
+            openssl enc -aes-256-cbc -P -salt -pbkdf2 -iter "$iters" -md sha256 \
                 -S "$GITSETU_VAULT_MAC_SALT" -pass stdin 2>/dev/null
     ) || return 1
     key_hex=$(printf '%s\n' "$derived" | sed -n 's/^key=//p' | head -n 1)
@@ -4160,10 +4158,11 @@ _vault_compute_tag() {
     local ciphertext="$3"
     local destination_tag="$4"
     local payload_length="${5:-}"
+    local iters="${6:-$GITSETU_VAULT_ITERATIONS}"
     local mac_key inner_hash
 
     [[ "$payload_length" =~ ^[0-9]+$ ]] || return 1
-    mac_key=$(_vault_derive_mac_key "$root_key") || return 1
+    mac_key=$(_vault_derive_mac_key "$root_key" "$iters") || return 1
     inner_hash="${destination_tag}.inner"
     {
         _vault_hmac_pad "$mac_key" 54
@@ -4209,9 +4208,10 @@ _vault_encrypt_stream() {
 
 _vault_decrypt_stream() {
     local root_key="$1" enc_salt="$2" iv="$3" input="$4" output="$5"
+    local iters="${6:-$GITSETU_VAULT_ITERATIONS}"
     local salt_suffix="${enc_salt:16}"
     printf 'gitsetu-v2-encryption:%s:%s\n' "$root_key" "$salt_suffix" |
-        openssl enc -d -aes-256-ctr -salt -pbkdf2 -iter "$GITSETU_VAULT_ITERATIONS" -md sha256 \
+        openssl enc -d -aes-256-ctr -salt -pbkdf2 -iter "$iters" -md sha256 \
             -S "${enc_salt:0:16}" -iv "$iv" -pass stdin \
             -in "$input" -out "$output" 2>/dev/null
 }
@@ -4292,7 +4292,10 @@ _vault_parse_header() {
 
     [[ "$magic" == "$GITSETU_VAULT_FORMAT" ]] || return 1
     [[ "$line2" == "kdf=$GITSETU_VAULT_KDF" ]] || return 1
-    [[ "$line3" == "iterations=$GITSETU_VAULT_ITERATIONS" ]] || return 1
+    [[ "$line3" =~ ^iterations=([0-9]+)$ ]] || return 1
+    local iter_value="${BASH_REMATCH[1]}"
+    _vault_validate_bounded_uint "$iter_value" 100000 10000000 || return 1
+    _VAULT_ITERATIONS="$iter_value"
     [[ "$line4" == "cipher=$GITSETU_VAULT_CIPHER" ]] || return 1
     [[ "$line5" == "mac=$GITSETU_VAULT_MAC" ]] || return 1
     [[ "$line6" =~ ^kdf_salt=[0-9a-f]{32}$ ]] || return 1
@@ -4324,13 +4327,13 @@ _vault_authenticate_envelope() {
     local vault_path="$1" password="$2" work_dir="$3"
     local root_key material tag_file header_core payload_file
 
-    root_key=$(_vault_derive_root_key "$password" "$_VAULT_KDF_SALT") || return 1
+    root_key=$(_vault_derive_root_key "$password" "$_VAULT_KDF_SALT" "$_VAULT_ITERATIONS") || return 1
     header_core="$work_dir/envelope.header.core"
     payload_file="$work_dir/envelope.payload"
     tag_file="$work_dir/envelope.tag"
     head -n 8 "$vault_path" > "$header_core" 2>/dev/null || return 1
     tail -c "$_VAULT_PAYLOAD_LENGTH" "$vault_path" > "$payload_file" 2>/dev/null || return 1
-    _vault_compute_tag "$root_key" "$header_core" "$payload_file" "$tag_file" "$_VAULT_PAYLOAD_LENGTH" || return 1
+    _vault_compute_tag "$root_key" "$header_core" "$payload_file" "$tag_file" "$_VAULT_PAYLOAD_LENGTH" "$_VAULT_ITERATIONS" || return 1
     _vault_hex_matches_file "$_VAULT_EXPECTED_TAG" "$tag_file" || return 1
     _VAULT_ROOT_KEY="$root_key"
     root_key=""
@@ -5800,7 +5803,7 @@ cmd_restore() {
         return 1
     fi
     if ! _vault_decrypt_stream "$_VAULT_ROOT_KEY" "$_VAULT_ENC_SALT" "$_VAULT_IV" \
-        "$temp_dir/envelope.payload" "$archive_payload"; then
+        "$temp_dir/envelope.payload" "$archive_payload" "$_VAULT_ITERATIONS"; then
         _vault_restore_discard_staging "$temp_dir" 0
         print_error "Authenticated vault could not be decrypted."
         return 1
@@ -7321,7 +7324,11 @@ _gitconfig_build_ssh_command() {
 
 _gitconfig_valid_provider() {
     local provider="$1"
-    [[ "$provider" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]+)?$ ]]
+    if declare -f validate_provider >/dev/null 2>&1; then
+        validate_provider "$provider"
+    else
+        [[ "$provider" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]+)?$ ]]
+    fi
 }
 
 _gitconfig_resolve_symlink_target() {
@@ -7964,7 +7971,7 @@ EOF
 [tag]
     gpgsign = true
 EOF
-    else
+    elif [[ "$sign_commits" == "0" ]]; then
         cat <<EOF
 
 [commit]
@@ -8242,6 +8249,20 @@ _guard_managed_profile_for_path() {
         return 1
     fi
 
+    if [[ -n "${GITSETU_RUN_PROFILE:-}" ]]; then
+        local run_p="${GITSETU_RUN_PROFILE}"
+        for (( i=0; i<PROFILE_COUNT; i++ )); do
+            if [[ "${PROFILE_LABELS[$i]:-}" == "$run_p" ]]; then
+                GUARD_PROFILE_LABEL="$run_p"
+                GUARD_PROFILE_DIR="${PROFILE_DIRS[$i]:-}"
+                GUARD_MATCH_LENGTH=0
+                GUARD_PROFILE_CONFIG="${GITSETU_PROFILES_DIR:-${GITSETU_CONFIG_DIR:-${HOME}/.config/gitsetu}/profiles}/${run_p}.gitconfig"
+                return 0
+            fi
+        done
+        return 2
+    fi
+
     for (( i=0; i<PROFILE_COUNT; i++ )); do
         if [[ ! ${PROFILE_DIRS[$i]+x} || ! ${PROFILE_LABELS[$i]+x} ]]; then
             return 2
@@ -8389,11 +8410,13 @@ _guard_validate_effective_identity() {
 
     # These commands include system/global/worktree/local values under Git's
     # normal precedence; they are not registry or global-only lookups.
-    configured_name=$(git config --get user.name 2>/dev/null) || configured_name=""
-    configured_email=$(git config --get user.email 2>/dev/null) || configured_email=""
-    if [[ "$configured_name" != "$expected_name" || "$configured_email" != "$expected_email" ]]; then
-        _guard_record_mismatch "effective Git identity" "$expected_name" "$expected_email" "$configured_name" "$configured_email"
-        return 1
+    if [[ -z "${GITSETU_RUN_PROFILE:-}" ]]; then
+        configured_name=$(git config --get user.name 2>/dev/null) || configured_name=""
+        configured_email=$(git config --get user.email 2>/dev/null) || configured_email=""
+        if [[ "$configured_name" != "$expected_name" || "$configured_email" != "$expected_email" ]]; then
+            _guard_record_mismatch "effective Git identity" "$expected_name" "$expected_email" "$configured_name" "$configured_email"
+            return 1
+        fi
     fi
 
     # git var observes GIT_AUTHOR_* / GIT_COMMITTER_* and Git's --author option
@@ -8786,13 +8809,20 @@ _doctor_ssh_include_present() {
 # configuration merely because it contains the managed Include line.
 _doctor_ssh_config_valid() {
     local ssh_config="$HOME/.ssh/config"
-    local mode
+    local mode target="$ssh_config"
+    if [[ -L "$ssh_config" ]]; then
+        if declare -f _gitconfig_resolve_symlink_target >/dev/null 2>&1; then
+            target=$(_gitconfig_resolve_symlink_target "$ssh_config" 2>/dev/null) || return 1
+        else
+            return 1
+        fi
+    fi
     [[ -d "$HOME/.ssh" && ! -L "$HOME/.ssh" && -O "$HOME/.ssh" ]] || return 1
-    [[ -f "$ssh_config" && ! -L "$ssh_config" && -O "$ssh_config" ]] || return 1
+    [[ -f "$target" && -O "$target" ]] || return 1
     if declare -f _ssh_assert_private_directory >/dev/null 2>&1; then
         _ssh_assert_private_directory "$HOME/.ssh" || return 1
     fi
-    mode=$(stat -c '%a' "$ssh_config" 2>/dev/null || stat -f '%Lp' "$ssh_config" 2>/dev/null || true)
+    mode=$(stat -c '%a' "$target" 2>/dev/null || stat -f '%Lp' "$target" 2>/dev/null || true)
     [[ "$mode" == "600" ]] || {
         case "${GITSETU_OS:-}:${OSTYPE:-}" in
             gitbash:*|cygwin:*|msys:*|mingw:*) [[ "$mode" == "644" ]] || return 1 ;;
@@ -9070,15 +9100,24 @@ run_doctor() {
             printf >&2 "    Registry: OK (%s profile(s))\n" "$PROFILE_COUNT"
         fi
 
-        if [[ -L "$HOME/.gitconfig" || ! -f "$HOME/.gitconfig" ]]; then
+        local gitconfig_target="$HOME/.gitconfig"
+        if [[ -L "$gitconfig_target" ]]; then
+            if declare -f _gitconfig_resolve_symlink_target >/dev/null 2>&1; then
+                gitconfig_target=$(_gitconfig_resolve_symlink_target "$gitconfig_target" 2>/dev/null) || gitconfig_target=""
+            else
+                gitconfig_target=""
+            fi
+        fi
+
+        if [[ -z "$gitconfig_target" || ! -f "$gitconfig_target" ]]; then
             printf >&2 "    ~/.gitconfig: %bERROR (missing or unsafe)%b\n" "$RED" "$RESET"
             issues_found=1
         else
             local head_start head_end tail_start tail_end
-            head_start=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_HEAD_START:-# [gitsetu:managed:head:start]}")
-            head_end=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_HEAD_END:-# [gitsetu:managed:head:end]}")
-            tail_start=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_START:-# [gitsetu:managed:start]}")
-            tail_end=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_END:-# [gitsetu:managed:end]}")
+            head_start=$(_doctor_count_marker "$gitconfig_target" "${GITSETU_MANAGED_HEAD_START:-# [gitsetu:managed:head:start]}")
+            head_end=$(_doctor_count_marker "$gitconfig_target" "${GITSETU_MANAGED_HEAD_END:-# [gitsetu:managed:head:end]}")
+            tail_start=$(_doctor_count_marker "$gitconfig_target" "${GITSETU_MANAGED_START:-# [gitsetu:managed:start]}")
+            tail_end=$(_doctor_count_marker "$gitconfig_target" "${GITSETU_MANAGED_END:-# [gitsetu:managed:end]}")
             if [[ "$tail_start" == "1" && "$tail_end" == "1" && ( ( "$head_start" == "1" && "$head_end" == "1" ) || ( "$head_start" == "0" && "$head_end" == "0" ) ) ]]; then
                 printf >&2 "    ~/.gitconfig: OK (managed blocks valid)\n"
             else
@@ -9092,7 +9131,16 @@ run_doctor() {
             fi
         fi
 
-        if [[ -L "$HOME/.ssh" || -L "$HOME/.ssh/config" || ! -f "$HOME/.ssh/config" ]] || \
+        local sshconfig_target="$HOME/.ssh/config"
+        if [[ -L "$sshconfig_target" ]]; then
+            if declare -f _gitconfig_resolve_symlink_target >/dev/null 2>&1; then
+                sshconfig_target=$(_gitconfig_resolve_symlink_target "$sshconfig_target" 2>/dev/null) || sshconfig_target=""
+            else
+                sshconfig_target=""
+            fi
+        fi
+
+        if [[ -L "$HOME/.ssh" || -z "$sshconfig_target" || ! -f "$sshconfig_target" ]] || \
            ! _doctor_ssh_include_present || ! _doctor_ssh_config_valid; then
             printf >&2 "    ~/.ssh/config: %bERROR (GitSetu include missing or unsafe)%b\n" "$RED" "$RESET"
             issues_found=1
@@ -9264,16 +9312,24 @@ run_doctor_json() {
 
     # 6. gitconfig
     local gc_status="pass" gc_details="managed blocks valid"
-    if [[ ! -f "$HOME/.gitconfig" || -L "$HOME/.gitconfig" ]]; then
+    local gc_target="$HOME/.gitconfig"
+    if [[ -L "$gc_target" ]]; then
+        if declare -f _gitconfig_resolve_symlink_target >/dev/null 2>&1; then
+            gc_target=$(_gitconfig_resolve_symlink_target "$gc_target" 2>/dev/null) || gc_target=""
+        else
+            gc_target=""
+        fi
+    fi
+    if [[ -z "$gc_target" || ! -f "$gc_target" ]]; then
         gc_status="fail"
         gc_details="gitconfig missing or unsafe"
         issues=$((issues + 1))
     else
         local head_start head_end tail_start tail_end
-        head_start=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_HEAD_START:-# [gitsetu:managed:head:start]}")
-        head_end=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_HEAD_END:-# [gitsetu:managed:head:end]}")
-        tail_start=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_START:-# [gitsetu:managed:start]}")
-        tail_end=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_END:-# [gitsetu:managed:end]}")
+        head_start=$(_doctor_count_marker "$gc_target" "${GITSETU_MANAGED_HEAD_START:-# [gitsetu:managed:head:start]}")
+        head_end=$(_doctor_count_marker "$gc_target" "${GITSETU_MANAGED_HEAD_END:-# [gitsetu:managed:head:end]}")
+        tail_start=$(_doctor_count_marker "$gc_target" "${GITSETU_MANAGED_START:-# [gitsetu:managed:start]}")
+        tail_end=$(_doctor_count_marker "$gc_target" "${GITSETU_MANAGED_END:-# [gitsetu:managed:end]}")
         if ! [[ "$tail_start" == "1" && "$tail_end" == "1" && ( ( "$head_start" == "1" && "$head_end" == "1" ) || ( "$head_start" == "0" && "$head_end" == "0" ) ) ]]; then
             gc_status="fail"
             gc_details="managed markers missing or duplicated"
@@ -9284,7 +9340,15 @@ run_doctor_json() {
 
     # 7. ssh_config
     local sc_status="pass" sc_details="gitsetu include present"
-    if [[ ! -f "$HOME/.ssh/config" || -L "$HOME/.ssh/config" ]] || ! _doctor_ssh_include_present || ! _doctor_ssh_config_valid; then
+    local sc_target="$HOME/.ssh/config"
+    if [[ -L "$sc_target" ]]; then
+        if declare -f _gitconfig_resolve_symlink_target >/dev/null 2>&1; then
+            sc_target=$(_gitconfig_resolve_symlink_target "$sc_target" 2>/dev/null) || sc_target=""
+        else
+            sc_target=""
+        fi
+    fi
+    if [[ -L "$HOME/.ssh" || -z "$sc_target" || ! -f "$sc_target" ]] || ! _doctor_ssh_include_present || ! _doctor_ssh_config_valid; then
         sc_status="fail"
         sc_details="gitsetu include missing or invalid"
         issues=$((issues + 1))
@@ -9396,17 +9460,19 @@ run_doctor_repair() {
         print_error "GitSetu has not been configured yet (profiles.conf not found at $GITSETU_PROFILES_CONF). Run 'gitsetu setup' first."
         return 1
     fi
-    if [[ "$(head -n 1 "$GITSETU_PROFILES_CONF" 2>/dev/null || true)" != "# gitsetu-registry-v2" ]]; then
-        print_error "The profile registry header is missing or unsupported; refusing repair."
-        return 1
-    fi
-
     if declare -f load_profiles >/dev/null 2>&1; then
         local registry_status=0
         load_profiles || registry_status=$?
         if [[ "$registry_status" -ne 0 ]]; then
             return "$registry_status"
         fi
+    fi
+
+    local header
+    header=$(head -n 1 "$GITSETU_PROFILES_CONF" 2>/dev/null || true)
+    if [[ "$header" != "# gitsetu-registry-v2" && "${GITSETU_REGISTRY_WAS_V1:-0}" -ne 1 ]]; then
+        print_error "The profile registry header is missing or unsupported; refusing repair."
+        return 1
     fi
     if [[ "${PROFILE_COUNT:-0}" -eq 0 ]]; then
         print_error "The registry contains no complete profiles; repair cannot infer an identity."
@@ -9437,18 +9503,36 @@ run_doctor_repair() {
     local planned=0 failed=0
     local start_count end_count
 
-    if [[ -L "$HOME/.gitconfig" || ! -f "$HOME/.gitconfig" ]]; then
+    local repair_gc_target="$HOME/.gitconfig"
+    if [[ -L "$repair_gc_target" ]]; then
+        if declare -f _gitconfig_resolve_symlink_target >/dev/null 2>&1; then
+            repair_gc_target=$(_gitconfig_resolve_symlink_target "$repair_gc_target" 2>/dev/null) || repair_gc_target=""
+        else
+            repair_gc_target=""
+        fi
+    fi
+
+    if [[ -z "$repair_gc_target" || ! -f "$repair_gc_target" ]]; then
         gitconfig_needs_repair=1
     else
         local head_start head_end tail_start tail_end
-        head_start=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_HEAD_START:-# [gitsetu:managed:head:start]}")
-        head_end=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_HEAD_END:-# [gitsetu:managed:head:end]}")
-        tail_start=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_START:-# [gitsetu:managed:start]}")
-        tail_end=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_END:-# [gitsetu:managed:end]}")
+        head_start=$(_doctor_count_marker "$repair_gc_target" "${GITSETU_MANAGED_HEAD_START:-# [gitsetu:managed:head:start]}")
+        head_end=$(_doctor_count_marker "$repair_gc_target" "${GITSETU_MANAGED_HEAD_END:-# [gitsetu:managed:head:end]}")
+        tail_start=$(_doctor_count_marker "$repair_gc_target" "${GITSETU_MANAGED_START:-# [gitsetu:managed:start]}")
+        tail_end=$(_doctor_count_marker "$repair_gc_target" "${GITSETU_MANAGED_END:-# [gitsetu:managed:end]}")
         [[ "$tail_start" == "1" && "$tail_end" == "1" && ( ( "$head_start" == "1" && "$head_end" == "1" ) || ( "$head_start" == "0" && "$head_end" == "0" ) ) ]] || gitconfig_needs_repair=1
     fi
 
-    if [[ -L "$HOME/.ssh" || -L "$HOME/.ssh/config" || ! -f "$HOME/.ssh/config" ]] || \
+    local repair_sc_target="$HOME/.ssh/config"
+    if [[ -L "$repair_sc_target" ]]; then
+        if declare -f _gitconfig_resolve_symlink_target >/dev/null 2>&1; then
+            repair_sc_target=$(_gitconfig_resolve_symlink_target "$repair_sc_target" 2>/dev/null) || repair_sc_target=""
+        else
+            repair_sc_target=""
+        fi
+    fi
+
+    if [[ -L "$HOME/.ssh" || -z "$repair_sc_target" || ! -f "$repair_sc_target" ]] || \
        ! _doctor_ssh_include_present || ! _doctor_ssh_config_valid || \
        [[ -L "$GITSETU_PROFILES_DIR" || -L "$GITSETU_PROFILES_DIR/ssh_config" || ! -f "$GITSETU_PROFILES_DIR/ssh_config" ]]; then
         ssh_needs_repair=1
@@ -10065,20 +10149,29 @@ verify_git_config() {
         return 1
     fi
 
-    if [[ -z "${HOME:-}" || -L "$HOME/.gitconfig" || ! -f "$HOME/.gitconfig" ]]; then
+    local target_gitconfig="$HOME/.gitconfig"
+    if [[ -L "$target_gitconfig" ]]; then
+        if declare -f _gitconfig_resolve_symlink_target >/dev/null 2>&1; then
+            target_gitconfig=$(_gitconfig_resolve_symlink_target "$target_gitconfig" 2>/dev/null) || target_gitconfig=""
+        else
+            target_gitconfig=""
+        fi
+    fi
+
+    if [[ -z "${HOME:-}" || -z "$target_gitconfig" || ! -f "$target_gitconfig" ]]; then
         print_error "Global gitconfig missing or unsafe: $HOME/.gitconfig"
         return 1
     fi
-    if ! git config --file "$HOME/.gitconfig" --list >/dev/null 2>&1; then
+    if ! git config --file "$target_gitconfig" --list >/dev/null 2>&1; then
         print_error "Global gitconfig contains invalid syntax: $HOME/.gitconfig"
         issues=$((issues + 1))
     fi
 
     local head_start head_end tail_start tail_end
-    head_start=$(grep -F -c "${GITSETU_MANAGED_HEAD_START:-# [gitsetu:managed:head:start]}" "$HOME/.gitconfig" 2>/dev/null || printf '0')
-    head_end=$(grep -F -c "${GITSETU_MANAGED_HEAD_END:-# [gitsetu:managed:head:end]}" "$HOME/.gitconfig" 2>/dev/null || printf '0')
-    tail_start=$(grep -F -c "${GITSETU_MANAGED_START:-# [gitsetu:managed:start]}" "$HOME/.gitconfig" 2>/dev/null || printf '0')
-    tail_end=$(grep -F -c "${GITSETU_MANAGED_END:-# [gitsetu:managed:end]}" "$HOME/.gitconfig" 2>/dev/null || printf '0')
+    head_start=$(grep -F -c "${GITSETU_MANAGED_HEAD_START:-# [gitsetu:managed:head:start]}" "$target_gitconfig" 2>/dev/null || printf '0')
+    head_end=$(grep -F -c "${GITSETU_MANAGED_HEAD_END:-# [gitsetu:managed:head:end]}" "$target_gitconfig" 2>/dev/null || printf '0')
+    tail_start=$(grep -F -c "${GITSETU_MANAGED_START:-# [gitsetu:managed:start]}" "$target_gitconfig" 2>/dev/null || printf '0')
+    tail_end=$(grep -F -c "${GITSETU_MANAGED_END:-# [gitsetu:managed:end]}" "$target_gitconfig" 2>/dev/null || printf '0')
     if [[ "$tail_start" != "1" || "$tail_end" != "1" || "$head_start" != "$head_end" || "$head_start" -gt 1 ]]; then
         print_error "Global gitconfig must contain valid GitSetu managed blocks."
         issues=$((issues + 1))
@@ -10410,6 +10503,49 @@ _teardown_replace_file() {
 }
 
 # ------------------------------------------------------------------------------
+# _teardown_backup_file — Save pre-teardown backup outside GITSETU_CONFIG_DIR
+# ------------------------------------------------------------------------------
+_teardown_backup_file() {
+    local source_path="${1:-}"
+    if [[ $# -ne 1 || -z "$source_path" ]]; then
+        return 1
+    fi
+    if [[ ! -f "$source_path" || -L "$source_path" ]]; then
+        return 1
+    fi
+
+    local source_base timestamp backup_path tmp_path counter=1
+    source_base=$(basename "$source_path") || return 1
+    timestamp=$(date +%Y%m%dT%H%M%S) || return 1
+
+    # Pre-teardown backups must live outside GITSETU_CONFIG_DIR so that
+    # teardown_config_dir does not wipe them out when state is removed.
+    local backup_dir="${HOME:-}"
+    if [[ -z "$backup_dir" || ! -d "$backup_dir" || ! -w "$backup_dir" ]]; then
+        backup_dir=$(dirname "$source_path")
+    fi
+    backup_path="$backup_dir/${source_base}.pre-gitsetu-teardown.${timestamp}.bak"
+
+    while [[ -e "$backup_path" || -L "$backup_path" ]]; do
+        backup_path="$backup_dir/${source_base}.pre-gitsetu-teardown.${timestamp}.${counter}.bak"
+        counter=$((counter + 1))
+        [[ "$counter" -le 10000 ]] || return 1
+    done
+
+    tmp_path=$(umask 077 && mktemp "$backup_dir/.${source_base}.tmp.XXXXXX" 2>/dev/null) || return 1
+    if ! cp -p "$source_path" "$tmp_path" 2>/dev/null ||
+       ! chmod 600 "$tmp_path" 2>/dev/null ||
+       ! mv "$tmp_path" "$backup_path" 2>/dev/null; then
+        rm -f "$tmp_path" 2>/dev/null || true
+        print_error "Failed to create pre-teardown backup: $source_path"
+        return 1
+    fi
+
+    print_info "Pre-teardown safety backup saved: $source_path → $backup_path"
+    return 0
+}
+
+# ------------------------------------------------------------------------------
 # teardown_gitconfig — Remove the managed blocks from ~/.gitconfig
 # ------------------------------------------------------------------------------
 teardown_gitconfig() {
@@ -10442,8 +10578,7 @@ teardown_gitconfig() {
         return 0
     fi
 
-    ensure_dirs || return 1
-    backup_file "$target" || {
+    _teardown_backup_file "$target" || {
         print_error "Could not back up ~/.gitconfig; teardown stopped."
         return 1
     }
@@ -10537,8 +10672,7 @@ teardown_sshconfig() {
         if [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
             print_info "[DRY RUN] Would remove Include directive from: $ssh_config"
         else
-            ensure_dirs || return 1
-            backup_file "$target_ssh" || {
+            _teardown_backup_file "$target_ssh" || {
                 print_error "Could not back up ~/.ssh/config; teardown stopped."
                 return 1
             }
@@ -10804,7 +10938,13 @@ _teardown_scan_directory() {
         fi
 
         if [[ -d "$child" ]]; then
-            if [[ "${child##*/}" == ".git" ]]; then
+            local base="${child##*/}"
+            case "$base" in
+                node_modules|.venv|venv|.cargo|vendor|.terraform|target|.cache)
+                    continue
+                    ;;
+            esac
+            if [[ "$base" == ".git" ]]; then
                 if [[ -f "$child/config" && ! -L "$child/config" ]]; then
                     if ! _teardown_process_repo_config "$child/config"; then
                         return 3
@@ -11135,12 +11275,21 @@ discover_global_git_identity() {
         DISCOVERED_GLOBAL_EMAIL=$(git config --global user.email 2>/dev/null || true)
     fi
 
-    if [[ -f "$HOME/.gitconfig" && ! -L "$HOME/.gitconfig" ]]; then
+    local target_gitconfig="$HOME/.gitconfig"
+    if [[ -L "$target_gitconfig" ]]; then
+        if declare -f _gitconfig_resolve_symlink_target >/dev/null 2>&1; then
+            target_gitconfig=$(_gitconfig_resolve_symlink_target "$target_gitconfig" 2>/dev/null) || target_gitconfig=""
+        else
+            target_gitconfig=""
+        fi
+    fi
+
+    if [[ -n "$target_gitconfig" && -f "$target_gitconfig" ]]; then
         if [[ -z "$DISCOVERED_GLOBAL_NAME" ]] && command -v git >/dev/null 2>&1; then
-            DISCOVERED_GLOBAL_NAME=$(git config --file "$HOME/.gitconfig" user.name 2>/dev/null || true)
+            DISCOVERED_GLOBAL_NAME=$(git config --file "$target_gitconfig" user.name 2>/dev/null || true)
         fi
         if [[ -z "$DISCOVERED_GLOBAL_EMAIL" ]] && command -v git >/dev/null 2>&1; then
-            DISCOVERED_GLOBAL_EMAIL=$(git config --file "$HOME/.gitconfig" user.email 2>/dev/null || true)
+            DISCOVERED_GLOBAL_EMAIL=$(git config --file "$target_gitconfig" user.email 2>/dev/null || true)
         fi
     fi
 
@@ -11329,7 +11478,16 @@ discover_workspace_dir() {
 
     label_lower=$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')
 
-    if [[ -n "${HOME:-}" && -f "$HOME/.gitconfig" && ! -L "$HOME/.gitconfig" ]]; then
+    local target_gitconfig="$HOME/.gitconfig"
+    if [[ -L "$target_gitconfig" ]]; then
+        if declare -f _gitconfig_resolve_symlink_target >/dev/null 2>&1; then
+            target_gitconfig=$(_gitconfig_resolve_symlink_target "$target_gitconfig" 2>/dev/null) || target_gitconfig=""
+        else
+            target_gitconfig=""
+        fi
+    fi
+
+    if [[ -n "${HOME:-}" && -n "$target_gitconfig" && -f "$target_gitconfig" ]]; then
         current_gitdir=""
         current_path=""
         while IFS= read -r line || [[ -n "$line" ]]; do
@@ -11353,7 +11511,7 @@ discover_workspace_dir() {
             elif [[ -n "$current_gitdir" ]] && [[ "$line" =~ ^path[[:space:]]*=[[:space:]]*(.*)$ ]]; then
                 current_path="${BASH_REMATCH[1]}"
             fi
-        done < "$HOME/.gitconfig"
+        done < "$target_gitconfig"
         _gitsetu_discovery_check_include_section "$current_gitdir" "$current_path"
     fi
 
@@ -11934,6 +12092,12 @@ prompt_edit_profile() {
     if [[ -n "$REPLY" ]]; then
         PROFILE_USERS[i]="$REPLY"
     fi
+
+    # Git Provider Host
+    ask "Git Provider Host (e.g. github.com, gitlab.com, git.corp.internal)" "${PROFILE_PROVIDERS[i]:-github.com}"
+    if [[ -n "$REPLY" ]]; then
+        PROFILE_PROVIDERS[i]="$REPLY"
+    fi
 }
 
 # ------------------------------------------------------------------------------
@@ -11973,7 +12137,8 @@ prompt_add_profile() {
     ask "SSH Key Path" "$def_key"
     PROFILE_KEYS[PROFILE_COUNT]=$(normalize_path "$REPLY")
 
-    PROFILE_PROVIDERS[PROFILE_COUNT]="github.com"
+    ask "Git Provider Host (e.g. github.com, gitlab.com, git.corp.internal)" "github.com"
+    PROFILE_PROVIDERS[PROFILE_COUNT]="$REPLY"
     PROFILE_SIGNS[PROFILE_COUNT]="${GITSETU_DEFAULT_SIGN:-0}"
 
     ask "Provider Username (e.g. GitHub handle, for HTTPS cloning)" ""
@@ -13318,9 +13483,7 @@ cmd_profile() {
                 local git_ver
                 git_ver=$(git --version 2>/dev/null | awk '{print $3}' || true)
                 if [[ -n "$git_ver" ]]; then
-                    local older
-                    older=$(printf '%s\n2.36.0\n' "$git_ver" | sort -V | head -n1)
-                    if [[ "$older" == "$git_ver" && "$git_ver" != "2.36.0" && "$git_ver" != "2.36"* ]]; then
+                    if ! _gitsetu_version_ge "$git_ver" "2.36.0"; then
                         print_warning "hasconfig:remote.*.url requires Git 2.36+ (installed: $git_ver)."
                     fi
                 fi
@@ -13454,7 +13617,7 @@ _gitsetu_completion_labels() {
         fi
         [[ "$label" =~ ^[a-z][a-z0-9-]{0,19}$ && "$label" != *- ]] || return 1
         [[ "$provider" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ && "$provider" == *.* && "$provider" != *..* ]] || return 1
-        [[ "$sign" == "0" || "$sign" == "1" ]] || return 1
+        [[ "$sign" == "0" || "$sign" == "1" || "$sign" == "inherit" ]] || return 1
         [[ -n "$key_path" && ( "$key_path" == /* || "$key_path" =~ ^[A-Za-z]:/ ) ]] || return 1
         case "$key_path" in *\\*|*//*|*/../*|*/./*) return 1 ;; esac
         if [[ -n "$provider_user" ]]; then
@@ -14025,9 +14188,9 @@ cmd_update() {
         }
 
         local latest_tag current_tag
-        latest_tag=$(_gitsetu_update_git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1)
+        latest_tag=$(_gitsetu_update_git tag -l 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1)
         if [[ -z "$latest_tag" ]]; then
-            latest_tag=$(_gitsetu_update_git tag -l 'v*' | sort -V | tail -n1)
+            latest_tag=$(_gitsetu_update_git tag -l 'v*' --sort=-v:refname | head -n1)
         fi
         if [[ -z "$latest_tag" ]]; then
             print_info "No versioned release tags found."
@@ -14328,6 +14491,7 @@ cmd_run() {
     local quoted_key
     quoted_key=$(_gitsetu_shell_quote "$found_key_path")
 
+    export GITSETU_RUN_PROFILE="$profile"
     export GIT_AUTHOR_NAME="$name"
     export GIT_AUTHOR_EMAIL="$email"
     export GIT_COMMITTER_NAME="$name"
@@ -14364,7 +14528,7 @@ cmd_run() {
             count=$((count + 1))
         fi
         export "GIT_CONFIG_COUNT=$count"
-    else
+    elif [[ "$gpgsign" == "false" || "$tagsign" == "false" ]]; then
         local count="${GIT_CONFIG_COUNT:-0}"
         export "GIT_CONFIG_KEY_${count}=commit.gpgsign"
         export "GIT_CONFIG_VALUE_${count}=false"

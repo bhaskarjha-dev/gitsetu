@@ -1505,6 +1505,30 @@ array_contains() {
 }
 
 # ------------------------------------------------------------------------------
+# _gitsetu_version_ge — Pure Bash semver comparison ($1 >= $2)
+# ------------------------------------------------------------------------------
+_gitsetu_version_ge() {
+    local v1="${1#v}" v2="${2#v}"
+    [[ "$v1" == "$v2" ]] && return 0
+    local IFS=.
+    local -a a1=($v1) a2=($v2)
+    local i n1 n2 len
+    len=${#a1[@]}
+    [[ ${#a2[@]} -gt $len ]] && len=${#a2[@]}
+    for (( i=0; i<len; i++ )); do
+        n1="${a1[i]:-0}"
+        n2="${a2[i]:-0}"
+        n1="${n1%%[!0-9]*}"
+        n2="${n2%%[!0-9]*}"
+        n1=$((10#${n1:-0}))
+        n2=$((10#${n2:-0}))
+        if [[ "$n1" -gt "$n2" ]]; then return 0; fi
+        if [[ "$n1" -lt "$n2" ]]; then return 1; fi
+    done
+    return 0
+}
+
+# ------------------------------------------------------------------------------
 # Helper: safely remove a profile by index (Bash 3.2 array slice drops empty strings)
 # Usage: remove_profile_at_index <idx>
 # ------------------------------------------------------------------------------

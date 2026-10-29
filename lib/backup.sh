@@ -200,6 +200,7 @@ _VAULT_PAYLOAD_LENGTH=0
 _VAULT_HEADER_BYTES=0
 _VAULT_ROOT_KEY=""
 _VAULT_ACTIVE_TEMP=""
+_VAULT_ITERATIONS="$GITSETU_VAULT_ITERATIONS"
 GITSETU_VAULT_ACTIVE_TRANSACTION=""
 
 _vault_file_size() {
@@ -459,13 +460,14 @@ _vault_random_hex() {
 _vault_derive_root_key() {
     local password="$1"
     local kdf_salt="$2"
+    local iters="${3:-$GITSETU_VAULT_ITERATIONS}"
     local salt_prefix="${kdf_salt:0:16}"
     local salt_suffix="${kdf_salt:16}"
     local derived key_hex
 
     derived=$(
         printf '%s%s\n' "$password" "$salt_suffix" |
-            openssl enc -aes-256-cbc -P -salt -pbkdf2 -iter "$GITSETU_VAULT_ITERATIONS" -md sha256 \
+            openssl enc -aes-256-cbc -P -salt -pbkdf2 -iter "$iters" -md sha256 \
                 -S "$salt_prefix" -pass stdin 2>/dev/null
     ) || return 1
     key_hex=$(printf '%s\n' "$derived" | sed -n 's/^key=//p' | head -n 1)
@@ -475,10 +477,11 @@ _vault_derive_root_key() {
 
 _vault_derive_mac_key() {
     local root_key="$1"
+    local iters="${2:-$GITSETU_VAULT_ITERATIONS}"
     local derived key_hex
     derived=$(
         printf 'gitsetu-v2-authentication:%s\n' "$root_key" |
-            openssl enc -aes-256-cbc -P -salt -pbkdf2 -iter "$GITSETU_VAULT_ITERATIONS" -md sha256 \
+            openssl enc -aes-256-cbc -P -salt -pbkdf2 -iter "$iters" -md sha256 \
                 -S "$GITSETU_VAULT_MAC_SALT" -pass stdin 2>/dev/null
     ) || return 1
     key_hex=$(printf '%s\n' "$derived" | sed -n 's/^key=//p' | head -n 1)
@@ -507,10 +510,11 @@ _vault_compute_tag() {
     local ciphertext="$3"
     local destination_tag="$4"
     local payload_length="${5:-}"
+    local iters="${6:-$GITSETU_VAULT_ITERATIONS}"
     local mac_key inner_hash
 
     [[ "$payload_length" =~ ^[0-9]+$ ]] || return 1
-    mac_key=$(_vault_derive_mac_key "$root_key") || return 1
+    mac_key=$(_vault_derive_mac_key "$root_key" "$iters") || return 1
     inner_hash="${destination_tag}.inner"
     {
         _vault_hmac_pad "$mac_key" 54
@@ -556,9 +560,10 @@ _vault_encrypt_stream() {
 
 _vault_decrypt_stream() {
     local root_key="$1" enc_salt="$2" iv="$3" input="$4" output="$5"
+    local iters="${6:-$GITSETU_VAULT_ITERATIONS}"
     local salt_suffix="${enc_salt:16}"
     printf 'gitsetu-v2-encryption:%s:%s\n' "$root_key" "$salt_suffix" |
-        openssl enc -d -aes-256-ctr -salt -pbkdf2 -iter "$GITSETU_VAULT_ITERATIONS" -md sha256 \
+        openssl enc -d -aes-256-ctr -salt -pbkdf2 -iter "$iters" -md sha256 \
             -S "${enc_salt:0:16}" -iv "$iv" -pass stdin \
             -in "$input" -out "$output" 2>/dev/null
 }
@@ -639,7 +644,10 @@ _vault_parse_header() {
 
     [[ "$magic" == "$GITSETU_VAULT_FORMAT" ]] || return 1
     [[ "$line2" == "kdf=$GITSETU_VAULT_KDF" ]] || return 1
-    [[ "$line3" == "iterations=$GITSETU_VAULT_ITERATIONS" ]] || return 1
+    [[ "$line3" =~ ^iterations=([0-9]+)$ ]] || return 1
+    local iter_value="${BASH_REMATCH[1]}"
+    _vault_validate_bounded_uint "$iter_value" 100000 10000000 || return 1
+    _VAULT_ITERATIONS="$iter_value"
     [[ "$line4" == "cipher=$GITSETU_VAULT_CIPHER" ]] || return 1
     [[ "$line5" == "mac=$GITSETU_VAULT_MAC" ]] || return 1
     [[ "$line6" =~ ^kdf_salt=[0-9a-f]{32}$ ]] || return 1
@@ -671,13 +679,13 @@ _vault_authenticate_envelope() {
     local vault_path="$1" password="$2" work_dir="$3"
     local root_key material tag_file header_core payload_file
 
-    root_key=$(_vault_derive_root_key "$password" "$_VAULT_KDF_SALT") || return 1
+    root_key=$(_vault_derive_root_key "$password" "$_VAULT_KDF_SALT" "$_VAULT_ITERATIONS") || return 1
     header_core="$work_dir/envelope.header.core"
     payload_file="$work_dir/envelope.payload"
     tag_file="$work_dir/envelope.tag"
     head -n 8 "$vault_path" > "$header_core" 2>/dev/null || return 1
     tail -c "$_VAULT_PAYLOAD_LENGTH" "$vault_path" > "$payload_file" 2>/dev/null || return 1
-    _vault_compute_tag "$root_key" "$header_core" "$payload_file" "$tag_file" "$_VAULT_PAYLOAD_LENGTH" || return 1
+    _vault_compute_tag "$root_key" "$header_core" "$payload_file" "$tag_file" "$_VAULT_PAYLOAD_LENGTH" "$_VAULT_ITERATIONS" || return 1
     _vault_hex_matches_file "$_VAULT_EXPECTED_TAG" "$tag_file" || return 1
     _VAULT_ROOT_KEY="$root_key"
     root_key=""
@@ -2147,7 +2155,7 @@ cmd_restore() {
         return 1
     fi
     if ! _vault_decrypt_stream "$_VAULT_ROOT_KEY" "$_VAULT_ENC_SALT" "$_VAULT_IV" \
-        "$temp_dir/envelope.payload" "$archive_payload"; then
+        "$temp_dir/envelope.payload" "$archive_payload" "$_VAULT_ITERATIONS"; then
         _vault_restore_discard_staging "$temp_dir" 0
         print_error "Authenticated vault could not be decrypted."
         return 1

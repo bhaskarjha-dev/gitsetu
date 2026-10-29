@@ -154,11 +154,10 @@ missing-key fallback.
 
 ### `gitsetu update --development` (`--dev` is also accepted)
 
-Production updates are disabled while v1.1.0 is in development. The only
-supported update command verifies a clean checkout on the
-`feature/v1.1.0-onboarding-overhaul` branch and required tracked runtime files.
-It does not fetch a remote, reset a branch, or use a mutable URL as a trust
-root. Bare `gitsetu update` fails with the development-mode guidance.
+Production updates are disabled while v1.1.0 is in development. The `--development` update option verifies a clean development checkout on the
+active branch and required tracked runtime files without fetching remote tags.
+When invoked without flags in a Git checkout, `gitsetu update` fetches tags from
+origin to inspect release availability.
 
 ### `gitsetu guard --install` | `gitsetu guard --uninstall`
 

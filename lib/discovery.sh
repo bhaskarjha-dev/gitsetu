@@ -149,12 +149,21 @@ discover_global_git_identity() {
         DISCOVERED_GLOBAL_EMAIL=$(git config --global user.email 2>/dev/null || true)
     fi
 
-    if [[ -f "$HOME/.gitconfig" && ! -L "$HOME/.gitconfig" ]]; then
+    local target_gitconfig="$HOME/.gitconfig"
+    if [[ -L "$target_gitconfig" ]]; then
+        if declare -f _gitconfig_resolve_symlink_target >/dev/null 2>&1; then
+            target_gitconfig=$(_gitconfig_resolve_symlink_target "$target_gitconfig" 2>/dev/null) || target_gitconfig=""
+        else
+            target_gitconfig=""
+        fi
+    fi
+
+    if [[ -n "$target_gitconfig" && -f "$target_gitconfig" ]]; then
         if [[ -z "$DISCOVERED_GLOBAL_NAME" ]] && command -v git >/dev/null 2>&1; then
-            DISCOVERED_GLOBAL_NAME=$(git config --file "$HOME/.gitconfig" user.name 2>/dev/null || true)
+            DISCOVERED_GLOBAL_NAME=$(git config --file "$target_gitconfig" user.name 2>/dev/null || true)
         fi
         if [[ -z "$DISCOVERED_GLOBAL_EMAIL" ]] && command -v git >/dev/null 2>&1; then
-            DISCOVERED_GLOBAL_EMAIL=$(git config --file "$HOME/.gitconfig" user.email 2>/dev/null || true)
+            DISCOVERED_GLOBAL_EMAIL=$(git config --file "$target_gitconfig" user.email 2>/dev/null || true)
         fi
     fi
 
@@ -343,7 +352,16 @@ discover_workspace_dir() {
 
     label_lower=$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')
 
-    if [[ -n "${HOME:-}" && -f "$HOME/.gitconfig" && ! -L "$HOME/.gitconfig" ]]; then
+    local target_gitconfig="$HOME/.gitconfig"
+    if [[ -L "$target_gitconfig" ]]; then
+        if declare -f _gitconfig_resolve_symlink_target >/dev/null 2>&1; then
+            target_gitconfig=$(_gitconfig_resolve_symlink_target "$target_gitconfig" 2>/dev/null) || target_gitconfig=""
+        else
+            target_gitconfig=""
+        fi
+    fi
+
+    if [[ -n "${HOME:-}" && -n "$target_gitconfig" && -f "$target_gitconfig" ]]; then
         current_gitdir=""
         current_path=""
         while IFS= read -r line || [[ -n "$line" ]]; do
@@ -367,7 +385,7 @@ discover_workspace_dir() {
             elif [[ -n "$current_gitdir" ]] && [[ "$line" =~ ^path[[:space:]]*=[[:space:]]*(.*)$ ]]; then
                 current_path="${BASH_REMATCH[1]}"
             fi
-        done < "$HOME/.gitconfig"
+        done < "$target_gitconfig"
         _gitsetu_discovery_check_include_section "$current_gitdir" "$current_path"
     fi
 

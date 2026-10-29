@@ -191,20 +191,29 @@ verify_git_config() {
         return 1
     fi
 
-    if [[ -z "${HOME:-}" || -L "$HOME/.gitconfig" || ! -f "$HOME/.gitconfig" ]]; then
+    local target_gitconfig="$HOME/.gitconfig"
+    if [[ -L "$target_gitconfig" ]]; then
+        if declare -f _gitconfig_resolve_symlink_target >/dev/null 2>&1; then
+            target_gitconfig=$(_gitconfig_resolve_symlink_target "$target_gitconfig" 2>/dev/null) || target_gitconfig=""
+        else
+            target_gitconfig=""
+        fi
+    fi
+
+    if [[ -z "${HOME:-}" || -z "$target_gitconfig" || ! -f "$target_gitconfig" ]]; then
         print_error "Global gitconfig missing or unsafe: $HOME/.gitconfig"
         return 1
     fi
-    if ! git config --file "$HOME/.gitconfig" --list >/dev/null 2>&1; then
+    if ! git config --file "$target_gitconfig" --list >/dev/null 2>&1; then
         print_error "Global gitconfig contains invalid syntax: $HOME/.gitconfig"
         issues=$((issues + 1))
     fi
 
     local head_start head_end tail_start tail_end
-    head_start=$(grep -F -c "${GITSETU_MANAGED_HEAD_START:-# [gitsetu:managed:head:start]}" "$HOME/.gitconfig" 2>/dev/null || printf '0')
-    head_end=$(grep -F -c "${GITSETU_MANAGED_HEAD_END:-# [gitsetu:managed:head:end]}" "$HOME/.gitconfig" 2>/dev/null || printf '0')
-    tail_start=$(grep -F -c "${GITSETU_MANAGED_START:-# [gitsetu:managed:start]}" "$HOME/.gitconfig" 2>/dev/null || printf '0')
-    tail_end=$(grep -F -c "${GITSETU_MANAGED_END:-# [gitsetu:managed:end]}" "$HOME/.gitconfig" 2>/dev/null || printf '0')
+    head_start=$(grep -F -c "${GITSETU_MANAGED_HEAD_START:-# [gitsetu:managed:head:start]}" "$target_gitconfig" 2>/dev/null || printf '0')
+    head_end=$(grep -F -c "${GITSETU_MANAGED_HEAD_END:-# [gitsetu:managed:head:end]}" "$target_gitconfig" 2>/dev/null || printf '0')
+    tail_start=$(grep -F -c "${GITSETU_MANAGED_START:-# [gitsetu:managed:start]}" "$target_gitconfig" 2>/dev/null || printf '0')
+    tail_end=$(grep -F -c "${GITSETU_MANAGED_END:-# [gitsetu:managed:end]}" "$target_gitconfig" 2>/dev/null || printf '0')
     if [[ "$tail_start" != "1" || "$tail_end" != "1" || "$head_start" != "$head_end" || "$head_start" -gt 1 ]]; then
         print_error "Global gitconfig must contain valid GitSetu managed blocks."
         issues=$((issues + 1))

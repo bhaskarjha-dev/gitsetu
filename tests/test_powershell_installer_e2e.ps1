@@ -22,6 +22,21 @@ $oldTestMode = $env:GITSETU_TEST_MODE
 $oldInstallDir = $env:GITSETU_INSTALL_DIR
 $oldPath = $env:Path
 $oldHostileMarker = $env:GITSETU_HOSTILE_MARKER
+$oldUserProfile = $env:USERPROFILE
+$oldHome = $env:HOME
+$oldXdgConfig = $env:XDG_CONFIG_HOME
+$oldGitConfigGlobal = $env:GIT_CONFIG_GLOBAL
+$oldLocalAppData = $env:LOCALAPPDATA
+
+$fakeHome = Join-Path $testRoot "fake-home"
+$fakeLocalAppData = Join-Path $fakeHome "AppData\Local"
+[void][IO.Directory]::CreateDirectory($fakeHome)
+[void][IO.Directory]::CreateDirectory($fakeLocalAppData)
+$env:USERPROFILE = $fakeHome
+$env:HOME = $fakeHome
+$env:LOCALAPPDATA = $fakeLocalAppData
+$env:XDG_CONFIG_HOME = (Join-Path $fakeHome ".config")
+$env:GIT_CONFIG_GLOBAL = (Join-Path $fakeHome ".gitconfig")
 
 function Assert-LauncherSidecar([string]$Directory) {
     $launcher = Join-Path $Directory "gitsetu.exe"
@@ -176,7 +191,7 @@ public static class HostilePowerShell {
     if ($LASTEXITCODE -ne 0) { throw "PowerShell uninstaller failed" }
     if (Test-Path -LiteralPath $installRoot) { throw "Uninstaller left installation residue" }
 
-    $gitConfig = Join-Path $HOME ".gitconfig"
+    $gitConfig = Join-Path $fakeHome ".gitconfig"
     if (Test-Path -LiteralPath $gitConfig) {
         $content = [IO.File]::ReadAllText($gitConfig)
         if ($content -match 'gitsetu:managed') { throw "Uninstaller left managed blocks in .gitconfig" }
@@ -188,5 +203,10 @@ public static class HostilePowerShell {
     if ($null -eq $oldInstallDir) { Remove-Item Env:GITSETU_INSTALL_DIR -ErrorAction SilentlyContinue } else { $env:GITSETU_INSTALL_DIR = $oldInstallDir }
     if ($null -eq $oldPath) { Remove-Item Env:Path -ErrorAction SilentlyContinue } else { $env:Path = $oldPath }
     if ($null -eq $oldHostileMarker) { Remove-Item Env:GITSETU_HOSTILE_MARKER -ErrorAction SilentlyContinue } else { $env:GITSETU_HOSTILE_MARKER = $oldHostileMarker }
+    if ($null -eq $oldUserProfile) { Remove-Item Env:USERPROFILE -ErrorAction SilentlyContinue } else { $env:USERPROFILE = $oldUserProfile }
+    if ($null -eq $oldHome) { Remove-Item Env:HOME -ErrorAction SilentlyContinue } else { $env:HOME = $oldHome }
+    if ($null -eq $oldXdgConfig) { Remove-Item Env:XDG_CONFIG_HOME -ErrorAction SilentlyContinue } else { $env:XDG_CONFIG_HOME = $oldXdgConfig }
+    if ($null -eq $oldGitConfigGlobal) { Remove-Item Env:GIT_CONFIG_GLOBAL -ErrorAction SilentlyContinue } else { $env:GIT_CONFIG_GLOBAL = $oldGitConfigGlobal }
+    if ($null -eq $oldLocalAppData) { Remove-Item Env:LOCALAPPDATA -ErrorAction SilentlyContinue } else { $env:LOCALAPPDATA = $oldLocalAppData }
     if (Test-Path -LiteralPath $testRoot) { Remove-Item -LiteralPath $testRoot -Recurse -Force }
 }

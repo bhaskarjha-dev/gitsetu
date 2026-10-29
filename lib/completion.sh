@@ -75,7 +75,7 @@ _gitsetu_completion_labels() {
         fi
         [[ "$label" =~ ^[a-z][a-z0-9-]{0,19}$ && "$label" != *- ]] || return 1
         [[ "$provider" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ && "$provider" == *.* && "$provider" != *..* ]] || return 1
-        [[ "$sign" == "0" || "$sign" == "1" ]] || return 1
+        [[ "$sign" == "0" || "$sign" == "1" || "$sign" == "inherit" ]] || return 1
         [[ -n "$key_path" && ( "$key_path" == /* || "$key_path" =~ ^[A-Za-z]:/ ) ]] || return 1
         case "$key_path" in *\\*|*//*|*/../*|*/./*) return 1 ;; esac
         if [[ -n "$provider_user" ]]; then

@@ -31,6 +31,21 @@ $two = Join-Path $temp "two"
 $oldTestMode = $env:GITSETU_TEST_MODE
 $oldBash = $env:GITSETU_BASH
 $oldInstallDir = $env:GITSETU_INSTALL_DIR
+$oldUserProfile = $env:USERPROFILE
+$oldHome = $env:HOME
+$oldXdgConfig = $env:XDG_CONFIG_HOME
+$oldGitConfigGlobal = $env:GIT_CONFIG_GLOBAL
+$oldLocalAppData = $env:LOCALAPPDATA
+
+$fakeHome = Join-Path $temp "fake-home"
+$fakeLocalAppData = Join-Path $fakeHome "AppData\Local"
+[void][IO.Directory]::CreateDirectory($fakeHome)
+[void][IO.Directory]::CreateDirectory($fakeLocalAppData)
+$env:USERPROFILE = $fakeHome
+$env:HOME = $fakeHome
+$env:LOCALAPPDATA = $fakeLocalAppData
+$env:XDG_CONFIG_HOME = (Join-Path $fakeHome ".config")
+$env:GIT_CONFIG_GLOBAL = (Join-Path $fakeHome ".gitconfig")
 
 try {
     [void][IO.Directory]::CreateDirectory($one)
@@ -167,5 +182,10 @@ try {
     if ($null -eq $oldTestMode) { Remove-Item Env:GITSETU_TEST_MODE -ErrorAction SilentlyContinue } else { $env:GITSETU_TEST_MODE = $oldTestMode }
     if ($null -eq $oldBash) { Remove-Item Env:GITSETU_BASH -ErrorAction SilentlyContinue } else { $env:GITSETU_BASH = $oldBash }
     if ($null -eq $oldInstallDir) { Remove-Item Env:GITSETU_INSTALL_DIR -ErrorAction SilentlyContinue } else { $env:GITSETU_INSTALL_DIR = $oldInstallDir }
+    if ($null -eq $oldUserProfile) { Remove-Item Env:USERPROFILE -ErrorAction SilentlyContinue } else { $env:USERPROFILE = $oldUserProfile }
+    if ($null -eq $oldHome) { Remove-Item Env:HOME -ErrorAction SilentlyContinue } else { $env:HOME = $oldHome }
+    if ($null -eq $oldXdgConfig) { Remove-Item Env:XDG_CONFIG_HOME -ErrorAction SilentlyContinue } else { $env:XDG_CONFIG_HOME = $oldXdgConfig }
+    if ($null -eq $oldGitConfigGlobal) { Remove-Item Env:GIT_CONFIG_GLOBAL -ErrorAction SilentlyContinue } else { $env:GIT_CONFIG_GLOBAL = $oldGitConfigGlobal }
+    if ($null -eq $oldLocalAppData) { Remove-Item Env:LOCALAPPDATA -ErrorAction SilentlyContinue } else { $env:LOCALAPPDATA = $oldLocalAppData }
     if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force }
 }

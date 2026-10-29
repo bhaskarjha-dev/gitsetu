@@ -100,7 +100,11 @@ _gitconfig_build_ssh_command() {
 
 _gitconfig_valid_provider() {
     local provider="$1"
-    [[ "$provider" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]+)?$ ]]
+    if declare -f validate_provider >/dev/null 2>&1; then
+        validate_provider "$provider"
+    else
+        [[ "$provider" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]+)?$ ]]
+    fi
 }
 
 _gitconfig_resolve_symlink_target() {
@@ -743,7 +747,7 @@ EOF
 [tag]
     gpgsign = true
 EOF
-    else
+    elif [[ "$sign_commits" == "0" ]]; then
         cat <<EOF
 
 [commit]

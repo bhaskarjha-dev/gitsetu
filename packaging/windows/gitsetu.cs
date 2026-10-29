@@ -255,7 +255,14 @@ namespace GitSetuLauncher {
         }
 
         private static bool IsTrustedSid(SecurityIdentifier sid) {
-            return sid.Equals(SystemSid) || sid.Equals(AdministratorsSid) || sid.Equals(TrustedInstallerSid);
+            if (sid.Equals(SystemSid) || sid.Equals(AdministratorsSid) || sid.Equals(TrustedInstallerSid)) {
+                return true;
+            }
+            string val = sid.Value;
+            if (val.StartsWith("S-1-5-21-") && (val.EndsWith("-512") || val.EndsWith("-519"))) {
+                return true;
+            }
+            return false;
         }
 
         // Quotes one argument using the inverse of the CommandLineToArgvW/MSVC

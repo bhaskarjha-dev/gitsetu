@@ -101,6 +101,20 @@ _guard_managed_profile_for_path() {
         return 1
     fi
 
+    if [[ -n "${GITSETU_RUN_PROFILE:-}" ]]; then
+        local run_p="${GITSETU_RUN_PROFILE}"
+        for (( i=0; i<PROFILE_COUNT; i++ )); do
+            if [[ "${PROFILE_LABELS[$i]:-}" == "$run_p" ]]; then
+                GUARD_PROFILE_LABEL="$run_p"
+                GUARD_PROFILE_DIR="${PROFILE_DIRS[$i]:-}"
+                GUARD_MATCH_LENGTH=0
+                GUARD_PROFILE_CONFIG="${GITSETU_PROFILES_DIR:-${GITSETU_CONFIG_DIR:-${HOME}/.config/gitsetu}/profiles}/${run_p}.gitconfig"
+                return 0
+            fi
+        done
+        return 2
+    fi
+
     for (( i=0; i<PROFILE_COUNT; i++ )); do
         if [[ ! ${PROFILE_DIRS[$i]+x} || ! ${PROFILE_LABELS[$i]+x} ]]; then
             return 2
@@ -248,11 +262,13 @@ _guard_validate_effective_identity() {
 
     # These commands include system/global/worktree/local values under Git's
     # normal precedence; they are not registry or global-only lookups.
-    configured_name=$(git config --get user.name 2>/dev/null) || configured_name=""
-    configured_email=$(git config --get user.email 2>/dev/null) || configured_email=""
-    if [[ "$configured_name" != "$expected_name" || "$configured_email" != "$expected_email" ]]; then
-        _guard_record_mismatch "effective Git identity" "$expected_name" "$expected_email" "$configured_name" "$configured_email"
-        return 1
+    if [[ -z "${GITSETU_RUN_PROFILE:-}" ]]; then
+        configured_name=$(git config --get user.name 2>/dev/null) || configured_name=""
+        configured_email=$(git config --get user.email 2>/dev/null) || configured_email=""
+        if [[ "$configured_name" != "$expected_name" || "$configured_email" != "$expected_email" ]]; then
+            _guard_record_mismatch "effective Git identity" "$expected_name" "$expected_email" "$configured_name" "$configured_email"
+            return 1
+        fi
     fi
 
     # git var observes GIT_AUTHOR_* / GIT_COMMITTER_* and Git's --author option

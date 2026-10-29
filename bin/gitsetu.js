@@ -240,8 +240,13 @@ while ($null -ne $current) {
 $acl = Get-Acl -LiteralPath $full
 $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $trustedSids = @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+function Test-TrustedSid($sid) {
+  if ($sid -in $trustedSids -or $sid -eq $currentSid) { return $true }
+  if ($sid.StartsWith('S-1-5-21-') -and ($sid.EndsWith('-512') -or $sid.EndsWith('-519'))) { return $true }
+  return $false
+}
 $ownerSid = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
-if (($ownerSid -notin $trustedSids) -and ($ownerSid -ne $currentSid)) { throw 'candidate owner is untrusted' }
+if (-not (Test-TrustedSid $ownerSid)) { throw 'candidate owner is untrusted' }
 $danger = [Security.AccessControl.FileSystemRights]::WriteData -bor
   [Security.AccessControl.FileSystemRights]::AppendData -bor
   [Security.AccessControl.FileSystemRights]::WriteAttributes -bor
@@ -253,8 +258,7 @@ foreach ($rule in $acl.Access) {
   if (($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) -or
       (($rule.FileSystemRights -band $danger) -eq 0)) { continue }
   $ruleSid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
-  if (($ruleSid -notin $trustedSids) -and
-      ($ruleSid -ne $currentSid)) {
+  if (-not (Test-TrustedSid $ruleSid)) {
     throw 'candidate has an untrusted write ACL'
   }
 }

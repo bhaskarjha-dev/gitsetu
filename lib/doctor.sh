@@ -55,13 +55,20 @@ _doctor_ssh_include_present() {
 # configuration merely because it contains the managed Include line.
 _doctor_ssh_config_valid() {
     local ssh_config="$HOME/.ssh/config"
-    local mode
+    local mode target="$ssh_config"
+    if [[ -L "$ssh_config" ]]; then
+        if declare -f _gitconfig_resolve_symlink_target >/dev/null 2>&1; then
+            target=$(_gitconfig_resolve_symlink_target "$ssh_config" 2>/dev/null) || return 1
+        else
+            return 1
+        fi
+    fi
     [[ -d "$HOME/.ssh" && ! -L "$HOME/.ssh" && -O "$HOME/.ssh" ]] || return 1
-    [[ -f "$ssh_config" && ! -L "$ssh_config" && -O "$ssh_config" ]] || return 1
+    [[ -f "$target" && -O "$target" ]] || return 1
     if declare -f _ssh_assert_private_directory >/dev/null 2>&1; then
         _ssh_assert_private_directory "$HOME/.ssh" || return 1
     fi
-    mode=$(stat -c '%a' "$ssh_config" 2>/dev/null || stat -f '%Lp' "$ssh_config" 2>/dev/null || true)
+    mode=$(stat -c '%a' "$target" 2>/dev/null || stat -f '%Lp' "$target" 2>/dev/null || true)
     [[ "$mode" == "600" ]] || {
         case "${GITSETU_OS:-}:${OSTYPE:-}" in
             gitbash:*|cygwin:*|msys:*|mingw:*) [[ "$mode" == "644" ]] || return 1 ;;
@@ -339,15 +346,24 @@ run_doctor() {
             printf >&2 "    Registry: OK (%s profile(s))\n" "$PROFILE_COUNT"
         fi
 
-        if [[ -L "$HOME/.gitconfig" || ! -f "$HOME/.gitconfig" ]]; then
+        local gitconfig_target="$HOME/.gitconfig"
+        if [[ -L "$gitconfig_target" ]]; then
+            if declare -f _gitconfig_resolve_symlink_target >/dev/null 2>&1; then
+                gitconfig_target=$(_gitconfig_resolve_symlink_target "$gitconfig_target" 2>/dev/null) || gitconfig_target=""
+            else
+                gitconfig_target=""
+            fi
+        fi
+
+        if [[ -z "$gitconfig_target" || ! -f "$gitconfig_target" ]]; then
             printf >&2 "    ~/.gitconfig: %bERROR (missing or unsafe)%b\n" "$RED" "$RESET"
             issues_found=1
         else
             local head_start head_end tail_start tail_end
-            head_start=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_HEAD_START:-# [gitsetu:managed:head:start]}")
-            head_end=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_HEAD_END:-# [gitsetu:managed:head:end]}")
-            tail_start=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_START:-# [gitsetu:managed:start]}")
-            tail_end=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_END:-# [gitsetu:managed:end]}")
+            head_start=$(_doctor_count_marker "$gitconfig_target" "${GITSETU_MANAGED_HEAD_START:-# [gitsetu:managed:head:start]}")
+            head_end=$(_doctor_count_marker "$gitconfig_target" "${GITSETU_MANAGED_HEAD_END:-# [gitsetu:managed:head:end]}")
+            tail_start=$(_doctor_count_marker "$gitconfig_target" "${GITSETU_MANAGED_START:-# [gitsetu:managed:start]}")
+            tail_end=$(_doctor_count_marker "$gitconfig_target" "${GITSETU_MANAGED_END:-# [gitsetu:managed:end]}")
             if [[ "$tail_start" == "1" && "$tail_end" == "1" && ( ( "$head_start" == "1" && "$head_end" == "1" ) || ( "$head_start" == "0" && "$head_end" == "0" ) ) ]]; then
                 printf >&2 "    ~/.gitconfig: OK (managed blocks valid)\n"
             else
@@ -361,7 +377,16 @@ run_doctor() {
             fi
         fi
 
-        if [[ -L "$HOME/.ssh" || -L "$HOME/.ssh/config" || ! -f "$HOME/.ssh/config" ]] || \
+        local sshconfig_target="$HOME/.ssh/config"
+        if [[ -L "$sshconfig_target" ]]; then
+            if declare -f _gitconfig_resolve_symlink_target >/dev/null 2>&1; then
+                sshconfig_target=$(_gitconfig_resolve_symlink_target "$sshconfig_target" 2>/dev/null) || sshconfig_target=""
+            else
+                sshconfig_target=""
+            fi
+        fi
+
+        if [[ -L "$HOME/.ssh" || -z "$sshconfig_target" || ! -f "$sshconfig_target" ]] || \
            ! _doctor_ssh_include_present || ! _doctor_ssh_config_valid; then
             printf >&2 "    ~/.ssh/config: %bERROR (GitSetu include missing or unsafe)%b\n" "$RED" "$RESET"
             issues_found=1
@@ -533,16 +558,24 @@ run_doctor_json() {
 
     # 6. gitconfig
     local gc_status="pass" gc_details="managed blocks valid"
-    if [[ ! -f "$HOME/.gitconfig" || -L "$HOME/.gitconfig" ]]; then
+    local gc_target="$HOME/.gitconfig"
+    if [[ -L "$gc_target" ]]; then
+        if declare -f _gitconfig_resolve_symlink_target >/dev/null 2>&1; then
+            gc_target=$(_gitconfig_resolve_symlink_target "$gc_target" 2>/dev/null) || gc_target=""
+        else
+            gc_target=""
+        fi
+    fi
+    if [[ -z "$gc_target" || ! -f "$gc_target" ]]; then
         gc_status="fail"
         gc_details="gitconfig missing or unsafe"
         issues=$((issues + 1))
     else
         local head_start head_end tail_start tail_end
-        head_start=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_HEAD_START:-# [gitsetu:managed:head:start]}")
-        head_end=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_HEAD_END:-# [gitsetu:managed:head:end]}")
-        tail_start=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_START:-# [gitsetu:managed:start]}")
-        tail_end=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_END:-# [gitsetu:managed:end]}")
+        head_start=$(_doctor_count_marker "$gc_target" "${GITSETU_MANAGED_HEAD_START:-# [gitsetu:managed:head:start]}")
+        head_end=$(_doctor_count_marker "$gc_target" "${GITSETU_MANAGED_HEAD_END:-# [gitsetu:managed:head:end]}")
+        tail_start=$(_doctor_count_marker "$gc_target" "${GITSETU_MANAGED_START:-# [gitsetu:managed:start]}")
+        tail_end=$(_doctor_count_marker "$gc_target" "${GITSETU_MANAGED_END:-# [gitsetu:managed:end]}")
         if ! [[ "$tail_start" == "1" && "$tail_end" == "1" && ( ( "$head_start" == "1" && "$head_end" == "1" ) || ( "$head_start" == "0" && "$head_end" == "0" ) ) ]]; then
             gc_status="fail"
             gc_details="managed markers missing or duplicated"
@@ -553,7 +586,15 @@ run_doctor_json() {
 
     # 7. ssh_config
     local sc_status="pass" sc_details="gitsetu include present"
-    if [[ ! -f "$HOME/.ssh/config" || -L "$HOME/.ssh/config" ]] || ! _doctor_ssh_include_present || ! _doctor_ssh_config_valid; then
+    local sc_target="$HOME/.ssh/config"
+    if [[ -L "$sc_target" ]]; then
+        if declare -f _gitconfig_resolve_symlink_target >/dev/null 2>&1; then
+            sc_target=$(_gitconfig_resolve_symlink_target "$sc_target" 2>/dev/null) || sc_target=""
+        else
+            sc_target=""
+        fi
+    fi
+    if [[ -L "$HOME/.ssh" || -z "$sc_target" || ! -f "$sc_target" ]] || ! _doctor_ssh_include_present || ! _doctor_ssh_config_valid; then
         sc_status="fail"
         sc_details="gitsetu include missing or invalid"
         issues=$((issues + 1))
@@ -665,17 +706,19 @@ run_doctor_repair() {
         print_error "GitSetu has not been configured yet (profiles.conf not found at $GITSETU_PROFILES_CONF). Run 'gitsetu setup' first."
         return 1
     fi
-    if [[ "$(head -n 1 "$GITSETU_PROFILES_CONF" 2>/dev/null || true)" != "# gitsetu-registry-v2" ]]; then
-        print_error "The profile registry header is missing or unsupported; refusing repair."
-        return 1
-    fi
-
     if declare -f load_profiles >/dev/null 2>&1; then
         local registry_status=0
         load_profiles || registry_status=$?
         if [[ "$registry_status" -ne 0 ]]; then
             return "$registry_status"
         fi
+    fi
+
+    local header
+    header=$(head -n 1 "$GITSETU_PROFILES_CONF" 2>/dev/null || true)
+    if [[ "$header" != "# gitsetu-registry-v2" && "${GITSETU_REGISTRY_WAS_V1:-0}" -ne 1 ]]; then
+        print_error "The profile registry header is missing or unsupported; refusing repair."
+        return 1
     fi
     if [[ "${PROFILE_COUNT:-0}" -eq 0 ]]; then
         print_error "The registry contains no complete profiles; repair cannot infer an identity."
@@ -706,18 +749,36 @@ run_doctor_repair() {
     local planned=0 failed=0
     local start_count end_count
 
-    if [[ -L "$HOME/.gitconfig" || ! -f "$HOME/.gitconfig" ]]; then
+    local repair_gc_target="$HOME/.gitconfig"
+    if [[ -L "$repair_gc_target" ]]; then
+        if declare -f _gitconfig_resolve_symlink_target >/dev/null 2>&1; then
+            repair_gc_target=$(_gitconfig_resolve_symlink_target "$repair_gc_target" 2>/dev/null) || repair_gc_target=""
+        else
+            repair_gc_target=""
+        fi
+    fi
+
+    if [[ -z "$repair_gc_target" || ! -f "$repair_gc_target" ]]; then
         gitconfig_needs_repair=1
     else
         local head_start head_end tail_start tail_end
-        head_start=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_HEAD_START:-# [gitsetu:managed:head:start]}")
-        head_end=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_HEAD_END:-# [gitsetu:managed:head:end]}")
-        tail_start=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_START:-# [gitsetu:managed:start]}")
-        tail_end=$(_doctor_count_marker "$HOME/.gitconfig" "${GITSETU_MANAGED_END:-# [gitsetu:managed:end]}")
+        head_start=$(_doctor_count_marker "$repair_gc_target" "${GITSETU_MANAGED_HEAD_START:-# [gitsetu:managed:head:start]}")
+        head_end=$(_doctor_count_marker "$repair_gc_target" "${GITSETU_MANAGED_HEAD_END:-# [gitsetu:managed:head:end]}")
+        tail_start=$(_doctor_count_marker "$repair_gc_target" "${GITSETU_MANAGED_START:-# [gitsetu:managed:start]}")
+        tail_end=$(_doctor_count_marker "$repair_gc_target" "${GITSETU_MANAGED_END:-# [gitsetu:managed:end]}")
         [[ "$tail_start" == "1" && "$tail_end" == "1" && ( ( "$head_start" == "1" && "$head_end" == "1" ) || ( "$head_start" == "0" && "$head_end" == "0" ) ) ]] || gitconfig_needs_repair=1
     fi
 
-    if [[ -L "$HOME/.ssh" || -L "$HOME/.ssh/config" || ! -f "$HOME/.ssh/config" ]] || \
+    local repair_sc_target="$HOME/.ssh/config"
+    if [[ -L "$repair_sc_target" ]]; then
+        if declare -f _gitconfig_resolve_symlink_target >/dev/null 2>&1; then
+            repair_sc_target=$(_gitconfig_resolve_symlink_target "$repair_sc_target" 2>/dev/null) || repair_sc_target=""
+        else
+            repair_sc_target=""
+        fi
+    fi
+
+    if [[ -L "$HOME/.ssh" || -z "$repair_sc_target" || ! -f "$repair_sc_target" ]] || \
        ! _doctor_ssh_include_present || ! _doctor_ssh_config_valid || \
        [[ -L "$GITSETU_PROFILES_DIR" || -L "$GITSETU_PROFILES_DIR/ssh_config" || ! -f "$GITSETU_PROFILES_DIR/ssh_config" ]]; then
         ssh_needs_repair=1

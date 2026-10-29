@@ -55,6 +55,49 @@ _teardown_replace_file() {
 }
 
 # ------------------------------------------------------------------------------
+# _teardown_backup_file — Save pre-teardown backup outside GITSETU_CONFIG_DIR
+# ------------------------------------------------------------------------------
+_teardown_backup_file() {
+    local source_path="${1:-}"
+    if [[ $# -ne 1 || -z "$source_path" ]]; then
+        return 1
+    fi
+    if [[ ! -f "$source_path" || -L "$source_path" ]]; then
+        return 1
+    fi
+
+    local source_base timestamp backup_path tmp_path counter=1
+    source_base=$(basename "$source_path") || return 1
+    timestamp=$(date +%Y%m%dT%H%M%S) || return 1
+
+    # Pre-teardown backups must live outside GITSETU_CONFIG_DIR so that
+    # teardown_config_dir does not wipe them out when state is removed.
+    local backup_dir="${HOME:-}"
+    if [[ -z "$backup_dir" || ! -d "$backup_dir" || ! -w "$backup_dir" ]]; then
+        backup_dir=$(dirname "$source_path")
+    fi
+    backup_path="$backup_dir/${source_base}.pre-gitsetu-teardown.${timestamp}.bak"
+
+    while [[ -e "$backup_path" || -L "$backup_path" ]]; do
+        backup_path="$backup_dir/${source_base}.pre-gitsetu-teardown.${timestamp}.${counter}.bak"
+        counter=$((counter + 1))
+        [[ "$counter" -le 10000 ]] || return 1
+    done
+
+    tmp_path=$(umask 077 && mktemp "$backup_dir/.${source_base}.tmp.XXXXXX" 2>/dev/null) || return 1
+    if ! cp -p "$source_path" "$tmp_path" 2>/dev/null ||
+       ! chmod 600 "$tmp_path" 2>/dev/null ||
+       ! mv "$tmp_path" "$backup_path" 2>/dev/null; then
+        rm -f "$tmp_path" 2>/dev/null || true
+        print_error "Failed to create pre-teardown backup: $source_path"
+        return 1
+    fi
+
+    print_info "Pre-teardown safety backup saved: $source_path → $backup_path"
+    return 0
+}
+
+# ------------------------------------------------------------------------------
 # teardown_gitconfig — Remove the managed blocks from ~/.gitconfig
 # ------------------------------------------------------------------------------
 teardown_gitconfig() {
@@ -87,8 +130,7 @@ teardown_gitconfig() {
         return 0
     fi
 
-    ensure_dirs || return 1
-    backup_file "$target" || {
+    _teardown_backup_file "$target" || {
         print_error "Could not back up ~/.gitconfig; teardown stopped."
         return 1
     }
@@ -182,8 +224,7 @@ teardown_sshconfig() {
         if [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
             print_info "[DRY RUN] Would remove Include directive from: $ssh_config"
         else
-            ensure_dirs || return 1
-            backup_file "$target_ssh" || {
+            _teardown_backup_file "$target_ssh" || {
                 print_error "Could not back up ~/.ssh/config; teardown stopped."
                 return 1
             }
@@ -449,7 +490,13 @@ _teardown_scan_directory() {
         fi
 
         if [[ -d "$child" ]]; then
-            if [[ "${child##*/}" == ".git" ]]; then
+            local base="${child##*/}"
+            case "$base" in
+                node_modules|.venv|venv|.cargo|vendor|.terraform|target|.cache)
+                    continue
+                    ;;
+            esac
+            if [[ "$base" == ".git" ]]; then
                 if [[ -f "$child/config" && ! -L "$child/config" ]]; then
                     if ! _teardown_process_repo_config "$child/config"; then
                         return 3

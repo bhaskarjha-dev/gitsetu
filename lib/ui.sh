@@ -391,36 +391,7 @@ confirm() {
         [[ -z "$REPLY" ]] && REPLY="$default"
     fi
 
-    normalized="$REPLY"
-    case "$normalized" in
-        A|a) normalized="a" ;;
-        B|b) normalized="b" ;;
-        C|c) normalized="c" ;;
-        D|d) normalized="d" ;;
-        E|e) normalized="e" ;;
-        F|f) normalized="f" ;;
-        G|g) normalized="g" ;;
-        H|h) normalized="h" ;;
-        I|i) normalized="i" ;;
-        J|j) normalized="j" ;;
-        K|k) normalized="k" ;;
-        L|l) normalized="l" ;;
-        M|m) normalized="m" ;;
-        N|n) normalized="n" ;;
-        O|o) normalized="o" ;;
-        P|p) normalized="p" ;;
-        Q|q) normalized="q" ;;
-        R|r) normalized="r" ;;
-        S|s) normalized="s" ;;
-        T|t) normalized="t" ;;
-        U|u) normalized="u" ;;
-        V|v) normalized="v" ;;
-        W|w) normalized="w" ;;
-        X|x) normalized="x" ;;
-        Y|y) normalized="y" ;;
-        Z|z) normalized="z" ;;
-    esac
-
+    normalized=$(printf '%s' "$REPLY" | tr '[:upper:]' '[:lower:]')
     case "$normalized" in
         y|yes) REPLY="yes"; return 0 ;;
         *) REPLY="no"; return 1 ;;

@@ -287,8 +287,7 @@ function Expand-VerifiedZip([string]$Archive, [string]$Destination) {
     if ($count -lt 3) { Stop-Install "Release ZIP does not contain the required GitSetu runtime" }
 }
 
-$scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
-if (-not $scriptDirectory) { $scriptDirectory = $PSScriptRoot }
+$scriptDirectory = if ($PSScriptRoot) { $PSScriptRoot } elseif ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path } else { (Get-Location).Path }
 $config = Read-ReleaseConfig $scriptDirectory
 $usingTestMode = $TestMode.IsPresent -or $env:GITSETU_TEST_MODE -eq "1"
 $hasDevelopmentCheckout = (Test-Path -LiteralPath (Join-Path $scriptDirectory ".git")) -and
@@ -298,6 +297,7 @@ $usingLocalDevelopment = $LocalDevelopment.IsPresent -or
     (-not $usingTestMode -and $config["GITSETU_RELEASE_STATE"] -eq "development" -and $hasDevelopmentCheckout)
 if ($usingTestMode -and $LocalDevelopment.IsPresent) { Stop-Install "Choose either test mode or local-development mode, not both" }
 $localAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+if ([string]::IsNullOrWhiteSpace($localAppData)) { $localAppData = $env:LOCALAPPDATA }
 if ([string]::IsNullOrWhiteSpace($localAppData)) { Stop-Install "LOCALAPPDATA is unavailable" }
 
 if ($usingTestMode) {

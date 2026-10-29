@@ -386,6 +386,12 @@ prompt_edit_profile() {
     if [[ -n "$REPLY" ]]; then 
         PROFILE_USERS[i]="$REPLY"
     fi
+
+    # Git Provider Host
+    ask "Git Provider Host (e.g. github.com, gitlab.com, git.corp.internal)" "${PROFILE_PROVIDERS[i]:-github.com}"
+    if [[ -n "$REPLY" ]]; then
+        PROFILE_PROVIDERS[i]="$REPLY"
+    fi
 }
 
 # ------------------------------------------------------------------------------
@@ -425,7 +431,8 @@ prompt_add_profile() {
     ask "SSH Key Path" "$def_key"
     PROFILE_KEYS[PROFILE_COUNT]=$(normalize_path "$REPLY")
     
-    PROFILE_PROVIDERS[PROFILE_COUNT]="github.com"
+    ask "Git Provider Host (e.g. github.com, gitlab.com, git.corp.internal)" "github.com"
+    PROFILE_PROVIDERS[PROFILE_COUNT]="$REPLY"
     PROFILE_SIGNS[PROFILE_COUNT]="${GITSETU_DEFAULT_SIGN:-0}"
 
     ask "Provider Username (e.g. GitHub handle, for HTTPS cloning)" ""
@@ -1770,9 +1777,7 @@ cmd_profile() {
                 local git_ver
                 git_ver=$(git --version 2>/dev/null | awk '{print $3}' || true)
                 if [[ -n "$git_ver" ]]; then
-                    local older
-                    older=$(printf '%s\n2.36.0\n' "$git_ver" | sort -V | head -n1)
-                    if [[ "$older" == "$git_ver" && "$git_ver" != "2.36.0" && "$git_ver" != "2.36"* ]]; then
+                    if ! _gitsetu_version_ge "$git_ver" "2.36.0"; then
                         print_warning "hasconfig:remote.*.url requires Git 2.36+ (installed: $git_ver)."
                     fi
                 fi

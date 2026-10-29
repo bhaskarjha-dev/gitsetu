@@ -282,7 +282,7 @@ validate_provider_host() {
 
 validate_sign_flag() {
     [[ $# -eq 1 ]] || return 1
-    [[ "$1" == "0" || "$1" == "1" ]]
+    [[ "$1" == "0" || "$1" == "1" || "$1" == "inherit" ]]
 }
 
 validate_sign_commits() {
