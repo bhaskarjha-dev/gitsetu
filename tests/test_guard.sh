@@ -292,6 +292,7 @@ test_guard_blocks_mismatch_pre_merge_commit() {
 
     local stub_content
     stub_content=$(_guard_generate_stub_content "gitsetu" "pre-merge-commit")
+    # shellcheck disable=SC2016
     assert_contains "$stub_content" 'if [[ "$HOOK_NAME" == "pre-commit" || "$HOOK_NAME" == "pre-merge-commit" ]]; then' "stub checks pre-merge-commit" || return 1
 }
 

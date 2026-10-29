@@ -2064,6 +2064,7 @@ _gitsetu_version_ge() {
     local v1="${1#v}" v2="${2#v}"
     [[ "$v1" == "$v2" ]] && return 0
     local IFS=.
+    # shellcheck disable=SC2206
     local -a a1=($v1) a2=($v2)
     local i n1 n2 len
     len=${#a1[@]}
