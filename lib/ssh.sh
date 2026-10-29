@@ -514,14 +514,7 @@ build_ssh_host_block() {
     local quoted_key
     quoted_key=$(_ssh_quote_token "$portable_key")
 
-    # Extract the main part of the domain (e.g., gitlab.com -> gitlab) for the alias prefix
-    local prefix
-    prefix=${hostname%%.*}
-
     local host_aliases="gitsetu-${label}"
-    if [[ -n "$prefix" && "$prefix" != "gitsetu" ]]; then
-        host_aliases="gitsetu-${label} ${prefix}-${label}"
-    fi
 
     # Port 443 routing is an explicit GitHub.com endpoint policy, not a
     # substring match. Deceptive hosts such as github.com.evil must retain
@@ -534,7 +527,6 @@ Host ${host_aliases}
     User git
     IdentityFile ${quoted_key}
     IdentitiesOnly yes
-    AddKeysToAgent yes
 EOF
     else
         cat <<EOF
@@ -543,7 +535,6 @@ Host ${host_aliases}
     User git
     IdentityFile ${quoted_key}
     IdentitiesOnly yes
-    AddKeysToAgent yes
 EOF
     fi
 }
@@ -600,9 +591,7 @@ write_ssh_config() {
                     local j
                     for (( j=0; j<${PROFILE_COUNT:-0}; j++ )); do
                         local expected_alias="gitsetu-${PROFILE_LABELS[j]}"
-                        local p_host="${PROFILE_PROVIDERS[j]:-}"
-                        local p_prefix="${p_host%%.*}"
-                        if [[ "$host_entry" == "$expected_alias" || ( -n "$p_prefix" && "$p_prefix" != "gitsetu" && "$host_entry" == "${p_prefix}-${PROFILE_LABELS[j]}" ) ]]; then
+                        if [[ "$host_entry" == "$expected_alias" ]]; then
                             print_error "SSH alias collision: Host '$host_entry' already exists in $ssh_config at line $check_line; refusing to overwrite."
                             return 1
                         fi
