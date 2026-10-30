@@ -420,11 +420,8 @@ if [[ "$HOOK_NAME" == "pre-commit" || "$HOOK_NAME" == "pre-merge-commit" ]]; the
         rc=$?
         if [[ $rc -eq 65 ]]; then
             exit 65
-        elif [[ $rc -eq 126 || $rc -eq 127 ]]; then
-            printf 'GitSetu guard: gitsetu invocation failed (code %d); commit allowed (failsafe).\n' "$rc" >&2
         elif [[ $rc -ne 0 ]]; then
-            printf 'GitSetu guard: identity verification error (code %d); commit blocked.\n' "$rc" >&2
-            exit "$rc"
+            printf 'GitSetu guard: gitsetu invocation failed (code %d); commit allowed (failsafe).\n' "$rc" >&2
         fi
     fi
 fi

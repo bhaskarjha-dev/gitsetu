@@ -520,7 +520,6 @@ try {
     # Invoke the verified native launcher by an installation-root-relative path.
     # A bare command would be resolved from the caller's current directory or PATH.
     $cmdShim = "@echo off`r`nREM gitsetu-managed-installation v1`r`n`"%~dp0..\releases\$releaseId\gitsetu.exe`" %*`r`nexit /b %errorlevel%`r`n"
-    $psShim = "# gitsetu-managed-installation v1`r`n`$ErrorActionPreference = `"Stop`"`r`n`$exe = Join-Path `$PSScriptRoot `"`..\releases\$releaseId\gitsetu.exe`"`r`nif (-not (Test-Path -LiteralPath `$exe -PathType Leaf)) { throw `"GitSetu release executable is missing: `$exe`" }`r`n& `$exe @args`r`nexit `$LASTEXITCODE`r`n"
     $utf8NoBom = New-Object Text.UTF8Encoding($false)
     foreach ($name in @("gitsetu", "git-setu")) {
         $target = Join-Path $binDir $name
@@ -528,7 +527,10 @@ try {
             $item = Get-Item -LiteralPath $target -Force
             if ($item.PSIsContainer -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { Stop-Install "Refusing unrelated executable: $target" }
         }
-        [IO.File]::WriteAllText((Join-Path $binDir "$name.ps1"), $psShim, $utf8NoBom)
+        $legacyPsShim = Join-Path $binDir "$name.ps1"
+        if (Test-Path -LiteralPath $legacyPsShim) {
+            try { Remove-Item -LiteralPath $legacyPsShim -Force -ErrorAction SilentlyContinue } catch { }
+        }
         [IO.File]::WriteAllText((Join-Path $binDir "$name.cmd"), $cmdShim, $utf8NoBom)
     }
 
@@ -557,6 +559,29 @@ try {
     if (-not $found -and -not $isolatedInvocation -and $userKey) {
         $newPath = if ([string]::IsNullOrWhiteSpace($userPathRaw)) { $normalizedBin } else { "$userPathRaw;$normalizedBin" }
         $userKey.SetValue("Path", $newPath, $pathKind)
+        try {
+            Add-Type -Namespace Win32 -Name NativeMethods -MemberDefinition @'
+[DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+public static extern IntPtr SendMessageTimeout(
+    IntPtr hWnd,
+    uint Msg,
+    UIntPtr wParam,
+    string lParam,
+    uint fuFlags,
+    uint uTimeout,
+    out UIntPtr lpdwResult);
+'@ -ErrorAction SilentlyContinue
+            $broadcastResult = [UIntPtr]::Zero
+            [Win32.NativeMethods]::SendMessageTimeout(
+                [IntPtr]0xffff,
+                0x001A,
+                [UIntPtr]::Zero,
+                "Environment",
+                2,
+                5000,
+                [ref]$broadcastResult
+            ) | Out-Null
+        } catch { }
     }
     if ($userKey) { $userKey.Close() }
     $processPathFound = $false
@@ -588,5 +613,9 @@ try {
     if ($tempRoot -and (Test-Path -LiteralPath $tempRoot)) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
     if (-not $rootPreexisted -and -not $installComplete -and (Test-Path -LiteralPath $rootDir)) {
         Remove-Item -LiteralPath $rootDir -Recurse -Force
+    }
+    if ($v1Adopted -and -not $installComplete -and (Test-Path -LiteralPath $v1Backup) -and -not (Test-Path -LiteralPath $rootDir)) {
+        Move-Item -LiteralPath $v1Backup -Destination $rootDir -Force
+        Write-Host "Install failed; your v1.0.0 installation was restored." -ForegroundColor Yellow
     }
 }

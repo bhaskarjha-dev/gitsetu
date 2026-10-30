@@ -172,8 +172,7 @@ _gitsetu() {
             COMPREPLY=( $(compgen -W "--repair --dry-run --json" -- "$cur") )
             ;;
         update)
-            # shellcheck disable=SC2207
-            COMPREPLY=( $(compgen -W "--development --dev" -- "$cur") )
+            COMPREPLY=()
             ;;
         credential)
             # shellcheck disable=SC2207

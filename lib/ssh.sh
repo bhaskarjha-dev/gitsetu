@@ -882,7 +882,6 @@ display_public_keys() {
 
         if [[ -f "$pubkey" ]]; then
             print_key_box "$label" "$email" "$pubkey" "$provider"
-            _ssh_preseed_known_hosts "$provider"
             if [[ "$provider" == *"github"* ]]; then
                 local puser="${PROFILE_USERS[$i]:-}"
                 if ! try_gh_key_upload "$label" "$pubkey" "$puser"; then
@@ -1089,43 +1088,6 @@ auto_register_ssh_keys() {
     fi
 
     return 0
-}
-
-# ------------------------------------------------------------------------------
-# _ssh_preseed_known_hosts — Pre-seed known_hosts for provider to prevent prompts
-# ------------------------------------------------------------------------------
-_ssh_preseed_known_hosts() {
-    # Skip in test environments unless explicitly forced, or in dry-run mode
-    if [[ -n "${GITSETU_TEST:-}" && -z "${GITSETU_TEST_SSH_PRESEED:-}" ]] || [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
-        return 0
-    fi
-    local host="${1:-}"
-    [[ -n "$host" ]] || return 0
-    # Strip any user@ or protocol prefix
-    host="${host#*@}"
-    host="${host%%:*}"
-    [[ "$host" =~ ^[a-zA-Z0-9.-]+$ ]] || return 0
-
-    local known_hosts="${HOME}/.ssh/known_hosts"
-    mkdir -p "${HOME}/.ssh" 2>/dev/null || true
-    chmod 700 "${HOME}/.ssh" 2>/dev/null || true
-    if command -v ssh-keyscan >/dev/null 2>&1; then
-        local host_present=0
-        if [[ -s "$known_hosts" ]]; then
-            if command -v ssh-keygen >/dev/null 2>&1; then
-                if ssh-keygen -F "$host" -f "$known_hosts" >/dev/null 2>&1; then
-                    host_present=1
-                fi
-            fi
-            if [[ "$host_present" -eq 0 ]] && grep -q "^$host " "$known_hosts" 2>/dev/null; then
-                host_present=1
-            fi
-        fi
-        if [[ "$host_present" -eq 0 ]]; then
-            ssh-keyscan -H "$host" 2>/dev/null >> "$known_hosts" || true
-            chmod 600 "$known_hosts" 2>/dev/null || true
-        fi
-    fi
 }
 
 # ------------------------------------------------------------------------------

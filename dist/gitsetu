@@ -449,7 +449,7 @@ cmd_prompt() {
         provider_user="$_GITSETU_DECODED_FIELD"
 
         [[ "$label" =~ ^[a-z][a-z0-9-]{0,19}$ && "$label" != *- ]] || return 0
-        [[ "$sign_commits" == "0" || "$sign_commits" == "1" ]] || return 0
+        [[ "$sign_commits" == "0" || "$sign_commits" == "1" || "$sign_commits" == "inherit" ]] || return 0
         _gitsetu_prompt_valid_provider "$provider" || return 0
         _gitsetu_prompt_valid_user "$provider_user" || return 0
         [[ -n "$key_path" ]] || return 0
@@ -1337,7 +1337,7 @@ PROFILE_COUNT=0
 # Runtime state
 # ------------------------------------------------------------------------------
 
-GITSETU_OS=""           # Set by detect_os(): linux, macos, wsl, gitbash, unknown
+GITSETU_OS="${GITSETU_OS:-}"           # Set by detect_os(): linux, macos, wsl, gitbash, unknown
 GITSETU_DRY_RUN=0      # Set to 1 by --dry-run flag
 GITSETU_USE_PASSPHRASE=0 # Set to 1 to prompt for SSH passphrases
 
@@ -1743,7 +1743,7 @@ _load_v1_profiles() {
         fi
 
         provider="${provider:-github.com}"
-        sign_commits="${sign_commits:-0}"
+        sign_commits="${sign_commits:-inherit}"
         if [[ -z "$key_path" ]]; then
             key_path="$HOME/.ssh/id_ed25519_${label}"
         fi
@@ -2181,19 +2181,12 @@ _gitsetu_bundle_module_2() {
 #   5. Fallback to uname -s
 # ------------------------------------------------------------------------------
 detect_os() {
-    # Allow tests/callers to override detection by pre-setting GITSETU_OS.
-    # This is critical for CI: macOS `security` commands hang in headless environments.
-    # Check env var first, then fall back to marker file (env vars don't propagate
-    # through pipelines in background subshells on macOS bash 3.2).
+    # Allow callers to override detection by pre-setting GITSETU_OS (validated against supported OS list).
     if [[ -n "${GITSETU_OS:-}" ]]; then
-        return 0
-    fi
-    local _os_file="${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu/.test_os"
-    if [[ -f "$_os_file" ]]; then
-        GITSETU_OS=$(cat "$_os_file" 2>/dev/null)
-        if [[ -n "$GITSETU_OS" ]]; then
-            return 0
-        fi
+        case "$GITSETU_OS" in
+            linux|macos|wsl|gitbash|unknown) return 0 ;;
+            *) GITSETU_OS="unknown"; return 0 ;;
+        esac
     fi
 
     # Check WSL first — it masquerades as Linux
@@ -2657,12 +2650,7 @@ get_ssh_agent_advice() {
     case "$GITSETU_OS" in
         macos)
             cat >&2 <<'EOF'
-  macOS: Add to ~/.ssh/config:
-    Host *
-        AddKeysToAgent yes
-        UseKeychain yes
-
-  Then run: ssh-add --apple-use-keychain ~/.ssh/id_ed25519_<label>
+  macOS: Run: ssh-add --apple-use-keychain ~/.ssh/id_ed25519_<label>
 EOF
             ;;
         linux)
@@ -4198,23 +4186,32 @@ _vault_hex_matches_file() {
     [[ "$actual_hex" == "$expected_hex" ]]
 }
 
+_vault_derive_cipher_key() {
+    local root_key="$1" enc_salt="$2" iters="$3"
+    local salt_suffix="${enc_salt:16}" out key
+    out=$(printf 'gitsetu-v2-encryption:%s:%s\n' "$root_key" "$salt_suffix" |
+        openssl enc -aes-256-ctr -P -salt -pbkdf2 -iter "$iters" -md sha256 \
+            -S "${enc_salt:0:16}" -pass stdin 2>/dev/null) || return 1
+    key=$(printf '%s\n' "$out" | sed -n 's/^key=//p' | tr -d ' \r\n')
+    [[ -n "$key" && "$key" =~ ^[0-9A-Fa-f]{64}$ ]] || return 1
+    printf '%s' "$key"
+}
+
 _vault_encrypt_stream() {
     local root_key="$1" enc_salt="$2" iv="$3" input="$4" output="$5"
-    local salt_suffix="${enc_salt:16}"
-    printf 'gitsetu-v2-encryption:%s:%s\n' "$root_key" "$salt_suffix" |
-        openssl enc -aes-256-ctr -salt -pbkdf2 -iter "$GITSETU_VAULT_ITERATIONS" -md sha256 \
-            -S "${enc_salt:0:16}" -iv "$iv" -pass stdin \
-            -in "$input" -out "$output" 2>/dev/null
+    local key
+    key=$(_vault_derive_cipher_key "$root_key" "$enc_salt" "$GITSETU_VAULT_ITERATIONS") || return 1
+    openssl enc -aes-256-ctr -nosalt -K "$key" -iv "$iv" \
+        -in "$input" -out "$output" 2>/dev/null
 }
 
 _vault_decrypt_stream() {
     local root_key="$1" enc_salt="$2" iv="$3" input="$4" output="$5"
     local iters="${6:-$GITSETU_VAULT_ITERATIONS}"
-    local salt_suffix="${enc_salt:16}"
-    printf 'gitsetu-v2-encryption:%s:%s\n' "$root_key" "$salt_suffix" |
-        openssl enc -d -aes-256-ctr -salt -pbkdf2 -iter "$iters" -md sha256 \
-            -S "${enc_salt:0:16}" -iv "$iv" -pass stdin \
-            -in "$input" -out "$output" 2>/dev/null
+    local key
+    key=$(_vault_derive_cipher_key "$root_key" "$enc_salt" "$iters") || return 1
+    openssl enc -d -aes-256-ctr -nosalt -K "$key" -iv "$iv" \
+        -in "$input" -out "$output" 2>/dev/null
 }
 
 _vault_write_authenticated_vault() {
@@ -4694,7 +4691,7 @@ _vault_read_manifest() {
     _VAULT_MANIFEST_SOURCE_HOME="${line#source_home=}"
     [[ -n "$_VAULT_MANIFEST_SOURCE_HOME" && "$_VAULT_MANIFEST_SOURCE_HOME" != *[[:cntrl:]]* ]] || return 1
     _vault_validate_manifest_source_home "$_VAULT_MANIFEST_SOURCE_HOME" || return 1
-    _VAULT_MANIFEST_SOURCE_HOME=$(normalize_path "$_VAULT_MANIFEST_SOURCE_HOME") || return 1
+    _VAULT_MANIFEST_SOURCE_HOME=$(_gitsetu_lexical_path "$_VAULT_MANIFEST_SOURCE_HOME") || return 1
     line_count=$(wc -l < "$manifest" | tr -d '[:space:]') || return 1
     # Three fixed header lines plus exactly config/key/public records per profile.
     [[ "$line_count" -eq $((3 + _VAULT_MANIFEST_COUNT * 3)) ]] || return 1
@@ -4853,8 +4850,8 @@ _vault_portable_path_key() {
 
 _vault_map_home_bound_path() {
     local source_path="$1" source_home="$2" relative source_norm home_norm source_key home_key
-    source_norm=$(normalize_path "$source_path") || return 1
-    home_norm=$(normalize_path "$source_home") || return 1
+    source_norm=$(_gitsetu_lexical_path "$source_path") || return 1
+    home_norm=$(_gitsetu_lexical_path "$source_home") || return 1
     source_key=$(_vault_portable_path_key "$source_norm") || return 1
     home_key=$(_vault_portable_path_key "$home_norm") || return 1
     case "$source_key" in
@@ -4939,54 +4936,129 @@ _vault_write_private_staged_registry() {
 _vault_rewrite_staged_registry_for_target() {
     local archive_root="$1"
     local source_home="${_VAULT_MANIFEST_SOURCE_HOME%/}"
-    local source_home_canonical source_home_key source_ssh_canonical source_ssh_key
-    local i old_key old_key_canonical old_key_key profile_dir_canonical profile_dir_key relative mapped_key mapped_dir provider provider_user profile_content temp_profile
+    local source_home_lexical source_home_key source_ssh_lexical source_ssh_key
+    local i old_key_lexical old_key_key profile_dir_lexical profile_dir_key relative mapped_key mapped_dir profile_content temp_profile
     local saved_profiles_dir="$GITSETU_PROFILES_DIR"
+    local registry="$archive_root/state/profiles.conf"
+    local raw_line line_num=0 header_seen=0
+    local encoded_label encoded_directory encoded_provider encoded_sign encoded_key encoded_user
+    local label directory provider sign_commits key_path provider_user loaded_name loaded_email profile_gitconfig
 
     [[ -n "$source_home" ]] || return 1
-    source_home_canonical=$(normalize_path "$source_home") || return 1
-    source_home_key=$(_vault_portable_path_key "$source_home_canonical") || return 1
-    source_ssh_canonical=$(normalize_path "$source_home_canonical/.ssh") || return 1
-    source_ssh_key=$(_vault_portable_path_key "$source_ssh_canonical") || return 1
-    for (( i=0; i<PROFILE_COUNT; i++ )); do
-        old_key="${PROFILE_KEYS[$i]}"
-        old_key_canonical=$(normalize_path "$old_key") || return 1
-        old_key_key=$(_vault_portable_path_key "$old_key_canonical") || return 1
-        case "$old_key_key" in
-            "$source_ssh_key"/*) ;;
-            *)
-                print_error "Vault contains a nonportable key path outside the source ~/.ssh root: $old_key"
-                return 1
-                ;;
-        esac
-        relative="${old_key_key#"$source_ssh_key"/}"
-        [[ -n "$relative" && "$relative" != *[[:cntrl:]]* ]] || return 1
-        case "$relative" in ..|../*|*/../*|*/..) return 1 ;; esac
-        mapped_key="${HOME%/}/.ssh/${relative}"
-        mapped_key=$(normalize_path "$mapped_key") || return 1
-        _vault_validate_key_destination "$mapped_key" || {
-            print_error "Mapped key destination is outside the target ~/.ssh root: $mapped_key"
-            return 1
-        }
-        PROFILE_KEYS[i]="$mapped_key"
+    [[ -f "$registry" && ! -L "$registry" && -r "$registry" ]] || return 1
+    source_home_lexical=$(_gitsetu_lexical_path "$source_home") || return 1
+    source_home_key=$(_vault_portable_path_key "$source_home_lexical") || return 1
+    source_ssh_lexical=$(_gitsetu_lexical_path "$source_home_lexical/.ssh") || return 1
+    source_ssh_key=$(_vault_portable_path_key "$source_ssh_lexical") || return 1
 
-        if [[ -n "${PROFILE_DIRS[$i]}" ]]; then
-            profile_dir_canonical=$(normalize_path "${PROFILE_DIRS[$i]}") || return 1
-            profile_dir_key=$(_vault_portable_path_key "$profile_dir_canonical") || return 1
-            if [[ "$profile_dir_key" == "$source_home_key" || "$profile_dir_key" == "$source_home_key/"* ]]; then
-                mapped_dir=$(_vault_map_home_bound_path "$profile_dir_canonical" "$source_home_canonical") || return 1
-                mapped_dir=$(normalize_path "$mapped_dir") || return 1
-                PROFILE_DIRS[i]="$mapped_dir"
-            else
-                PROFILE_DIRS[i]="$profile_dir_canonical"
+    local -a raw_labels=() raw_dirs=() raw_providers=() raw_signs=() raw_keys=() raw_users=() raw_names=() raw_emails=()
+
+    while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+        line_num=$((line_num + 1))
+        if [[ "$line_num" -eq 1 ]]; then
+            if [[ "$raw_line" != "# gitsetu-registry-v2" ]]; then
+                return 1
             fi
+            header_seen=1
+            continue
         fi
-    done
+        [[ -n "$raw_line" && "$raw_line" != "#"* ]] || return 1
+        validate_registry_line "$raw_line" || return 1
+
+        IFS=: read -r encoded_label encoded_directory encoded_provider \
+            encoded_sign encoded_key encoded_user <<< "$raw_line"
+
+        label=$(_unescape_registry_field_preserve_newlines "$encoded_label") || return 1
+        directory=$(_unescape_registry_field_preserve_newlines "$encoded_directory") || return 1
+        provider=$(_unescape_registry_field_preserve_newlines "$encoded_provider") || return 1
+        sign_commits=$(_unescape_registry_field_preserve_newlines "$encoded_sign") || return 1
+        key_path=$(_unescape_registry_field_preserve_newlines "$encoded_key") || return 1
+        provider_user=$(_unescape_registry_field_preserve_newlines "$encoded_user") || return 1
+        label=${label%x}
+        directory=${directory%x}
+        provider=${provider%x}
+        sign_commits=${sign_commits%x}
+        key_path=${key_path%x}
+        provider_user=${provider_user%x}
+
+        validate_label "$label" || return 1
+        validate_provider "$provider" || return 1
+        validate_sign_flag "$sign_commits" || return 1
+        validate_provider_user "$provider_user" || return 1
+
+        profile_gitconfig="$archive_root/state/profiles/${label}.gitconfig"
+        [[ -f "$profile_gitconfig" && ! -L "$profile_gitconfig" ]] || return 1
+        loaded_name=$(git config -f "$profile_gitconfig" --get user.name 2>/dev/null) || loaded_name=""
+        loaded_email=$(git config -f "$profile_gitconfig" --get user.email 2>/dev/null) || loaded_email=""
+        validate_user_name "$loaded_name" || return 1
+        validate_email "$loaded_email" || return 1
+
+        if [[ "$label" == "global" && -z "$key_path" ]]; then
+            mapped_key=""
+        else
+            old_key_lexical=$(_gitsetu_lexical_path "$key_path") || return 1
+            old_key_key=$(_vault_portable_path_key "$old_key_lexical") || return 1
+            case "$old_key_key" in
+                "$source_ssh_key"/*) ;;
+                *)
+                    print_error "Vault contains a nonportable key path outside the source ~/.ssh root: $key_path"
+                    return 1
+                    ;;
+            esac
+            relative="${old_key_key#"$source_ssh_key"/}"
+            [[ -n "$relative" && "$relative" != *[[:cntrl:]]* ]] || return 1
+            case "$relative" in ..|../*|*/../*|*/..) return 1 ;; esac
+            mapped_key="${HOME%/}/.ssh/${relative}"
+            mapped_key=$(normalize_path "$mapped_key") || return 1
+            _vault_validate_key_destination "$mapped_key" || {
+                print_error "Mapped key destination is outside the target ~/.ssh root: $mapped_key"
+                return 1
+            }
+        fi
+
+        if [[ "$label" == "global" ]]; then
+            [[ -z "$directory" ]] || {
+                print_error "Vault global profile contains an invalid directory: $directory"
+                return 1
+            }
+            mapped_dir=""
+        else
+            profile_dir_lexical=$(_gitsetu_lexical_path "$directory") || return 1
+            profile_dir_key=$(_vault_portable_path_key "$profile_dir_lexical") || return 1
+            if [[ "$profile_dir_key" != "$source_home_key" && "$profile_dir_key" != "$source_home_key/"* ]]; then
+                print_error "Vault contains a nonportable external profile directory: $directory"
+                return 1
+            fi
+            mapped_dir=$(_vault_map_home_bound_path "$profile_dir_lexical" "$source_home_lexical") || return 1
+            mapped_dir=$(normalize_path "$mapped_dir") || return 1
+            validate_profile_directory "$mapped_dir" 0 || return 1
+        fi
+
+        raw_labels+=("$label")
+        raw_names+=("$loaded_name")
+        raw_emails+=("$loaded_email")
+        raw_dirs+=("$mapped_dir")
+        raw_providers+=("$provider")
+        raw_signs+=("$sign_commits")
+        raw_keys+=("$mapped_key")
+        raw_users+=("$provider_user")
+    done < "$registry"
+
+    [[ "$header_seen" -eq 1 && "${#raw_labels[@]}" -gt 0 ]] || return 1
+    [[ "${raw_labels[0]}" == "global" ]] || return 1
+
+    PROFILE_COUNT="${#raw_labels[@]}"
+    PROFILE_LABELS=("${raw_labels[@]}")
+    PROFILE_NAMES=("${raw_names[@]}")
+    PROFILE_EMAILS=("${raw_emails[@]}")
+    PROFILE_DIRS=("${raw_dirs[@]}")
+    PROFILE_PROVIDERS=("${raw_providers[@]}")
+    PROFILE_SIGNS=("${raw_signs[@]}")
+    PROFILE_KEYS=("${raw_keys[@]}")
+    PROFILE_USERS=("${raw_users[@]}")
 
     GITSETU_PROFILES_DIR="$archive_root/state/profiles"
     for (( i=0; i<PROFILE_COUNT; i++ )); do
-        provider="${PROFILE_PROVIDERS[$i]}"
-        provider_user="${PROFILE_USERS[$i]:-}"
         profile_content=$(build_profile_gitconfig "${PROFILE_LABELS[$i]}" "${PROFILE_NAMES[$i]}" \
             "${PROFILE_EMAILS[$i]}" "${PROFILE_SIGNS[$i]}" "${PROFILE_KEYS[$i]}") || {
                 GITSETU_PROFILES_DIR="$saved_profiles_dir"
@@ -5348,6 +5420,7 @@ _vault_snapshot_globals() {
     (umask 077 && mkdir -p "$txn/old-global") 2>/dev/null || return 1
     if [[ -e "$gitconfig" || -L "$gitconfig" ]]; then
         [[ -f "$gitconfig" && ! -L "$gitconfig" ]] || return 1
+        printf 'pending\n' > "$txn/old-global/gitconfig.state" || return 1
         _vault_copy_regular "$gitconfig" "$txn/old-global/gitconfig" 600 || return 1
         printf 'present\n' > "$txn/old-global/gitconfig.state" || return 1
     else
@@ -5355,6 +5428,7 @@ _vault_snapshot_globals() {
     fi
     if [[ -e "$sshconfig" || -L "$sshconfig" ]]; then
         [[ -f "$sshconfig" && ! -L "$sshconfig" ]] || return 1
+        printf 'pending\n' > "$txn/old-global/sshconfig.state" || return 1
         _vault_copy_regular "$sshconfig" "$txn/old-global/sshconfig" 600 || return 1
         printf 'present\n' > "$txn/old-global/sshconfig.state" || return 1
     else
@@ -5413,12 +5487,13 @@ _vault_commit_state() {
 }
 
 _vault_prepare_key_transaction() {
-    local txn="$1" i destination source mode old old_state active
+    local txn="$1" i destination source mode old old_state active key_base
     _VAULT_TXN_KEY_DESTINATIONS=()
     _VAULT_TXN_KEY_SOURCES=()
     _VAULT_TXN_KEY_MODES=()
     _VAULT_TXN_KEY_OLD=()
     _VAULT_TXN_KEY_ACTIVE=()
+    (umask 077 && mkdir -p "$txn/old-keys" "$txn/old-keys-meta") 2>/dev/null || return 1
     local combined_count=$((_VAULT_MANIFEST_COUNT * 2))
     for (( i=0; i<combined_count; i++ )); do
         if [[ "$i" -lt "$_VAULT_MANIFEST_COUNT" ]]; then
@@ -5431,7 +5506,8 @@ _vault_prepare_key_transaction() {
             source="${_VAULT_RESTORE_PUB_SOURCES[$key_i]}"
             mode=644
         fi
-        old="$txn/old-keys/$i"
+        key_base=$(basename "$destination")
+        old="$txn/old-keys/$key_base"
         _VAULT_TXN_KEY_DESTINATIONS+=("$destination")
         _VAULT_TXN_KEY_SOURCES+=("$source")
         _VAULT_TXN_KEY_MODES+=("$mode")
@@ -5444,11 +5520,15 @@ _vault_prepare_key_transaction() {
         if [[ -e "$destination" || -L "$destination" ]]; then
             [[ -f "$destination" && ! -L "$destination" ]] || return 1
             _vault_copy_regular "$destination" "$old" "$mode" || return 1
+            if [[ "$old" != "$txn/old-keys/$i" ]]; then
+                _vault_copy_regular "$destination" "$txn/old-keys/$i" "$mode" 2>/dev/null || true
+            fi
             old_state="present"
         else
             old_state="absent"
         fi
-        printf '%s\n' "$old_state" > "$txn/old-keys/$i.state" || return 1
+        printf '%s\n' "$old_state" > "$txn/old-keys-meta/$i.state" || return 1
+        printf '%s\n' "$old_state" > "$txn/old-keys/$i.state" 2>/dev/null || true
         _VAULT_TXN_KEY_ACTIVE+=(1)
         active=1
     done
@@ -5498,27 +5578,15 @@ _vault_restore_global_file() {
         state="$txn/old-global/sshconfig.state"
     fi
 
-    # A state file is written after the snapshot copy.  If that write failed,
-    # the private old-global file is still authoritative and must be restored.
-    if [[ -f "$state" ]]; then
-        if grep -q '^present$' "$state" 2>/dev/null; then
-            [[ -f "$source" && ! -L "$source" ]] || return 1
-        elif grep -q '^absent$' "$state" 2>/dev/null; then
-            [[ ! -e "$source" && ! -L "$source" ]] || return 1
-        else
-            return 1
-        fi
-    elif [[ -e "$source" || -L "$source" ]]; then
-        [[ -f "$source" && ! -L "$source" ]] || return 1
-    else
-        return 0
-    fi
     if [[ -L "$destination" ]]; then
         return 1
     fi
-    if [[ -f "$state" ]] && grep -q '^present$' "$state" 2>/dev/null; then
+
+    # If a snapshot copy exists and is a regular file, restore it.
+    # Never delete $destination unless the state marker explicitly recorded 'absent'.
+    if [[ -f "$source" && ! -L "$source" ]]; then
         _vault_copy_regular "$source" "$destination" 600 || return 1
-    else
+    elif [[ -f "$state" ]] && grep -q '^absent$' "$state" 2>/dev/null; then
         rm -f "$destination" 2>/dev/null || true
     fi
     return 0
@@ -5534,8 +5602,12 @@ _vault_rollback_transaction() {
     for (( i=count-1; i>=0; i-- )); do
         [[ "${_VAULT_TXN_KEY_ACTIVE[$i]:-0}" -eq 1 ]] || continue
         current="${_VAULT_TXN_KEY_DESTINATIONS[$i]}"
+        rm -f "${current}.gitsetu-restore.$$.$i" 2>/dev/null || true
         local old_key="${_VAULT_TXN_KEY_OLD[$i]}"
-        local key_state="$txn/old-keys/$i.state"
+        local key_state="$txn/old-keys-meta/$i.state"
+        if [[ ! -f "$key_state" && -f "$txn/old-keys/$i.state" ]]; then
+            key_state="$txn/old-keys/$i.state"
+        fi
         if [[ -f "$key_state" ]]; then
             if grep -q '^present$' "$key_state" 2>/dev/null; then
                 [[ -f "$old_key" && ! -L "$old_key" ]] || { failed=1; continue; }
@@ -5546,7 +5618,6 @@ _vault_rollback_transaction() {
         elif [[ -e "$old_key" || -L "$old_key" ]]; then
             [[ -f "$old_key" && ! -L "$old_key" ]] || { failed=1; continue; }
         else
-            failed=1
             continue
         fi
         if [[ -L "$current" ]]; then
@@ -5645,6 +5716,13 @@ _vault_signal_handler() {
             rollback_failed=1
         fi
     fi
+    local k count dest
+    count=${#_VAULT_TXN_KEY_DESTINATIONS[@]}
+    for (( k=0; k<count; k++ )); do
+        dest="${_VAULT_TXN_KEY_DESTINATIONS[$k]}"
+        [[ -n "$dest" ]] || continue
+        rm -f "${dest}.gitsetu-restore.$$.$k" 2>/dev/null || true
+    done
     [[ -n "${_VAULT_ACTIVE_TEMP:-}" ]] && rm -rf "$_VAULT_ACTIVE_TEMP" 2>/dev/null || true
     type release_lock >/dev/null 2>&1 && release_lock >/dev/null 2>&1 || true
     if [[ "$rollback_failed" -eq 0 ]]; then
@@ -5664,7 +5742,7 @@ _vault_restore_discard_staging() {
 }
 
 _vault_finalize_committed_restore() {
-    local txn="${1:-}" temp_dir="${2:-}" acquired="${3:-0}"
+    local txn="${1:-}" temp_dir="${2:-}" acquired="${3:-0}" force="${4:-0}"
     local cleanup_failed=0
 
     # From this point onward the live state is committed.  Clear the rollback
@@ -5707,6 +5785,9 @@ _vault_finalize_committed_restore() {
         print_error "The committed restore state was not rolled back."
         return 1
     fi
+    if [[ "$force" -eq 1 ]]; then
+        print_info "Replaced files were kept in $restore_backup_dir."
+    fi
     print_success "Authenticated v2 vault restored successfully."
     return 0
 }
@@ -5732,6 +5813,13 @@ _vault_restore_abort_transaction() {
     GITSETU_VAULT_ACTIVE_TRANSACTION=""
     _vault_restore_discard_staging "$temp_dir" "$acquired"
     return "$rollback_ok"
+}
+
+_vault_is_v1_vault() {
+    local vault_path="$1" magic
+    [[ -f "$vault_path" && ! -L "$vault_path" && -r "$vault_path" ]] || return 1
+    magic=$(head -c 8 "$vault_path" 2>/dev/null) || return 1
+    [[ "$magic" == "Salted__" ]]
 }
 
 # ------------------------------------------------------------------------------
@@ -5789,7 +5877,11 @@ cmd_restore() {
     fi
     if ! _vault_parse_header "$snapshot"; then
         _vault_restore_discard_staging "$temp_dir" 0
-        print_error "Unsupported, malformed, truncated, or non-v2 vault."
+        if _vault_is_v1_vault "$snapshot"; then
+            print_error "This is a v1.0.0 vault: restore it with GitSetu v1.0.0, then upgrade (see docs/guides/vault-backups.md)."
+        else
+            print_error "Unsupported, malformed, truncated, or non-v2 vault."
+        fi
         return 1
     fi
 
@@ -5831,18 +5923,13 @@ cmd_restore() {
     fi
     local saved_profiles_dir="$GITSETU_PROFILES_DIR"
     GITSETU_PROFILES_DIR="$archive_root/state/profiles"
-    if ! load_profiles "$archive_root/state/profiles.conf"; then
-        GITSETU_PROFILES_DIR="$saved_profiles_dir"
-        _vault_restore_discard_staging "$temp_dir" 0
-        print_error "Restored profile registry is not a valid v2 registry."
-        return 1
-    fi
-    GITSETU_PROFILES_DIR="$saved_profiles_dir"
     if ! _vault_rewrite_staged_registry_for_target "$archive_root"; then
+        GITSETU_PROFILES_DIR="$saved_profiles_dir"
         _vault_restore_discard_staging "$temp_dir" 0
         print_error "Vault contains nonportable managed paths; restore was refused."
         return 1
     fi
+    GITSETU_PROFILES_DIR="$saved_profiles_dir"
     if ! _vault_validate_extracted_tree "$extract_dir"; then
         _vault_restore_discard_staging "$temp_dir" 0
         print_error "Vault payload manifest or file allowlist validation failed."
@@ -5874,6 +5961,17 @@ cmd_restore() {
     done
     if [[ "$state_differs" -eq 0 && -f "$GITSETU_PROFILES_CONF" ]]; then
         if ! cmp -s "$GITSETU_PROFILES_CONF" "$archive_root/state/profiles.conf" 2>/dev/null; then
+            state_differs=1
+        fi
+    fi
+    if [[ "$state_differs" -eq 0 && -d "$GITSETU_CONFIG_DIR/remotes" ]]; then
+        local live_remotes="$GITSETU_CONFIG_DIR/remotes"
+        local vault_remotes="$archive_root/state/remotes"
+        if [[ ! -d "$vault_remotes" ]]; then
+            if [[ -n "$(ls -A "$live_remotes" 2>/dev/null)" ]]; then
+                state_differs=1
+            fi
+        elif ! diff -r -q "$live_remotes" "$vault_remotes" >/dev/null 2>&1; then
             state_differs=1
         fi
     fi
@@ -5977,7 +6075,7 @@ cmd_restore() {
         return 1
     fi
 
-    _vault_finalize_committed_restore "$transaction_dir" "$temp_dir" "$acquired"
+    _vault_finalize_committed_restore "$transaction_dir" "$temp_dir" "$acquired" "$force"
 }
 
 }
@@ -6871,7 +6969,6 @@ display_public_keys() {
 
         if [[ -f "$pubkey" ]]; then
             print_key_box "$label" "$email" "$pubkey" "$provider"
-            _ssh_preseed_known_hosts "$provider"
             if [[ "$provider" == *"github"* ]]; then
                 local puser="${PROFILE_USERS[$i]:-}"
                 if ! try_gh_key_upload "$label" "$pubkey" "$puser"; then
@@ -7078,43 +7175,6 @@ auto_register_ssh_keys() {
     fi
 
     return 0
-}
-
-# ------------------------------------------------------------------------------
-# _ssh_preseed_known_hosts — Pre-seed known_hosts for provider to prevent prompts
-# ------------------------------------------------------------------------------
-_ssh_preseed_known_hosts() {
-    # Skip in test environments unless explicitly forced, or in dry-run mode
-    if [[ -n "${GITSETU_TEST:-}" && -z "${GITSETU_TEST_SSH_PRESEED:-}" ]] || [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
-        return 0
-    fi
-    local host="${1:-}"
-    [[ -n "$host" ]] || return 0
-    # Strip any user@ or protocol prefix
-    host="${host#*@}"
-    host="${host%%:*}"
-    [[ "$host" =~ ^[a-zA-Z0-9.-]+$ ]] || return 0
-
-    local known_hosts="${HOME}/.ssh/known_hosts"
-    mkdir -p "${HOME}/.ssh" 2>/dev/null || true
-    chmod 700 "${HOME}/.ssh" 2>/dev/null || true
-    if command -v ssh-keyscan >/dev/null 2>&1; then
-        local host_present=0
-        if [[ -s "$known_hosts" ]]; then
-            if command -v ssh-keygen >/dev/null 2>&1; then
-                if ssh-keygen -F "$host" -f "$known_hosts" >/dev/null 2>&1; then
-                    host_present=1
-                fi
-            fi
-            if [[ "$host_present" -eq 0 ]] && grep -q "^$host " "$known_hosts" 2>/dev/null; then
-                host_present=1
-            fi
-        fi
-        if [[ "$host_present" -eq 0 ]]; then
-            ssh-keyscan -H "$host" 2>/dev/null >> "$known_hosts" || true
-            chmod 600 "$known_hosts" 2>/dev/null || true
-        fi
-    fi
 }
 
 # ------------------------------------------------------------------------------
@@ -7902,7 +7962,7 @@ build_profile_gitconfig() {
             return 1
         }
     else
-        [[ "$sign_commits" == "0" || "$sign_commits" == "1" ]] || {
+        [[ "$sign_commits" == "0" || "$sign_commits" == "1" || "$sign_commits" == "inherit" ]] || {
             print_error "Invalid sign_commits flag for profile '$label'."
             return 1
         }
@@ -8558,11 +8618,8 @@ if [[ "$HOOK_NAME" == "pre-commit" || "$HOOK_NAME" == "pre-merge-commit" ]]; the
         rc=$?
         if [[ $rc -eq 65 ]]; then
             exit 65
-        elif [[ $rc -eq 126 || $rc -eq 127 ]]; then
-            printf 'GitSetu guard: gitsetu invocation failed (code %d); commit allowed (failsafe).\n' "$rc" >&2
         elif [[ $rc -ne 0 ]]; then
-            printf 'GitSetu guard: identity verification error (code %d); commit blocked.\n' "$rc" >&2
-            exit "$rc"
+            printf 'GitSetu guard: gitsetu invocation failed (code %d); commit allowed (failsafe).\n' "$rc" >&2
         fi
     fi
 fi
@@ -9080,6 +9137,8 @@ run_doctor() {
             printf >&2 "    %bERROR: Registry missing or unsafe at %s%b\n" \
                 "$RED" "$(_doctor_safe_display "$GITSETU_PROFILES_CONF")" "$RESET"
             issues_found=1
+        elif [[ "${GITSETU_REGISTRY_WAS_V1:-0}" -eq 1 ]]; then
+            printf >&2 "    %bWARNING: Registry was migrated from v1.0 format in memory; run 'gitsetu doctor --repair' or 'gitsetu setup' to persist v2 format.%b\n" "$YELLOW" "$RESET"
         elif [[ "$(head -n 1 "$GITSETU_PROFILES_CONF" 2>/dev/null || true)" != "# gitsetu-registry-v2" ]]; then
             printf >&2 "    %bERROR: Registry header is missing or unsupported.%b\n" "$RED" "$RESET"
             issues_found=1
@@ -9191,6 +9250,12 @@ run_doctor() {
                     fi
                 fi
             done
+
+            local global_hp
+            global_hp=$(git config --global core.hooksPath 2>/dev/null || true)
+            if [[ -n "$global_hp" ]] && declare -f _guard_paths_equal >/dev/null 2>&1 && _guard_paths_equal "$global_hp" "$GITSETU_HOOKS_DIR"; then
+                printf >&2 "    %bWARNING: Global core.hooksPath points to GitSetu hooks dir; run 'gitsetu doctor --repair' to clean up legacy global hook.%b\n" "$YELLOW" "$RESET"
+            fi
         fi
     fi
     printf >&2 '\n'
@@ -9561,13 +9626,21 @@ run_doctor_repair() {
         v1_registry_needs_repair=1
     fi
 
+    local hooks_needs_repair=0
+    local global_hp_repair
+    global_hp_repair=$(git config --global core.hooksPath 2>/dev/null || true)
+    if [[ -n "$global_hp_repair" ]] && declare -f _guard_paths_equal >/dev/null 2>&1 && _guard_paths_equal "$global_hp_repair" "$GITSETU_HOOKS_DIR"; then
+        hooks_needs_repair=1
+    fi
+
     if [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
         [[ "$v1_registry_needs_repair" -eq 1 ]] && print_step "[DRY RUN] Would migrate legacy v1.0.0 profile registry to v2."
         [[ "$gitconfig_needs_repair" -eq 1 ]] && print_step "[DRY RUN] Would restore managed blocks in ~/.gitconfig."
         [[ "$ssh_needs_repair" -eq 1 ]] && print_step "[DRY RUN] Would restore SSH configuration and Include directive."
         [[ "$ssh_agent_needs_repair" -eq 1 ]] && print_step "[DRY RUN] Would register missing profile keys with ssh-agent."
         [[ "$cred_needs_repair" -eq 1 ]] && print_step "[DRY RUN] Would remove stale GitSetu credential helper from gitconfig."
-        planned=$((gitconfig_needs_repair + ssh_needs_repair + ssh_agent_needs_repair + cred_needs_repair + v1_registry_needs_repair))
+        [[ "$hooks_needs_repair" -eq 1 ]] && print_step "[DRY RUN] Would remove legacy global core.hooksPath from gitconfig."
+        planned=$((gitconfig_needs_repair + ssh_needs_repair + ssh_agent_needs_repair + cred_needs_repair + v1_registry_needs_repair + hooks_needs_repair))
         if [[ "$planned" -eq 0 ]]; then
             print_info "Nothing to repair. All required configuration is intact."
         else
@@ -9576,7 +9649,7 @@ run_doctor_repair() {
         return 0
     fi
 
-    if [[ "$gitconfig_needs_repair" -eq 0 && "$ssh_needs_repair" -eq 0 && "$ssh_agent_needs_repair" -eq 0 && "$cred_needs_repair" -eq 0 && "$v1_registry_needs_repair" -eq 0 ]]; then
+    if [[ "$gitconfig_needs_repair" -eq 0 && "$ssh_needs_repair" -eq 0 && "$ssh_agent_needs_repair" -eq 0 && "$cred_needs_repair" -eq 0 && "$v1_registry_needs_repair" -eq 0 && "$hooks_needs_repair" -eq 0 ]]; then
         print_info "Nothing to repair. All required configuration and managed blocks are intact."
         return 0
     fi
@@ -9602,7 +9675,7 @@ run_doctor_repair() {
     }
     trap '_doctor_emergency_rollback; gitsetu_early_cleanup' INT TERM HUP EXIT
 
-    if [[ "$gitconfig_needs_repair" -eq 1 || "$cred_needs_repair" -eq 1 || "$v1_registry_needs_repair" -eq 1 ]] && ! _doctor_snapshot_file "$HOME/.gitconfig"; then
+    if [[ "$gitconfig_needs_repair" -eq 1 || "$cred_needs_repair" -eq 1 || "$v1_registry_needs_repair" -eq 1 || "$hooks_needs_repair" -eq 1 ]] && ! _doctor_snapshot_file "$HOME/.gitconfig"; then
         print_error "Unable to create a rollback snapshot for ~/.gitconfig; repair was not started."
         release_lock || true
         return 1
@@ -9631,6 +9704,16 @@ run_doctor_repair() {
         print_step "Removing stale GitSetu credential helper..."
         git config --global --unset-all credential.helper ".*gitsetu.*credential" 2>/dev/null || true
         print_success "Removed stale GitSetu credential helper from ~/.gitconfig"
+    fi
+
+    if [[ "$hooks_needs_repair" -eq 1 ]]; then
+        print_step "Removing legacy global core.hooksPath..."
+        if declare -f _guard_cleanup_legacy_global_hookspath >/dev/null 2>&1; then
+            _guard_cleanup_legacy_global_hookspath
+        else
+            git config --global --unset-all core.hooksPath 2>/dev/null || true
+        fi
+        print_success "Removed legacy global core.hooksPath from ~/.gitconfig"
     fi
 
     if [[ "$gitconfig_needs_repair" -eq 1 ]]; then
@@ -9870,16 +9953,54 @@ cmd_import() {
                     printf '  Name:      %s\n' "${imp_name:-[Inherited]}"
                     printf '  Email:     %s\n' "$imp_email"
 
+                    local imp_key=""
+                    local imp_ssh_cmd
+                    imp_ssh_cmd=$(git config -f "$full_inc_path" core.sshCommand 2>/dev/null || true)
+                    if [[ "$imp_ssh_cmd" =~ -i[[:space:]]+([^[:space:]]+) ]]; then
+                        local raw_k="${BASH_REMATCH[1]}"
+                        raw_k="${raw_k#\"}"
+                        raw_k="${raw_k%\"}"
+                        raw_k="${raw_k#\'}"
+                        raw_k="${raw_k%\'}"
+                        if [[ "$raw_k" == "~/"* ]]; then
+                            raw_k="$HOME/${raw_k#\~/}"
+                        fi
+                        if [[ -f "$raw_k" ]]; then
+                            imp_key="$raw_k"
+                        fi
+                    fi
+                    if [[ -z "$imp_key" ]] && declare -f discover_ssh_key_for_label >/dev/null 2>&1; then
+                        local cand_lk
+                        cand_lk=$(discover_ssh_key_for_label "$imp_label" 2>/dev/null || true)
+                        if [[ -n "$cand_lk" && -f "$cand_lk" ]]; then
+                            imp_key="$cand_lk"
+                        fi
+                    fi
+                    if [[ -z "$imp_key" ]] && declare -f discover_global_ssh_key >/dev/null 2>&1; then
+                        local cand_gk
+                        cand_gk=$(discover_global_ssh_key 2>/dev/null || true)
+                        if [[ -n "$cand_gk" && -f "$cand_gk" ]]; then
+                            imp_key="$cand_gk"
+                        fi
+                    fi
+                    if [[ -n "$imp_key" ]]; then
+                        printf '  SSH Key:   %s\n' "$imp_key"
+                    fi
+
                     local proceed=0
-                    if [[ "$yes_flag" -eq 1 ]] || ! _ui_tty_available; then
+                    if [[ "$yes_flag" -eq 1 ]]; then
                         proceed=1
-                    elif confirm "Adopt this profile into GitSetu?" "y"; then
+                    elif ! _ui_tty_available; then
+                        print_warning "Confirmation required to adopt profile '$imp_label'; pass --yes in non-interactive environments."
+                        return 3
+                    elif confirm "Adopt this profile into GitSetu?" "n"; then
                         proceed=1
                     fi
 
                     if [[ "$proceed" -eq 1 ]]; then
                         local cmd_args=("$imp_label" "--email=$imp_email" "--dir=$current_gitdir")
                         [[ -n "$imp_name" ]] && cmd_args+=("--name=$imp_name")
+                        [[ -n "$imp_key" ]] && cmd_args+=("--key=$imp_key")
                         if cmd_profile add "${cmd_args[@]}"; then
                             print_success "Imported profile '$imp_label'."
                             imported_count=$((imported_count + 1))
@@ -10315,14 +10436,13 @@ verify_ssh_connectivity() {
         fi
 
         local expected_user="${PROFILE_USERS[$i]:-}"
-        if [[ -z "$expected_user" ]]; then
-            expected_user="$label"
-        fi
 
         if [[ -n "$remote_user" && -n "$expected_user" && "$remote_user" != "$expected_user" ]]; then
             printf >&2 '%b%s Key authenticated as '\''%s'\'', but profile '\''%s'\'' expects account '\''%s'\''.%b\n' \
                 "$RED" "$SYM_CROSS" "$remote_user" "$label" "$expected_user" "$RESET"
             failed=1
+        elif [[ -n "$remote_user" ]]; then
+            printf >&2 '%b%s authenticated as %s%b\n' "$GREEN" "$SYM_CHECK" "$remote_user" "$RESET"
         elif printf '%s' "$output" | grep -qi 'successfully authenticated\|logged in as\|welcome to'; then
             printf >&2 '%b%s authenticated%b\n' "$GREEN" "$SYM_CHECK" "$RESET"
         elif printf '%s' "$output" | grep -qi 'permission denied'; then
@@ -11639,7 +11759,7 @@ generate_initial_blueprint() {
     PROFILE_EMAILS[0]="${DISCOVERED_GLOBAL_EMAIL:-}"
     PROFILE_DIRS[0]=""
     PROFILE_PROVIDERS[0]="github.com"
-    PROFILE_SIGNS[0]="0"
+    PROFILE_SIGNS[0]="${GITSETU_DEFAULT_SIGN:-inherit}"
 
     local global_key
     global_key=$(discover_global_ssh_key)
@@ -11670,7 +11790,7 @@ generate_initial_blueprint() {
         PROFILE_EMAILS[idx]="$cand_email"
         PROFILE_DIRS[idx]="${cand_dir:-$HOME/$candidate}"
         PROFILE_PROVIDERS[idx]="github.com"
-        PROFILE_SIGNS[idx]="0"
+        PROFILE_SIGNS[idx]="${GITSETU_DEFAULT_SIGN:-inherit}"
         PROFILE_KEYS[idx]="$cand_key"
         PROFILE_USERS[idx]=""
         PROFILE_PATS[idx]=""
@@ -11876,7 +11996,7 @@ preset_guided_onboarding() {
                 # shellcheck disable=SC2034
                 PROFILE_PROVIDERS[0]="github.com"
                 # shellcheck disable=SC2034
-                PROFILE_SIGNS[0]="0"
+                PROFILE_SIGNS[0]="${GITSETU_DEFAULT_SIGN:-inherit}"
                 # shellcheck disable=SC2034
                 PROFILE_KEYS[0]="$global_key"
                 # shellcheck disable=SC2034
@@ -11971,7 +12091,7 @@ preset_guided_onboarding() {
                 # shellcheck disable=SC2034
                 PROFILE_PROVIDERS[0]="github.com"
                 # shellcheck disable=SC2034
-                PROFILE_SIGNS[0]="0"
+                PROFILE_SIGNS[0]="${GITSETU_DEFAULT_SIGN:-inherit}"
                 # shellcheck disable=SC2034
                 PROFILE_KEYS[0]="$global_key"
                 # shellcheck disable=SC2034
@@ -11991,7 +12111,7 @@ preset_guided_onboarding() {
                 # shellcheck disable=SC2034
                 PROFILE_PROVIDERS[1]="github.com"
                 # shellcheck disable=SC2034
-                PROFILE_SIGNS[1]="0"
+                PROFILE_SIGNS[1]="${GITSETU_DEFAULT_SIGN:-inherit}"
                 # shellcheck disable=SC2034
                 PROFILE_KEYS[1]="${work_key:-$HOME/.ssh/id_ed25519_work}"
                 # shellcheck disable=SC2034
@@ -12011,7 +12131,7 @@ preset_guided_onboarding() {
                 # shellcheck disable=SC2034
                 PROFILE_PROVIDERS[2]="github.com"
                 # shellcheck disable=SC2034
-                PROFILE_SIGNS[2]="0"
+                PROFILE_SIGNS[2]="${GITSETU_DEFAULT_SIGN:-inherit}"
                 # shellcheck disable=SC2034
                 PROFILE_KEYS[2]="${personal_key:-$HOME/.ssh/id_ed25519_personal}"
                 # shellcheck disable=SC2034
@@ -12129,7 +12249,7 @@ prompt_add_profile() {
 
     ask "Git Provider Host (e.g. github.com, gitlab.com, git.corp.internal)" "github.com"
     PROFILE_PROVIDERS[PROFILE_COUNT]="$REPLY"
-    PROFILE_SIGNS[PROFILE_COUNT]="${GITSETU_DEFAULT_SIGN:-0}"
+    PROFILE_SIGNS[PROFILE_COUNT]="${GITSETU_DEFAULT_SIGN:-inherit}"
 
     ask "Provider Username (e.g. GitHub handle, for HTTPS cloning)" ""
     PROFILE_USERS[PROFILE_COUNT]="$REPLY"
@@ -13377,7 +13497,7 @@ cmd_profile() {
                 PROFILE_EMAILS[idx]=""
                 PROFILE_DIRS[idx]="$HOME/$label"
                 PROFILE_PROVIDERS[idx]="github.com"
-                PROFILE_SIGNS[idx]="${GITSETU_DEFAULT_SIGN:-0}"
+                PROFILE_SIGNS[idx]="${GITSETU_DEFAULT_SIGN:-inherit}"
                 PROFILE_KEYS[idx]="$HOME/.ssh/id_ed25519_${label}"
                 PROFILE_USERS[idx]=""
                 PROFILE_PATS[idx]=""
@@ -13394,11 +13514,12 @@ cmd_profile() {
                     --provider=*) PROFILE_PROVIDERS[idx]="${1#*=}" ;;
                     --key=*) PROFILE_KEYS[idx]=$(normalize_path "${1#*=}") ;;
                     --fido2) PROFILE_KEYS[idx]="$HOME/.ssh/id_ed25519_sk_${label}" ;;
+                    --sign=*) PROFILE_SIGNS[idx]="${1#*=}" ;;
                     --sign) PROFILE_SIGNS[idx]="1" ;;
                     --no-sign) PROFILE_SIGNS[idx]="0" ;;
                     --guard) GITSETU_GUARD_FLAG=1 ;;
                     --no-guard) GITSETU_GUARD_FLAG=0 ;;
-                    --provider-user=*) PROFILE_USERS[idx]="${1#*=}" ;;
+                    --provider-user=*|--user=*) PROFILE_USERS[idx]="${1#*=}" ;;
                     --remote=*)
                         local r_val="${1#*=}"
                         if [[ -n "$r_val" ]]; then
@@ -13704,8 +13825,7 @@ _gitsetu() {
             COMPREPLY=( $(compgen -W "--repair --dry-run --json" -- "$cur") )
             ;;
         update)
-            # shellcheck disable=SC2207
-            COMPREPLY=( $(compgen -W "--development --dev" -- "$cur") )
+            COMPREPLY=()
             ;;
         credential)
             # shellcheck disable=SC2207
@@ -13824,7 +13944,7 @@ ${BOLD}USAGE${RESET}
     gitsetu verify                   Test SSH keys and git config
     gitsetu doctor [--repair] [--dry-run] [--json]
                                      Run diagnostic checks or auto-heal configuration
-    gitsetu update --development     Verify a clean local development checkout
+    gitsetu update                   Check for updates or update GitSetu
     gitsetu prompt                   Print active profile for \$PS1
     gitsetu backup [out_file]        Export encrypted identity state
     gitsetu restore <in_file>        Import encrypted identity state
@@ -14122,42 +14242,8 @@ _gitsetu_update_git() {
 }
 
 cmd_update() {
-    local mode="${1:-}"
+    print_section "GitSetu Update"
     detect_os
-
-    if [[ "$mode" == "--development" || "$mode" == "--dev" ]]; then
-        if [[ ! -d "$GITSETU_DIR/.git" ]]; then
-            print_error "Development verification requires the canonical GitSetu checkout."
-            return 1
-        fi
-        local status
-        status=$(_gitsetu_update_git status --porcelain=v1 --untracked-files=all 2>/dev/null) || {
-            print_error "Unable to verify the development checkout status."
-            return 1
-        }
-        if [[ -n "$status" ]]; then
-            print_error "Development checkout is dirty; no update or reset was attempted."
-            return 1
-        fi
-        local branch
-        branch=$(_gitsetu_update_git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
-        local expected_branch="${GITSETU_DEVELOPMENT_BRANCH:-feature/v1.1.0-onboarding-overhaul}"
-        if [[ "$branch" != "$expected_branch" && "$branch" != "main" && "$branch" != "master" ]]; then
-            print_error "Development branch drift detected (expected '$expected_branch', found '${branch:-detached}')."
-            return 1
-        fi
-        local commit
-        commit=$(_gitsetu_update_git rev-parse --verify 'HEAD^{commit}' 2>/dev/null) || {
-            print_error "Development checkout HEAD could not be verified."
-            return 1
-        }
-        [[ "$commit" =~ ^[0-9a-fA-F]{40,64}$ ]] || {
-            print_error "Development checkout HEAD is not a verified commit object."
-            return 1
-        }
-        print_success "Development checkout verified ($commit)."
-        return 0
-    fi
 
     # 1. Git checkout
     if [[ -d "$GITSETU_DIR/.git" ]]; then
@@ -14191,6 +14277,14 @@ cmd_update() {
         if [[ "$current_tag" == "$latest_tag" ]]; then
             print_success "GitSetu is already up to date ($latest_tag)."
             return 0
+        fi
+
+        local latest_version="${latest_tag#v}"
+        if declare -f _gitsetu_version_ge >/dev/null 2>&1; then
+            if _gitsetu_version_ge "$GITSETU_VERSION" "$latest_version"; then
+                print_success "GitSetu v$GITSETU_VERSION is current (latest release: $latest_tag)."
+                return 0
+            fi
         fi
 
         print_step "Updating to $latest_tag..."
@@ -14232,14 +14326,14 @@ cmd_update() {
 
     if [[ -n "$install_root" && -f "$install_root/install.marker" ]]; then
         print_info "GitSetu was installed from a release package."
-        print_info "To install or update the latest GitSetu release, download the verified release archive from:"
-        printf '  https://github.com/bhaskarjha-dev/gitsetu/releases/latest\n'
+        print_info "To update to the latest GitSetu release, run:"
+        printf '  curl -fsSL https://github.com/bhaskarjha-dev/gitsetu/releases/latest/download/install.sh | bash\n'
         return 0
     fi
 
     # 5. Default / standalone
-    print_info "To install or update the latest GitSetu release, download the verified release archive from:"
-    printf '  https://github.com/bhaskarjha-dev/gitsetu/releases/latest\n'
+    print_info "To install or update to the latest GitSetu release, run:"
+    printf '  curl -fsSL https://github.com/bhaskarjha-dev/gitsetu/releases/latest/download/install.sh | bash\n'
     return 0
 }
 
@@ -14991,11 +15085,11 @@ main() {
             cmd_import "$@"
             ;;
         update)
-            if [[ $# -gt 1 || ( $# -eq 1 && "$1" != "--development" && "$1" != "--dev" ) ]]; then
-                print_error "Usage: gitsetu update [--development]"
+            if [[ $# -ne 0 ]]; then
+                print_error "Usage: gitsetu update"
                 return 1
             fi
-            cmd_update "${1:-}"
+            cmd_update
             ;;
         --help|-h|help)
             if [[ $# -ne 0 ]]; then

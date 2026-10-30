@@ -16,19 +16,12 @@
 #   5. Fallback to uname -s
 # ------------------------------------------------------------------------------
 detect_os() {
-    # Allow tests/callers to override detection by pre-setting GITSETU_OS.
-    # This is critical for CI: macOS `security` commands hang in headless environments.
-    # Check env var first, then fall back to marker file (env vars don't propagate
-    # through pipelines in background subshells on macOS bash 3.2).
+    # Allow callers to override detection by pre-setting GITSETU_OS (validated against supported OS list).
     if [[ -n "${GITSETU_OS:-}" ]]; then
-        return 0
-    fi
-    local _os_file="${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu/.test_os"
-    if [[ -f "$_os_file" ]]; then
-        GITSETU_OS=$(cat "$_os_file" 2>/dev/null)
-        if [[ -n "$GITSETU_OS" ]]; then
-            return 0
-        fi
+        case "$GITSETU_OS" in
+            linux|macos|wsl|gitbash|unknown) return 0 ;;
+            *) GITSETU_OS="unknown"; return 0 ;;
+        esac
     fi
 
     # Check WSL first — it masquerades as Linux
@@ -492,12 +485,7 @@ get_ssh_agent_advice() {
     case "$GITSETU_OS" in
         macos)
             cat >&2 <<'EOF'
-  macOS: Add to ~/.ssh/config:
-    Host *
-        AddKeysToAgent yes
-        UseKeychain yes
-
-  Then run: ssh-add --apple-use-keychain ~/.ssh/id_ed25519_<label>
+  macOS: Run: ssh-add --apple-use-keychain ~/.ssh/id_ed25519_<label>
 EOF
             ;;
         linux)

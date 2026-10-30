@@ -336,6 +336,8 @@ run_doctor() {
             printf >&2 "    %bERROR: Registry missing or unsafe at %s%b\n" \
                 "$RED" "$(_doctor_safe_display "$GITSETU_PROFILES_CONF")" "$RESET"
             issues_found=1
+        elif [[ "${GITSETU_REGISTRY_WAS_V1:-0}" -eq 1 ]]; then
+            printf >&2 "    %bWARNING: Registry was migrated from v1.0 format in memory; run 'gitsetu doctor --repair' or 'gitsetu setup' to persist v2 format.%b\n" "$YELLOW" "$RESET"
         elif [[ "$(head -n 1 "$GITSETU_PROFILES_CONF" 2>/dev/null || true)" != "# gitsetu-registry-v2" ]]; then
             printf >&2 "    %bERROR: Registry header is missing or unsupported.%b\n" "$RED" "$RESET"
             issues_found=1
@@ -447,6 +449,12 @@ run_doctor() {
                     fi
                 fi
             done
+
+            local global_hp
+            global_hp=$(git config --global core.hooksPath 2>/dev/null || true)
+            if [[ -n "$global_hp" ]] && declare -f _guard_paths_equal >/dev/null 2>&1 && _guard_paths_equal "$global_hp" "$GITSETU_HOOKS_DIR"; then
+                printf >&2 "    %bWARNING: Global core.hooksPath points to GitSetu hooks dir; run 'gitsetu doctor --repair' to clean up legacy global hook.%b\n" "$YELLOW" "$RESET"
+            fi
         fi
     fi
     printf >&2 '\n'
@@ -817,13 +825,21 @@ run_doctor_repair() {
         v1_registry_needs_repair=1
     fi
 
+    local hooks_needs_repair=0
+    local global_hp_repair
+    global_hp_repair=$(git config --global core.hooksPath 2>/dev/null || true)
+    if [[ -n "$global_hp_repair" ]] && declare -f _guard_paths_equal >/dev/null 2>&1 && _guard_paths_equal "$global_hp_repair" "$GITSETU_HOOKS_DIR"; then
+        hooks_needs_repair=1
+    fi
+
     if [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
         [[ "$v1_registry_needs_repair" -eq 1 ]] && print_step "[DRY RUN] Would migrate legacy v1.0.0 profile registry to v2."
         [[ "$gitconfig_needs_repair" -eq 1 ]] && print_step "[DRY RUN] Would restore managed blocks in ~/.gitconfig."
         [[ "$ssh_needs_repair" -eq 1 ]] && print_step "[DRY RUN] Would restore SSH configuration and Include directive."
         [[ "$ssh_agent_needs_repair" -eq 1 ]] && print_step "[DRY RUN] Would register missing profile keys with ssh-agent."
         [[ "$cred_needs_repair" -eq 1 ]] && print_step "[DRY RUN] Would remove stale GitSetu credential helper from gitconfig."
-        planned=$((gitconfig_needs_repair + ssh_needs_repair + ssh_agent_needs_repair + cred_needs_repair + v1_registry_needs_repair))
+        [[ "$hooks_needs_repair" -eq 1 ]] && print_step "[DRY RUN] Would remove legacy global core.hooksPath from gitconfig."
+        planned=$((gitconfig_needs_repair + ssh_needs_repair + ssh_agent_needs_repair + cred_needs_repair + v1_registry_needs_repair + hooks_needs_repair))
         if [[ "$planned" -eq 0 ]]; then
             print_info "Nothing to repair. All required configuration is intact."
         else
@@ -832,7 +848,7 @@ run_doctor_repair() {
         return 0
     fi
 
-    if [[ "$gitconfig_needs_repair" -eq 0 && "$ssh_needs_repair" -eq 0 && "$ssh_agent_needs_repair" -eq 0 && "$cred_needs_repair" -eq 0 && "$v1_registry_needs_repair" -eq 0 ]]; then
+    if [[ "$gitconfig_needs_repair" -eq 0 && "$ssh_needs_repair" -eq 0 && "$ssh_agent_needs_repair" -eq 0 && "$cred_needs_repair" -eq 0 && "$v1_registry_needs_repair" -eq 0 && "$hooks_needs_repair" -eq 0 ]]; then
         print_info "Nothing to repair. All required configuration and managed blocks are intact."
         return 0
     fi
@@ -858,7 +874,7 @@ run_doctor_repair() {
     }
     trap '_doctor_emergency_rollback; gitsetu_early_cleanup' INT TERM HUP EXIT
 
-    if [[ "$gitconfig_needs_repair" -eq 1 || "$cred_needs_repair" -eq 1 || "$v1_registry_needs_repair" -eq 1 ]] && ! _doctor_snapshot_file "$HOME/.gitconfig"; then
+    if [[ "$gitconfig_needs_repair" -eq 1 || "$cred_needs_repair" -eq 1 || "$v1_registry_needs_repair" -eq 1 || "$hooks_needs_repair" -eq 1 ]] && ! _doctor_snapshot_file "$HOME/.gitconfig"; then
         print_error "Unable to create a rollback snapshot for ~/.gitconfig; repair was not started."
         release_lock || true
         return 1
@@ -887,6 +903,16 @@ run_doctor_repair() {
         print_step "Removing stale GitSetu credential helper..."
         git config --global --unset-all credential.helper ".*gitsetu.*credential" 2>/dev/null || true
         print_success "Removed stale GitSetu credential helper from ~/.gitconfig"
+    fi
+
+    if [[ "$hooks_needs_repair" -eq 1 ]]; then
+        print_step "Removing legacy global core.hooksPath..."
+        if declare -f _guard_cleanup_legacy_global_hookspath >/dev/null 2>&1; then
+            _guard_cleanup_legacy_global_hookspath
+        else
+            git config --global --unset-all core.hooksPath 2>/dev/null || true
+        fi
+        print_success "Removed legacy global core.hooksPath from ~/.gitconfig"
     fi
 
     if [[ "$gitconfig_needs_repair" -eq 1 ]]; then
@@ -1126,16 +1152,54 @@ cmd_import() {
                     printf '  Name:      %s\n' "${imp_name:-[Inherited]}"
                     printf '  Email:     %s\n' "$imp_email"
 
+                    local imp_key=""
+                    local imp_ssh_cmd
+                    imp_ssh_cmd=$(git config -f "$full_inc_path" core.sshCommand 2>/dev/null || true)
+                    if [[ "$imp_ssh_cmd" =~ -i[[:space:]]+([^[:space:]]+) ]]; then
+                        local raw_k="${BASH_REMATCH[1]}"
+                        raw_k="${raw_k#\"}"
+                        raw_k="${raw_k%\"}"
+                        raw_k="${raw_k#\'}"
+                        raw_k="${raw_k%\'}"
+                        if [[ "$raw_k" == "~/"* ]]; then
+                            raw_k="$HOME/${raw_k#\~/}"
+                        fi
+                        if [[ -f "$raw_k" ]]; then
+                            imp_key="$raw_k"
+                        fi
+                    fi
+                    if [[ -z "$imp_key" ]] && declare -f discover_ssh_key_for_label >/dev/null 2>&1; then
+                        local cand_lk
+                        cand_lk=$(discover_ssh_key_for_label "$imp_label" 2>/dev/null || true)
+                        if [[ -n "$cand_lk" && -f "$cand_lk" ]]; then
+                            imp_key="$cand_lk"
+                        fi
+                    fi
+                    if [[ -z "$imp_key" ]] && declare -f discover_global_ssh_key >/dev/null 2>&1; then
+                        local cand_gk
+                        cand_gk=$(discover_global_ssh_key 2>/dev/null || true)
+                        if [[ -n "$cand_gk" && -f "$cand_gk" ]]; then
+                            imp_key="$cand_gk"
+                        fi
+                    fi
+                    if [[ -n "$imp_key" ]]; then
+                        printf '  SSH Key:   %s\n' "$imp_key"
+                    fi
+
                     local proceed=0
-                    if [[ "$yes_flag" -eq 1 ]] || ! _ui_tty_available; then
+                    if [[ "$yes_flag" -eq 1 ]]; then
                         proceed=1
-                    elif confirm "Adopt this profile into GitSetu?" "y"; then
+                    elif ! _ui_tty_available; then
+                        print_warning "Confirmation required to adopt profile '$imp_label'; pass --yes in non-interactive environments."
+                        return 3
+                    elif confirm "Adopt this profile into GitSetu?" "n"; then
                         proceed=1
                     fi
 
                     if [[ "$proceed" -eq 1 ]]; then
                         local cmd_args=("$imp_label" "--email=$imp_email" "--dir=$current_gitdir")
                         [[ -n "$imp_name" ]] && cmd_args+=("--name=$imp_name")
+                        [[ -n "$imp_key" ]] && cmd_args+=("--key=$imp_key")
                         if cmd_profile add "${cmd_args[@]}"; then
                             print_success "Imported profile '$imp_label'."
                             imported_count=$((imported_count + 1))

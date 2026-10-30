@@ -549,23 +549,32 @@ _vault_hex_matches_file() {
     [[ "$actual_hex" == "$expected_hex" ]]
 }
 
+_vault_derive_cipher_key() {
+    local root_key="$1" enc_salt="$2" iters="$3"
+    local salt_suffix="${enc_salt:16}" out key
+    out=$(printf 'gitsetu-v2-encryption:%s:%s\n' "$root_key" "$salt_suffix" |
+        openssl enc -aes-256-ctr -P -salt -pbkdf2 -iter "$iters" -md sha256 \
+            -S "${enc_salt:0:16}" -pass stdin 2>/dev/null) || return 1
+    key=$(printf '%s\n' "$out" | sed -n 's/^key=//p' | tr -d ' \r\n')
+    [[ -n "$key" && "$key" =~ ^[0-9A-Fa-f]{64}$ ]] || return 1
+    printf '%s' "$key"
+}
+
 _vault_encrypt_stream() {
     local root_key="$1" enc_salt="$2" iv="$3" input="$4" output="$5"
-    local salt_suffix="${enc_salt:16}"
-    printf 'gitsetu-v2-encryption:%s:%s\n' "$root_key" "$salt_suffix" |
-        openssl enc -aes-256-ctr -salt -pbkdf2 -iter "$GITSETU_VAULT_ITERATIONS" -md sha256 \
-            -S "${enc_salt:0:16}" -iv "$iv" -pass stdin \
-            -in "$input" -out "$output" 2>/dev/null
+    local key
+    key=$(_vault_derive_cipher_key "$root_key" "$enc_salt" "$GITSETU_VAULT_ITERATIONS") || return 1
+    openssl enc -aes-256-ctr -nosalt -K "$key" -iv "$iv" \
+        -in "$input" -out "$output" 2>/dev/null
 }
 
 _vault_decrypt_stream() {
     local root_key="$1" enc_salt="$2" iv="$3" input="$4" output="$5"
     local iters="${6:-$GITSETU_VAULT_ITERATIONS}"
-    local salt_suffix="${enc_salt:16}"
-    printf 'gitsetu-v2-encryption:%s:%s\n' "$root_key" "$salt_suffix" |
-        openssl enc -d -aes-256-ctr -salt -pbkdf2 -iter "$iters" -md sha256 \
-            -S "${enc_salt:0:16}" -iv "$iv" -pass stdin \
-            -in "$input" -out "$output" 2>/dev/null
+    local key
+    key=$(_vault_derive_cipher_key "$root_key" "$enc_salt" "$iters") || return 1
+    openssl enc -d -aes-256-ctr -nosalt -K "$key" -iv "$iv" \
+        -in "$input" -out "$output" 2>/dev/null
 }
 
 _vault_write_authenticated_vault() {
@@ -1045,7 +1054,7 @@ _vault_read_manifest() {
     _VAULT_MANIFEST_SOURCE_HOME="${line#source_home=}"
     [[ -n "$_VAULT_MANIFEST_SOURCE_HOME" && "$_VAULT_MANIFEST_SOURCE_HOME" != *[[:cntrl:]]* ]] || return 1
     _vault_validate_manifest_source_home "$_VAULT_MANIFEST_SOURCE_HOME" || return 1
-    _VAULT_MANIFEST_SOURCE_HOME=$(normalize_path "$_VAULT_MANIFEST_SOURCE_HOME") || return 1
+    _VAULT_MANIFEST_SOURCE_HOME=$(_gitsetu_lexical_path "$_VAULT_MANIFEST_SOURCE_HOME") || return 1
     line_count=$(wc -l < "$manifest" | tr -d '[:space:]') || return 1
     # Three fixed header lines plus exactly config/key/public records per profile.
     [[ "$line_count" -eq $((3 + _VAULT_MANIFEST_COUNT * 3)) ]] || return 1
@@ -1204,8 +1213,8 @@ _vault_portable_path_key() {
 
 _vault_map_home_bound_path() {
     local source_path="$1" source_home="$2" relative source_norm home_norm source_key home_key
-    source_norm=$(normalize_path "$source_path") || return 1
-    home_norm=$(normalize_path "$source_home") || return 1
+    source_norm=$(_gitsetu_lexical_path "$source_path") || return 1
+    home_norm=$(_gitsetu_lexical_path "$source_home") || return 1
     source_key=$(_vault_portable_path_key "$source_norm") || return 1
     home_key=$(_vault_portable_path_key "$home_norm") || return 1
     case "$source_key" in
@@ -1290,54 +1299,129 @@ _vault_write_private_staged_registry() {
 _vault_rewrite_staged_registry_for_target() {
     local archive_root="$1"
     local source_home="${_VAULT_MANIFEST_SOURCE_HOME%/}"
-    local source_home_canonical source_home_key source_ssh_canonical source_ssh_key
-    local i old_key old_key_canonical old_key_key profile_dir_canonical profile_dir_key relative mapped_key mapped_dir provider provider_user profile_content temp_profile
+    local source_home_lexical source_home_key source_ssh_lexical source_ssh_key
+    local i old_key_lexical old_key_key profile_dir_lexical profile_dir_key relative mapped_key mapped_dir profile_content temp_profile
     local saved_profiles_dir="$GITSETU_PROFILES_DIR"
+    local registry="$archive_root/state/profiles.conf"
+    local raw_line line_num=0 header_seen=0
+    local encoded_label encoded_directory encoded_provider encoded_sign encoded_key encoded_user
+    local label directory provider sign_commits key_path provider_user loaded_name loaded_email profile_gitconfig
 
     [[ -n "$source_home" ]] || return 1
-    source_home_canonical=$(normalize_path "$source_home") || return 1
-    source_home_key=$(_vault_portable_path_key "$source_home_canonical") || return 1
-    source_ssh_canonical=$(normalize_path "$source_home_canonical/.ssh") || return 1
-    source_ssh_key=$(_vault_portable_path_key "$source_ssh_canonical") || return 1
-    for (( i=0; i<PROFILE_COUNT; i++ )); do
-        old_key="${PROFILE_KEYS[$i]}"
-        old_key_canonical=$(normalize_path "$old_key") || return 1
-        old_key_key=$(_vault_portable_path_key "$old_key_canonical") || return 1
-        case "$old_key_key" in
-            "$source_ssh_key"/*) ;;
-            *)
-                print_error "Vault contains a nonportable key path outside the source ~/.ssh root: $old_key"
-                return 1
-                ;;
-        esac
-        relative="${old_key_key#"$source_ssh_key"/}"
-        [[ -n "$relative" && "$relative" != *[[:cntrl:]]* ]] || return 1
-        case "$relative" in ..|../*|*/../*|*/..) return 1 ;; esac
-        mapped_key="${HOME%/}/.ssh/${relative}"
-        mapped_key=$(normalize_path "$mapped_key") || return 1
-        _vault_validate_key_destination "$mapped_key" || {
-            print_error "Mapped key destination is outside the target ~/.ssh root: $mapped_key"
-            return 1
-        }
-        PROFILE_KEYS[i]="$mapped_key"
+    [[ -f "$registry" && ! -L "$registry" && -r "$registry" ]] || return 1
+    source_home_lexical=$(_gitsetu_lexical_path "$source_home") || return 1
+    source_home_key=$(_vault_portable_path_key "$source_home_lexical") || return 1
+    source_ssh_lexical=$(_gitsetu_lexical_path "$source_home_lexical/.ssh") || return 1
+    source_ssh_key=$(_vault_portable_path_key "$source_ssh_lexical") || return 1
 
-        if [[ -n "${PROFILE_DIRS[$i]}" ]]; then
-            profile_dir_canonical=$(normalize_path "${PROFILE_DIRS[$i]}") || return 1
-            profile_dir_key=$(_vault_portable_path_key "$profile_dir_canonical") || return 1
-            if [[ "$profile_dir_key" == "$source_home_key" || "$profile_dir_key" == "$source_home_key/"* ]]; then
-                mapped_dir=$(_vault_map_home_bound_path "$profile_dir_canonical" "$source_home_canonical") || return 1
-                mapped_dir=$(normalize_path "$mapped_dir") || return 1
-                PROFILE_DIRS[i]="$mapped_dir"
-            else
-                PROFILE_DIRS[i]="$profile_dir_canonical"
+    local -a raw_labels=() raw_dirs=() raw_providers=() raw_signs=() raw_keys=() raw_users=() raw_names=() raw_emails=()
+
+    while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+        line_num=$((line_num + 1))
+        if [[ "$line_num" -eq 1 ]]; then
+            if [[ "$raw_line" != "# gitsetu-registry-v2" ]]; then
+                return 1
             fi
+            header_seen=1
+            continue
         fi
-    done
+        [[ -n "$raw_line" && "$raw_line" != "#"* ]] || return 1
+        validate_registry_line "$raw_line" || return 1
+
+        IFS=: read -r encoded_label encoded_directory encoded_provider \
+            encoded_sign encoded_key encoded_user <<< "$raw_line"
+
+        label=$(_unescape_registry_field_preserve_newlines "$encoded_label") || return 1
+        directory=$(_unescape_registry_field_preserve_newlines "$encoded_directory") || return 1
+        provider=$(_unescape_registry_field_preserve_newlines "$encoded_provider") || return 1
+        sign_commits=$(_unescape_registry_field_preserve_newlines "$encoded_sign") || return 1
+        key_path=$(_unescape_registry_field_preserve_newlines "$encoded_key") || return 1
+        provider_user=$(_unescape_registry_field_preserve_newlines "$encoded_user") || return 1
+        label=${label%x}
+        directory=${directory%x}
+        provider=${provider%x}
+        sign_commits=${sign_commits%x}
+        key_path=${key_path%x}
+        provider_user=${provider_user%x}
+
+        validate_label "$label" || return 1
+        validate_provider "$provider" || return 1
+        validate_sign_flag "$sign_commits" || return 1
+        validate_provider_user "$provider_user" || return 1
+
+        profile_gitconfig="$archive_root/state/profiles/${label}.gitconfig"
+        [[ -f "$profile_gitconfig" && ! -L "$profile_gitconfig" ]] || return 1
+        loaded_name=$(git config -f "$profile_gitconfig" --get user.name 2>/dev/null) || loaded_name=""
+        loaded_email=$(git config -f "$profile_gitconfig" --get user.email 2>/dev/null) || loaded_email=""
+        validate_user_name "$loaded_name" || return 1
+        validate_email "$loaded_email" || return 1
+
+        if [[ "$label" == "global" && -z "$key_path" ]]; then
+            mapped_key=""
+        else
+            old_key_lexical=$(_gitsetu_lexical_path "$key_path") || return 1
+            old_key_key=$(_vault_portable_path_key "$old_key_lexical") || return 1
+            case "$old_key_key" in
+                "$source_ssh_key"/*) ;;
+                *)
+                    print_error "Vault contains a nonportable key path outside the source ~/.ssh root: $key_path"
+                    return 1
+                    ;;
+            esac
+            relative="${old_key_key#"$source_ssh_key"/}"
+            [[ -n "$relative" && "$relative" != *[[:cntrl:]]* ]] || return 1
+            case "$relative" in ..|../*|*/../*|*/..) return 1 ;; esac
+            mapped_key="${HOME%/}/.ssh/${relative}"
+            mapped_key=$(normalize_path "$mapped_key") || return 1
+            _vault_validate_key_destination "$mapped_key" || {
+                print_error "Mapped key destination is outside the target ~/.ssh root: $mapped_key"
+                return 1
+            }
+        fi
+
+        if [[ "$label" == "global" ]]; then
+            [[ -z "$directory" ]] || {
+                print_error "Vault global profile contains an invalid directory: $directory"
+                return 1
+            }
+            mapped_dir=""
+        else
+            profile_dir_lexical=$(_gitsetu_lexical_path "$directory") || return 1
+            profile_dir_key=$(_vault_portable_path_key "$profile_dir_lexical") || return 1
+            if [[ "$profile_dir_key" != "$source_home_key" && "$profile_dir_key" != "$source_home_key/"* ]]; then
+                print_error "Vault contains a nonportable external profile directory: $directory"
+                return 1
+            fi
+            mapped_dir=$(_vault_map_home_bound_path "$profile_dir_lexical" "$source_home_lexical") || return 1
+            mapped_dir=$(normalize_path "$mapped_dir") || return 1
+            validate_profile_directory "$mapped_dir" 0 || return 1
+        fi
+
+        raw_labels+=("$label")
+        raw_names+=("$loaded_name")
+        raw_emails+=("$loaded_email")
+        raw_dirs+=("$mapped_dir")
+        raw_providers+=("$provider")
+        raw_signs+=("$sign_commits")
+        raw_keys+=("$mapped_key")
+        raw_users+=("$provider_user")
+    done < "$registry"
+
+    [[ "$header_seen" -eq 1 && "${#raw_labels[@]}" -gt 0 ]] || return 1
+    [[ "${raw_labels[0]}" == "global" ]] || return 1
+
+    PROFILE_COUNT="${#raw_labels[@]}"
+    PROFILE_LABELS=("${raw_labels[@]}")
+    PROFILE_NAMES=("${raw_names[@]}")
+    PROFILE_EMAILS=("${raw_emails[@]}")
+    PROFILE_DIRS=("${raw_dirs[@]}")
+    PROFILE_PROVIDERS=("${raw_providers[@]}")
+    PROFILE_SIGNS=("${raw_signs[@]}")
+    PROFILE_KEYS=("${raw_keys[@]}")
+    PROFILE_USERS=("${raw_users[@]}")
 
     GITSETU_PROFILES_DIR="$archive_root/state/profiles"
     for (( i=0; i<PROFILE_COUNT; i++ )); do
-        provider="${PROFILE_PROVIDERS[$i]}"
-        provider_user="${PROFILE_USERS[$i]:-}"
         profile_content=$(build_profile_gitconfig "${PROFILE_LABELS[$i]}" "${PROFILE_NAMES[$i]}" \
             "${PROFILE_EMAILS[$i]}" "${PROFILE_SIGNS[$i]}" "${PROFILE_KEYS[$i]}") || {
                 GITSETU_PROFILES_DIR="$saved_profiles_dir"
@@ -1699,6 +1783,7 @@ _vault_snapshot_globals() {
     (umask 077 && mkdir -p "$txn/old-global") 2>/dev/null || return 1
     if [[ -e "$gitconfig" || -L "$gitconfig" ]]; then
         [[ -f "$gitconfig" && ! -L "$gitconfig" ]] || return 1
+        printf 'pending\n' > "$txn/old-global/gitconfig.state" || return 1
         _vault_copy_regular "$gitconfig" "$txn/old-global/gitconfig" 600 || return 1
         printf 'present\n' > "$txn/old-global/gitconfig.state" || return 1
     else
@@ -1706,6 +1791,7 @@ _vault_snapshot_globals() {
     fi
     if [[ -e "$sshconfig" || -L "$sshconfig" ]]; then
         [[ -f "$sshconfig" && ! -L "$sshconfig" ]] || return 1
+        printf 'pending\n' > "$txn/old-global/sshconfig.state" || return 1
         _vault_copy_regular "$sshconfig" "$txn/old-global/sshconfig" 600 || return 1
         printf 'present\n' > "$txn/old-global/sshconfig.state" || return 1
     else
@@ -1764,12 +1850,13 @@ _vault_commit_state() {
 }
 
 _vault_prepare_key_transaction() {
-    local txn="$1" i destination source mode old old_state active
+    local txn="$1" i destination source mode old old_state active key_base
     _VAULT_TXN_KEY_DESTINATIONS=()
     _VAULT_TXN_KEY_SOURCES=()
     _VAULT_TXN_KEY_MODES=()
     _VAULT_TXN_KEY_OLD=()
     _VAULT_TXN_KEY_ACTIVE=()
+    (umask 077 && mkdir -p "$txn/old-keys" "$txn/old-keys-meta") 2>/dev/null || return 1
     local combined_count=$((_VAULT_MANIFEST_COUNT * 2))
     for (( i=0; i<combined_count; i++ )); do
         if [[ "$i" -lt "$_VAULT_MANIFEST_COUNT" ]]; then
@@ -1782,7 +1869,8 @@ _vault_prepare_key_transaction() {
             source="${_VAULT_RESTORE_PUB_SOURCES[$key_i]}"
             mode=644
         fi
-        old="$txn/old-keys/$i"
+        key_base=$(basename "$destination")
+        old="$txn/old-keys/$key_base"
         _VAULT_TXN_KEY_DESTINATIONS+=("$destination")
         _VAULT_TXN_KEY_SOURCES+=("$source")
         _VAULT_TXN_KEY_MODES+=("$mode")
@@ -1795,11 +1883,15 @@ _vault_prepare_key_transaction() {
         if [[ -e "$destination" || -L "$destination" ]]; then
             [[ -f "$destination" && ! -L "$destination" ]] || return 1
             _vault_copy_regular "$destination" "$old" "$mode" || return 1
+            if [[ "$old" != "$txn/old-keys/$i" ]]; then
+                _vault_copy_regular "$destination" "$txn/old-keys/$i" "$mode" 2>/dev/null || true
+            fi
             old_state="present"
         else
             old_state="absent"
         fi
-        printf '%s\n' "$old_state" > "$txn/old-keys/$i.state" || return 1
+        printf '%s\n' "$old_state" > "$txn/old-keys-meta/$i.state" || return 1
+        printf '%s\n' "$old_state" > "$txn/old-keys/$i.state" 2>/dev/null || true
         _VAULT_TXN_KEY_ACTIVE+=(1)
         active=1
     done
@@ -1849,27 +1941,15 @@ _vault_restore_global_file() {
         state="$txn/old-global/sshconfig.state"
     fi
 
-    # A state file is written after the snapshot copy.  If that write failed,
-    # the private old-global file is still authoritative and must be restored.
-    if [[ -f "$state" ]]; then
-        if grep -q '^present$' "$state" 2>/dev/null; then
-            [[ -f "$source" && ! -L "$source" ]] || return 1
-        elif grep -q '^absent$' "$state" 2>/dev/null; then
-            [[ ! -e "$source" && ! -L "$source" ]] || return 1
-        else
-            return 1
-        fi
-    elif [[ -e "$source" || -L "$source" ]]; then
-        [[ -f "$source" && ! -L "$source" ]] || return 1
-    else
-        return 0
-    fi
     if [[ -L "$destination" ]]; then
         return 1
     fi
-    if [[ -f "$state" ]] && grep -q '^present$' "$state" 2>/dev/null; then
+
+    # If a snapshot copy exists and is a regular file, restore it.
+    # Never delete $destination unless the state marker explicitly recorded 'absent'.
+    if [[ -f "$source" && ! -L "$source" ]]; then
         _vault_copy_regular "$source" "$destination" 600 || return 1
-    else
+    elif [[ -f "$state" ]] && grep -q '^absent$' "$state" 2>/dev/null; then
         rm -f "$destination" 2>/dev/null || true
     fi
     return 0
@@ -1885,8 +1965,12 @@ _vault_rollback_transaction() {
     for (( i=count-1; i>=0; i-- )); do
         [[ "${_VAULT_TXN_KEY_ACTIVE[$i]:-0}" -eq 1 ]] || continue
         current="${_VAULT_TXN_KEY_DESTINATIONS[$i]}"
+        rm -f "${current}.gitsetu-restore.$$.$i" 2>/dev/null || true
         local old_key="${_VAULT_TXN_KEY_OLD[$i]}"
-        local key_state="$txn/old-keys/$i.state"
+        local key_state="$txn/old-keys-meta/$i.state"
+        if [[ ! -f "$key_state" && -f "$txn/old-keys/$i.state" ]]; then
+            key_state="$txn/old-keys/$i.state"
+        fi
         if [[ -f "$key_state" ]]; then
             if grep -q '^present$' "$key_state" 2>/dev/null; then
                 [[ -f "$old_key" && ! -L "$old_key" ]] || { failed=1; continue; }
@@ -1897,7 +1981,6 @@ _vault_rollback_transaction() {
         elif [[ -e "$old_key" || -L "$old_key" ]]; then
             [[ -f "$old_key" && ! -L "$old_key" ]] || { failed=1; continue; }
         else
-            failed=1
             continue
         fi
         if [[ -L "$current" ]]; then
@@ -1996,6 +2079,13 @@ _vault_signal_handler() {
             rollback_failed=1
         fi
     fi
+    local k count dest
+    count=${#_VAULT_TXN_KEY_DESTINATIONS[@]}
+    for (( k=0; k<count; k++ )); do
+        dest="${_VAULT_TXN_KEY_DESTINATIONS[$k]}"
+        [[ -n "$dest" ]] || continue
+        rm -f "${dest}.gitsetu-restore.$$.$k" 2>/dev/null || true
+    done
     [[ -n "${_VAULT_ACTIVE_TEMP:-}" ]] && rm -rf "$_VAULT_ACTIVE_TEMP" 2>/dev/null || true
     type release_lock >/dev/null 2>&1 && release_lock >/dev/null 2>&1 || true
     if [[ "$rollback_failed" -eq 0 ]]; then
@@ -2015,7 +2105,7 @@ _vault_restore_discard_staging() {
 }
 
 _vault_finalize_committed_restore() {
-    local txn="${1:-}" temp_dir="${2:-}" acquired="${3:-0}"
+    local txn="${1:-}" temp_dir="${2:-}" acquired="${3:-0}" force="${4:-0}"
     local cleanup_failed=0
 
     # From this point onward the live state is committed.  Clear the rollback
@@ -2058,6 +2148,9 @@ _vault_finalize_committed_restore() {
         print_error "The committed restore state was not rolled back."
         return 1
     fi
+    if [[ "$force" -eq 1 ]]; then
+        print_info "Replaced files were kept in $restore_backup_dir."
+    fi
     print_success "Authenticated v2 vault restored successfully."
     return 0
 }
@@ -2083,6 +2176,13 @@ _vault_restore_abort_transaction() {
     GITSETU_VAULT_ACTIVE_TRANSACTION=""
     _vault_restore_discard_staging "$temp_dir" "$acquired"
     return "$rollback_ok"
+}
+
+_vault_is_v1_vault() {
+    local vault_path="$1" magic
+    [[ -f "$vault_path" && ! -L "$vault_path" && -r "$vault_path" ]] || return 1
+    magic=$(head -c 8 "$vault_path" 2>/dev/null) || return 1
+    [[ "$magic" == "Salted__" ]]
 }
 
 # ------------------------------------------------------------------------------
@@ -2140,7 +2240,11 @@ cmd_restore() {
     fi
     if ! _vault_parse_header "$snapshot"; then
         _vault_restore_discard_staging "$temp_dir" 0
-        print_error "Unsupported, malformed, truncated, or non-v2 vault."
+        if _vault_is_v1_vault "$snapshot"; then
+            print_error "This is a v1.0.0 vault: restore it with GitSetu v1.0.0, then upgrade (see docs/guides/vault-backups.md)."
+        else
+            print_error "Unsupported, malformed, truncated, or non-v2 vault."
+        fi
         return 1
     fi
 
@@ -2182,18 +2286,13 @@ cmd_restore() {
     fi
     local saved_profiles_dir="$GITSETU_PROFILES_DIR"
     GITSETU_PROFILES_DIR="$archive_root/state/profiles"
-    if ! load_profiles "$archive_root/state/profiles.conf"; then
-        GITSETU_PROFILES_DIR="$saved_profiles_dir"
-        _vault_restore_discard_staging "$temp_dir" 0
-        print_error "Restored profile registry is not a valid v2 registry."
-        return 1
-    fi
-    GITSETU_PROFILES_DIR="$saved_profiles_dir"
     if ! _vault_rewrite_staged_registry_for_target "$archive_root"; then
+        GITSETU_PROFILES_DIR="$saved_profiles_dir"
         _vault_restore_discard_staging "$temp_dir" 0
         print_error "Vault contains nonportable managed paths; restore was refused."
         return 1
     fi
+    GITSETU_PROFILES_DIR="$saved_profiles_dir"
     if ! _vault_validate_extracted_tree "$extract_dir"; then
         _vault_restore_discard_staging "$temp_dir" 0
         print_error "Vault payload manifest or file allowlist validation failed."
@@ -2225,6 +2324,17 @@ cmd_restore() {
     done
     if [[ "$state_differs" -eq 0 && -f "$GITSETU_PROFILES_CONF" ]]; then
         if ! cmp -s "$GITSETU_PROFILES_CONF" "$archive_root/state/profiles.conf" 2>/dev/null; then
+            state_differs=1
+        fi
+    fi
+    if [[ "$state_differs" -eq 0 && -d "$GITSETU_CONFIG_DIR/remotes" ]]; then
+        local live_remotes="$GITSETU_CONFIG_DIR/remotes"
+        local vault_remotes="$archive_root/state/remotes"
+        if [[ ! -d "$vault_remotes" ]]; then
+            if [[ -n "$(ls -A "$live_remotes" 2>/dev/null)" ]]; then
+                state_differs=1
+            fi
+        elif ! diff -r -q "$live_remotes" "$vault_remotes" >/dev/null 2>&1; then
             state_differs=1
         fi
     fi
@@ -2328,5 +2438,5 @@ cmd_restore() {
         return 1
     fi
 
-    _vault_finalize_committed_restore "$transaction_dir" "$temp_dir" "$acquired"
+    _vault_finalize_committed_restore "$transaction_dir" "$temp_dir" "$acquired" "$force"
 }

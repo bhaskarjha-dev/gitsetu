@@ -367,14 +367,13 @@ verify_ssh_connectivity() {
         fi
 
         local expected_user="${PROFILE_USERS[$i]:-}"
-        if [[ -z "$expected_user" ]]; then
-            expected_user="$label"
-        fi
 
         if [[ -n "$remote_user" && -n "$expected_user" && "$remote_user" != "$expected_user" ]]; then
             printf >&2 '%b%s Key authenticated as '\''%s'\'', but profile '\''%s'\'' expects account '\''%s'\''.%b\n' \
                 "$RED" "$SYM_CROSS" "$remote_user" "$label" "$expected_user" "$RESET"
             failed=1
+        elif [[ -n "$remote_user" ]]; then
+            printf >&2 '%b%s authenticated as %s%b\n' "$GREEN" "$SYM_CHECK" "$remote_user" "$RESET"
         elif printf '%s' "$output" | grep -qi 'successfully authenticated\|logged in as\|welcome to'; then
             printf >&2 '%b%s authenticated%b\n' "$GREEN" "$SYM_CHECK" "$RESET"
         elif printf '%s' "$output" | grep -qi 'permission denied'; then

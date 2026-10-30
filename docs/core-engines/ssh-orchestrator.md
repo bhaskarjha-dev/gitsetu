@@ -46,18 +46,16 @@ Include ~/.config/gitsetu/profiles/ssh_config
 
 ### Stage 2: Sandboxed Orchestration
 All customized host targets, host mapping blocks, and explicit key links are
-stored inside GitSetu's managed state directory. The alias is formed from the
-provider's first DNS label plus the profile label, so GitHub's `github.com`
-provider produces `github-work`:
+stored inside GitSetu's managed state directory. The alias is formed using
+GitSetu's dedicated prefix `gitsetu-<label>`:
 
 ```ini
 # ~/.config/gitsetu/profiles/ssh_config (generated)
-Host gitsetu-work github-work
+Host gitsetu-work
     HostName github.com
     User git
     IdentityFile ~/.ssh/id_ed25519_work
     IdentitiesOnly yes
-    AddKeysToAgent yes
 ```
 
 The generated file is managed separately; unrelated host blocks remain outside

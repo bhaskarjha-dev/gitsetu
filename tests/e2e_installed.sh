@@ -291,7 +291,7 @@ case_fut01_remote() {
 # FUT-02: SSH greeting check.
 case_fut02_greeting() {
   new_home fut02-greeting || return
-  add_work || return
+  must "$GS" add work "Pat Example" pat.work@example.com "$HOME/work" --user=pat-work || return
   mkdir -p "$HOME/.ssh"
   printf 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLzapDVasmAcS9le6AHbqMW/\n' >> "$HOME/.ssh/known_hosts"
   printf '#!/bin/sh\nprintf "Hi wronguser! You have successfully authenticated.\n" >&2\nexit 1\n' > "$T/bin/ssh"

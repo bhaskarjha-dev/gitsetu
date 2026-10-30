@@ -3,17 +3,17 @@
   "name": "gitsetu",
   "version": "1.1.0",
   "releaseState": "development",
-  "sourceCommit": "98ceac1f8cced800e0d9893daf226fb653832aee",
-  "sourceDirty": "clean",
-  "bundleSha256": "40ce685aaacb7f57c95ad49cf81546a8d67091212b28cf8b0cf3cb2334a51cd8",
+  "sourceCommit": "60ecb2c67eb4454fb15c4136f12fb2be737bc888",
+  "sourceDirty": "dirty",
+  "bundleSha256": "121c9881af527279c20230ee62c536b78121b1cc8742fd584e20ae5bb1d3c716",
   "modules": [
     {
       "path": "lib/core.sh",
-      "sha256": "e810fcf06eb806d826ad3d15e22d65d0dcf1db04f26ab2e79fc35061e5680a6e"
+      "sha256": "25506950409a513270272be6f5c6c94e8940ebd30a6ec2fdf3823f9b067f7c06"
     },
     {
       "path": "lib/platform.sh",
-      "sha256": "896a6dc44db8dee2ec9ad864e32a037548f90c033d3375e4cc8a02c7dc7f1e84"
+      "sha256": "1b19a48015f2d720bac02e452a791efa0c0d3d1267ec6b0ec2c526aecc54ef80"
     },
     {
       "path": "lib/ui.sh",
@@ -25,27 +25,27 @@
     },
     {
       "path": "lib/backup.sh",
-      "sha256": "5b56c8c9e63694cd30ed7c9209290142d912b3a37980b5ebe74595d9dcbe0f66"
+      "sha256": "730b534483377eed8de75174e55dde1500c2bb26e663b3742f5356770b9bbc76"
     },
     {
       "path": "lib/ssh.sh",
-      "sha256": "3b4395a9b1a8061bb4b56ecaa51fb02040aa3fee1cdcdffbbd60bc7a0d4662db"
+      "sha256": "af63fb830a76af8bd5bbc898379776a97ef5e48efc329a71e6f9f481be693b25"
     },
     {
       "path": "lib/gitconfig.sh",
-      "sha256": "03c3d47386adcf37ef5d9f85e0fbe0d409dc1992650da7f9116495dfcaa9fb7e"
+      "sha256": "4010776feaa730ec5a2d9948ba0de138b039c1abd021c2a460211e76d4d83527"
     },
     {
       "path": "lib/guard.sh",
-      "sha256": "8cec8f8a901fad2f59c2926dd054ba993976979925341f95ee017e23852b4391"
+      "sha256": "db324a594b49b2c6a3c74cf0d1ce47eb9a8f2ca175b0900e5ba7712e1a60c748"
     },
     {
       "path": "lib/doctor.sh",
-      "sha256": "d5c268f0ff4390a50c34b70b27c90349e0316721f6027950c172ee2d84cd4ab9"
+      "sha256": "b9e6124027166dd3cbba89f926a1a697f99eb809e96aad52bed63f3e91c1d8f8"
     },
     {
       "path": "lib/verify.sh",
-      "sha256": "3871f863183ef485e68bf3459986b8fdbebe987f51483e3e0be57248805d7db9"
+      "sha256": "5c0c0da4efcc1df90e9a12b3d38e8dd482dabb8882883af315f3cfb92bec1b7c"
     },
     {
       "path": "lib/teardown.sh",
@@ -53,15 +53,15 @@
     },
     {
       "path": "lib/discovery.sh",
-      "sha256": "7b79a24d1c7407c904371ccd95e3af7f48ce779abb327bbbfbeb76a618811505"
+      "sha256": "eb086508bbbb661e008b1431b9f18d0748e642bad0522c6c83cfdbeb87ae35ec"
     },
     {
       "path": "lib/setup.sh",
-      "sha256": "9df1a528ef2318278deabcd18fc563474afc8d186c74b1f0612196228572fd41"
+      "sha256": "1fd76fa90ab498233c6d7f89072111e1184fbdfa3dfa4c72295470543cb1daa4"
     },
     {
       "path": "lib/completion.sh",
-      "sha256": "1ec15b6089727f9593a180faa1648aa4a5cee32da97179482e6feae57e154c1b"
+      "sha256": "9465e2c5e839a5bea6ae760225f3fed7f5cf470462eb1f43c519ad2e8ab0e7a0"
     }
   ]
 }

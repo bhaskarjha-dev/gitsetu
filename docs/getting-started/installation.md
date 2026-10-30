@@ -25,7 +25,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 > **Windows prerequisite:** GitSetu requires [Git for Windows](https://git-scm.com/download/win), which provides `git.exe` and `bash.exe`.
 
 > [!TIP]
-> The PowerShell installer creates native `gitsetu.cmd` and `gitsetu.ps1` shims and can add `%LOCALAPPDATA%\gitsetu\bin` to the user `PATH`. It does not execute an unreviewed remote script through `irm | iex`.
+> The PowerShell installer creates native `gitsetu.cmd` shims and can add `%LOCALAPPDATA%\gitsetu\bin` to the user `PATH`. It does not execute an unreviewed remote script through `irm | iex`.
 
 ### Windows (via Git Bash)
 From the same reviewed checkout:

@@ -523,7 +523,7 @@ generate_initial_blueprint() {
     PROFILE_EMAILS[0]="${DISCOVERED_GLOBAL_EMAIL:-}"
     PROFILE_DIRS[0]=""
     PROFILE_PROVIDERS[0]="github.com"
-    PROFILE_SIGNS[0]="0"
+    PROFILE_SIGNS[0]="${GITSETU_DEFAULT_SIGN:-inherit}"
 
     local global_key
     global_key=$(discover_global_ssh_key)
@@ -554,7 +554,7 @@ generate_initial_blueprint() {
         PROFILE_EMAILS[idx]="$cand_email"
         PROFILE_DIRS[idx]="${cand_dir:-$HOME/$candidate}"
         PROFILE_PROVIDERS[idx]="github.com"
-        PROFILE_SIGNS[idx]="0"
+        PROFILE_SIGNS[idx]="${GITSETU_DEFAULT_SIGN:-inherit}"
         PROFILE_KEYS[idx]="$cand_key"
         PROFILE_USERS[idx]=""
         PROFILE_PATS[idx]=""

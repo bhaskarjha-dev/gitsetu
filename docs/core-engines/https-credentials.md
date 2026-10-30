@@ -1,4 +1,4 @@
-# Credential Architecture & Platform Delegation
+# HTTPS Credentials & Platform Delegation
 
 In GitSetu v1.1.0, HTTPS credential management is intentionally delegated to Git's native credential-helper ecosystem (Git Credential Manager, `git-credential-osxkeychain`, and `git-credential-libsecret`) via standardized per-profile configuration, rather than maintaining a custom intermediary broker.
 
@@ -33,3 +33,4 @@ When invoked:
 - The command exits cleanly with status code `0`.
 - Stale `helper = ... gitsetu credential` lines do not cause fatal Git errors.
 - `gitsetu doctor` detects any remaining GitSetu helper lines outside the managed block, and `gitsetu doctor --repair` removes them.
+

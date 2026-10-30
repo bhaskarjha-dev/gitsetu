@@ -15,8 +15,57 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  test:
+    name: Test Gate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '20.19.4'
+          cache: npm
+          package-manager-cache: false
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run test suite
+        run: make test
+
+      - name: Check standalone bundle
+        run: make dist-check
+
+      - name: Run bundle contract suite
+        run: make test-bundle
+
+      - name: Run cleanroom E2E suite
+        if: runner.os != 'Windows'
+        run: bash tests/e2e_installed.sh --source
+
+      - name: Run Windows installer E2E
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test_powershell_installer_e2e.ps1
+          exit $LASTEXITCODE
+
   build-posix:
     name: Build & Attest POSIX Artifacts
+    needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: release
@@ -47,60 +96,33 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Build standalone bundle
+      - name: Render release assets
         shell: bash
         run: |
           set -euo pipefail
-          GITSETU_BUNDLE_SOURCE_COMMIT="$GITHUB_SHA" bash scripts/bundle.sh dist/gitsetu
-
-      - name: Generate SHA256SUMS and prepare release assets
-        shell: bash
-        run: |
-          set -euo pipefail
-          sha256sum dist/gitsetu dist/gitsetu.manifest.json install.sh uninstall.sh > SHA256SUMS
+          tag="${{ steps.vars.outputs.tag }}"
+          base_url="https://github.com/bhaskarjha-dev/gitsetu/releases/download/$tag"
+          bash scripts/render_release.sh "$tag" "$base_url" dist-release
 
       - name: Attest POSIX build provenance
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
           subject-path: |
-            dist/gitsetu
-            dist/gitsetu.manifest.json
-            install.sh
-            uninstall.sh
-            SHA256SUMS
-
-      - name: Publish to npm (if NPM_TOKEN present)
-        shell: bash
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          TAG_VER: ${{ steps.vars.outputs.version }}
-        run: |
-          set -euo pipefail
-          if [[ -n "${NPM_TOKEN:-}" ]]; then
-            node -e 'const fs=require("fs"); const pkg=JSON.parse(fs.readFileSync("package.json","utf8")); pkg.private=false; pkg.version=process.env.TAG_VER; fs.writeFileSync("package.json", JSON.stringify(pkg,null,2)+"\n");'
-            npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
-            if [[ "$TAG_VER" == *"-"* ]]; then
-              npm publish --access public --provenance --tag next
-            else
-              npm publish --access public --provenance
-            fi
-          else
-            echo "NPM_TOKEN secret not configured; skipping npm publish."
-          fi
+            dist-release/gitsetu
+            dist-release/gitsetu.manifest.json
+            dist-release/install.sh
+            dist-release/uninstall.sh
+            dist-release/SHA256SUMS
 
       - name: Upload POSIX artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: posix-artifacts
-          path: |
-            dist/gitsetu
-            dist/gitsetu.manifest.json
-            install.sh
-            uninstall.sh
-            SHA256SUMS
+          path: dist-release
 
   build-windows:
     name: Build & Attest Windows Artifacts
+    needs: test
     runs-on: windows-latest
     timeout-minutes: 30
     environment: release
@@ -115,7 +137,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          New-Item -ItemType Directory -Force -Path dist-windows | Out-Null
           $sourceRoot = Join-Path $env:TEMP "gitsetu-release-src"
           if (Test-Path -LiteralPath $sourceRoot) { Remove-Item -LiteralPath $sourceRoot -Recurse -Force }
           New-Item -ItemType Directory -Path $sourceRoot -Force | Out-Null
@@ -129,26 +151,23 @@ jobs:
           Copy-Item -LiteralPath (Join-Path $launcherOut "gitsetu.exe") -Destination (Join-Path $sourceRoot "gitsetu.exe")
           
           # Create zip archive
-          & .\packaging\windows\build_release_zip.ps1 -SourceDir $sourceRoot -OutFile "dist\gitsetu-windows.zip"
-          Copy-Item -LiteralPath "install.ps1" -Destination "dist\install.ps1"
-          Copy-Item -LiteralPath "uninstall.ps1" -Destination "dist\uninstall.ps1"
+          & .\packaging\windows\build_release_zip.ps1 -SourceDir $sourceRoot -OutFile "dist-windows\gitsetu-windows.zip"
+          Copy-Item -LiteralPath "install.ps1" -Destination "dist-windows\install.ps1"
+          Copy-Item -LiteralPath "uninstall.ps1" -Destination "dist-windows\uninstall.ps1"
 
       - name: Attest Windows build provenance
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
           subject-path: |
-            dist/gitsetu-windows.zip
-            dist/install.ps1
-            dist/uninstall.ps1
+            dist-windows/gitsetu-windows.zip
+            dist-windows/install.ps1
+            dist-windows/uninstall.ps1
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: windows-artifacts
-          path: |
-            dist/gitsetu-windows.zip
-            dist/install.ps1
-            dist/uninstall.ps1
+          path: dist-windows
 
   publish-release:
     name: Publish GitHub Release
@@ -168,6 +187,18 @@ jobs:
         with:
           name: windows-artifacts
           path: dist-release
+
+      - name: Regenerate Unified SHA256SUMS
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist-release
+          assets=()
+          for f in gitsetu gitsetu.manifest.json gitsetu-windows.zip install.sh uninstall.sh install.ps1 uninstall.ps1; do
+            [[ -f "$f" ]] && assets+=("$f")
+          done
+          sha256sum "${assets[@]}" > SHA256SUMS
+          sha256sum -c SHA256SUMS
 
       - name: Publish GitHub Release
         env:
@@ -193,3 +224,42 @@ jobs:
             --title "GitSetu $TAG" \
             --generate-notes \
             "${extra_flags[@]+"${extra_flags[@]}"}"
+
+  publish-npm:
+    name: Publish npm Package
+    needs: [publish-release, build-posix]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '20.19.4'
+          cache: npm
+          package-manager-cache: false
+
+      - name: Publish to npm (if NPM_TOKEN present)
+        shell: bash
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          TAG_VER: ${{ needs.build-posix.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${NPM_TOKEN:-}" ]]; then
+            node -e 'const fs=require("fs"); const pkg=JSON.parse(fs.readFileSync("package.json","utf8")); pkg.private=false; pkg.version=process.env.TAG_VER; fs.writeFileSync("package.json", JSON.stringify(pkg,null,2)+"\n");'
+            npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
+            if [[ "$TAG_VER" == *"-"* ]]; then
+              npm publish --access public --provenance --tag next
+            else
+              npm publish --access public --provenance
+            fi
+          else
+            echo "NPM_TOKEN secret not configured; skipping npm publish."
+          fi

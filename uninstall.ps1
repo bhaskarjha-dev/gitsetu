@@ -134,20 +134,6 @@ if (Test-Path -LiteralPath (Join-Path $v1Share ".git")) {
 }
 
 Write-Host "GitSetu v$version is installed at $rootDir"
-$teardownWarning = $false
-if ($KeepConfig) {
-    Write-Host "Generated SSH keys and Git identity configuration are preserved." -ForegroundColor Gray
-} else {
-    Write-Host "Running managed-state teardown..."
-    if (Test-Path -LiteralPath $exePath) {
-        & $exePath teardown --force
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warning "Managed teardown exited with code $LASTEXITCODE. Global configuration or hooks may require manual review."
-            $teardownWarning = $true
-        }
-    }
-}
-
 if (-not $Force) {
     $canPrompt = [Environment]::UserInteractive
     if ($canPrompt) {
@@ -162,6 +148,20 @@ if (-not $Force) {
     if ($confirmation -notmatch '^[Yy]$') {
         [Console]::Error.WriteLine("confirmation required; pass -Force")
         exit 3
+    }
+}
+
+$teardownWarning = $false
+if ($KeepConfig) {
+    Write-Host "Generated SSH keys and Git identity configuration are preserved." -ForegroundColor Gray
+} else {
+    Write-Host "Running managed-state teardown..."
+    if (Test-Path -LiteralPath $exePath) {
+        & $exePath teardown --force
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Managed teardown exited with code $LASTEXITCODE. Global configuration or hooks may require manual review."
+            $teardownWarning = $true
+        }
     }
 }
 
@@ -204,6 +204,29 @@ if ($userKey) {
             $newPath = [string]::Join(";", $kept)
             if ($newPath -ne $userPathRaw -and -not $usingTestMode) {
                 $userKey.SetValue("Path", $newPath, $pathKind)
+                try {
+                    Add-Type -Namespace Win32 -Name NativeMethods -MemberDefinition @'
+[DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+public static extern IntPtr SendMessageTimeout(
+    IntPtr hWnd,
+    uint Msg,
+    UIntPtr wParam,
+    string lParam,
+    uint fuFlags,
+    uint uTimeout,
+    out UIntPtr lpdwResult);
+'@ -ErrorAction SilentlyContinue
+                    $broadcastResult = [UIntPtr]::Zero
+                    [Win32.NativeMethods]::SendMessageTimeout(
+                        [IntPtr]0xffff,
+                        0x001A,
+                        [UIntPtr]::Zero,
+                        "Environment",
+                        2,
+                        5000,
+                        [ref]$broadcastResult
+                    ) | Out-Null
+                } catch { }
             }
         }
     } finally {

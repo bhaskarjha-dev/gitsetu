@@ -107,17 +107,6 @@ else
 fi
 
 info "GitSetu v$MARKER_VERSION is installed at $INSTALL_ROOT"
-if [[ "$KEEP_CONFIG" -eq 1 ]]; then
-    info "Generated SSH keys and Git identity configuration are preserved."
-else
-    info "Running managed-state teardown..."
-    if [[ -f "$RELEASE_DIR/gitsetu" && -x "$RELEASE_DIR/gitsetu" ]]; then
-        "$RELEASE_DIR/gitsetu" teardown --force || true
-    elif command -v gitsetu >/dev/null 2>&1; then
-        gitsetu teardown --force || true
-    fi
-fi
-
 if [[ "$FORCE" -ne 1 ]]; then
     if [[ -t 0 ]]; then
         printf 'Remove the GitSetu executables and versioned installation? [y/N] '
@@ -132,6 +121,17 @@ if [[ "$FORCE" -ne 1 ]]; then
     if [[ ! "$response" =~ ^[Yy]$ ]]; then
         printf 'confirmation required; pass --force\n' >&2
         exit 3
+    fi
+fi
+
+if [[ "$KEEP_CONFIG" -eq 1 ]]; then
+    info "Generated SSH keys and Git identity configuration are preserved."
+else
+    info "Running managed-state teardown..."
+    if [[ -f "$RELEASE_DIR/gitsetu" && -x "$RELEASE_DIR/gitsetu" ]]; then
+        "$RELEASE_DIR/gitsetu" teardown --force || true
+    elif command -v gitsetu >/dev/null 2>&1; then
+        gitsetu teardown --force || true
     fi
 fi
 

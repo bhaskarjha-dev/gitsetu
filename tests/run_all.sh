@@ -24,6 +24,7 @@ bundle_path=""
 include_powershell=0
 include_live_windows=0
 require_powershell=0
+fail_on_skip=0
 list_suites=0
 timeout_seconds="${GITSETU_TEST_TIMEOUT:-600}"
 suite_patterns=()
@@ -39,6 +40,7 @@ Options:
   --include-powershell     Run the checked-in PowerShell suites when possible
   --include-live-windows  Also run the live Scoop installer suite (opt-in)
   --require-powershell    Treat unavailable PowerShell as a failure
+  --fail-on-skip          Treat any skipped suite as a test failure
   --list-suites           List discovered shell and PowerShell suites without running them
   --timeout SECONDS        Per-suite timeout (default: 600)
   -h, --help               Show this help
@@ -82,6 +84,10 @@ while [[ $# -gt 0 ]]; do
         --require-powershell)
             include_powershell=1
             require_powershell=1
+            shift
+            ;;
+        --fail-on-skip)
+            fail_on_skip=1
             shift
             ;;
         --list-suites)
@@ -445,6 +451,10 @@ if [[ "$failed" -gt 0 ]]; then
 fi
 if [[ "$require_powershell" -eq 1 && "$skipped" -gt 0 ]]; then
     printf '\nRequired capability was skipped; failing closed.\n' >&2
+    exit 1
+fi
+if [[ "$fail_on_skip" -eq 1 && "$skipped" -gt 0 ]]; then
+    printf '\nOne or more test suites were skipped and --fail-on-skip was set; failing closed.\n' >&2
     exit 1
 fi
 

@@ -17,6 +17,20 @@ info() {
     printf '%s\n' "$1"
 }
 
+# Release metadata (populated by scripts/render_release.sh for publication)
+GITSETU_EMBEDDED_RELEASE=0
+GITSETU_RELEASE_STATE="development"
+GITSETU_RELEASE_VERSION="1.1.0"
+GITSETU_RELEASE_TAG=""
+GITSETU_RELEASE_COMMIT=""
+GITSETU_ARTIFACT_URL=""
+GITSETU_ARTIFACT_SHA256=""
+GITSETU_ARTIFACT_SIZE=""
+GITSETU_SIGNATURE_URL=""
+GITSETU_SIGNATURE_BUNDLE_URL=""
+GITSETU_CERTIFICATE_IDENTITY=""
+GITSETU_CERTIFICATE_OIDC_ISSUER="https://token.actions.githubusercontent.com"
+
 if [[ -z "${BASH_SOURCE[0]:-}" ]]; then
     SCRIPT_DIR=""
     if [[ "${GITSETU_EMBEDDED_RELEASE:-0}" -ne 1 ]]; then
@@ -44,6 +58,12 @@ for argument in "$@"; do
 done
 
 load_release_config() {
+    if [[ "${GITSETU_EMBEDDED_RELEASE:-0}" -eq 1 ]]; then
+        [[ "$GITSETU_RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]] || error "Invalid GitSetu release version metadata"
+        [[ -n "$GITSETU_ARTIFACT_SHA256" ]] || error "GitSetu artifact sha256 metadata is missing"
+        return 0
+    fi
+
     local config="" candidate key value
     for candidate in "$SCRIPT_DIR/release.env" "$SCRIPT_DIR/packaging/release.env"; do
         if [[ -f "$candidate" && ! -L "$candidate" ]]; then
@@ -243,17 +263,23 @@ fi
 assert_no_symlink_components "$INSTALL_ROOT"
 assert_no_symlink_components "$BIN_DIR"
 V1_ADOPTED=0
+V1_CANDIDATE_PATH=""
+V1_BACKUP_PATH=""
+V1_REMOVED_LINKS=()
 v1_candidate="$HOME/.local/share/gitsetu"
 if [[ -d "$v1_candidate/.git" && -f "$v1_candidate/gitsetu" && -f "$v1_candidate/lib/core.sh" && ! -L "$v1_candidate" ]]; then
     v1_backup_ts="$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || date +%Y%m%d%H%M%S)"
     v1_backup="${v1_candidate}.v1-backup-${v1_backup_ts}"
     mv "$v1_candidate" "$v1_backup" || error "Could not move legacy v1.0.0 installation to backup: $v1_backup"
+    V1_CANDIDATE_PATH="$v1_candidate"
+    V1_BACKUP_PATH="$v1_backup"
     info "Adopted legacy v1.0.0 installation: moved to $v1_backup"
     for link_candidate in "$BIN_DIR/gitsetu" "$BIN_DIR/git-setu" "$HOME/.local/bin/gitsetu" "$HOME/.local/bin/git-setu"; do
         if [[ -L "$link_candidate" ]]; then
             link_target="$(readlink "$link_candidate" 2>/dev/null || true)"
             if [[ "$link_target" == "$v1_candidate"* || "$link_target" == "$v1_backup"* || "$link_target" == *"/gitsetu"* ]]; then
                 rm -f "$link_candidate"
+                V1_REMOVED_LINKS+=("$link_candidate")
             fi
         fi
     done
@@ -283,6 +309,15 @@ cleanup() {
     rm -rf -- "$DOWNLOAD_DIR"
     if [[ "$ROOT_PREEXISTED" -eq 0 && "$INSTALL_COMPLETE" -eq 0 && -d "$INSTALL_ROOT" && ! -L "$INSTALL_ROOT" ]]; then
         rm -rf -- "$INSTALL_ROOT"
+    fi
+    if [[ "$V1_ADOPTED" -eq 1 && "$INSTALL_COMPLETE" -eq 0 ]]; then
+        if [[ -d "$V1_BACKUP_PATH" && ! -e "$V1_CANDIDATE_PATH" ]]; then
+            mv "$V1_BACKUP_PATH" "$V1_CANDIDATE_PATH" 2>/dev/null || true
+            for link in "${V1_REMOVED_LINKS[@]+"${V1_REMOVED_LINKS[@]}"}"; do
+                ln -sf "$V1_CANDIDATE_PATH/gitsetu" "$link" 2>/dev/null || true
+            done
+            info "Install failed; your v1.0.0 installation was restored."
+        fi
     fi
 }
 trap cleanup EXIT HUP INT TERM

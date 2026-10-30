@@ -784,7 +784,7 @@ PROFILE_COUNT=0
 # Runtime state
 # ------------------------------------------------------------------------------
 
-GITSETU_OS=""           # Set by detect_os(): linux, macos, wsl, gitbash, unknown
+GITSETU_OS="${GITSETU_OS:-}"           # Set by detect_os(): linux, macos, wsl, gitbash, unknown
 GITSETU_DRY_RUN=0      # Set to 1 by --dry-run flag
 GITSETU_USE_PASSPHRASE=0 # Set to 1 to prompt for SSH passphrases
 
@@ -1190,7 +1190,7 @@ _load_v1_profiles() {
         fi
 
         provider="${provider:-github.com}"
-        sign_commits="${sign_commits:-0}"
+        sign_commits="${sign_commits:-inherit}"
         if [[ -z "$key_path" ]]; then
             key_path="$HOME/.ssh/id_ed25519_${label}"
         fi

@@ -54,6 +54,7 @@ GitSetu scans your machine, discovers your existing Git identities, and **in one
 ```bash
 # For the current publication-ready candidate, run from a reviewed checkout:
 bash install.sh
+export PATH="$HOME/.local/bin:$PATH"
 
 # Setup (discovers identities automatically)
 gitsetu setup --auto
@@ -158,9 +159,7 @@ For a public release, use the release documentation and package manager for your
 
 **Package managers:**
 
-No public Homebrew, AUR, or Nix package is published for the release candidate.
-The repository contains withheld templates for a future intentional release;
-do not install them from this checkout.
+Package manager formulas (Homebrew, AUR, Nix) will be available upon official package repository publication. Use `install.sh` for current installation.
 
 ### Windows
 
@@ -170,20 +169,7 @@ Run `install.ps1` from a reviewed, pinned checkout. For a public release, prefer
 
 **Package managers:**
 
-No public WinGet or Scoop package is published for the release candidate.
-The repository contains withheld templates for a future intentional release;
-use `install.ps1` from a reviewed checkout for now.
-
-### GitHub CLI Extension
-
-The `gh-gitsetu` and `gh-setu` extension repositories are not published as
-public releases yet. From a reviewed checkout, the wrappers can be exercised
-directly:
-
-```bash
-bash packaging/gh-extension/gh-gitsetu --version
-bash packaging/gh-extension/gh-setu --version
-```
+Package manager manifests (WinGet, Scoop) will be available upon official package repository publication. Use `install.ps1` from a reviewed checkout for now.
 
 > [!NOTE]
 > On Windows, once configured, automatic identity switching works natively everywhere — PowerShell, CMD, Windows Terminal, VS Code, and JetBrains IDEs. No shell hook required.
@@ -252,7 +238,6 @@ gitsetu teardown
 | Auto-discovery setup | ✓ | | | | |
 | SSH key generation | ✓ | ~ | | ✓ | |
 | Pre-commit guard | ✓ | ~ | | ✓ | |
-| Credential broker | ✓ | ✓ | | ✓ | |
 | Authenticated v2 backup | ✓ | | | | |
 | Windows native support | ✓ | ~ | | | ~ |
 | Built-in doctor/verify | ✓ | | | | |
@@ -274,7 +259,7 @@ See [full comparison →](docs/overview/comparisons.md)
 | [Architecture](docs/overview/architecture.md) | How the configuration compiler works |
 | [Identity Routing](docs/core-engines/identity-routing.md) | Deep dive into `includeIf` engine |
 | [SSH Orchestrator](docs/core-engines/ssh-orchestrator.md) | Key generation and host alias routing |
-| [Credential Broker](docs/core-engines/credential-broker.md) | HTTPS PAT and keychain integration |
+| [HTTPS Credentials](docs/core-engines/https-credentials.md) | Git credential helper delegation and PAT routing |
 | [Pre-Commit Guard](docs/core-engines/precommit-guard.md) | Fail-closed identity verification |
 | [Hardware Keys](docs/guides/hardware-keys.md) | FIDO2 / YubiKey setup |
 | [Vault Backups](docs/guides/vault-backups.md) | Encrypted export/import |
@@ -288,25 +273,16 @@ See [full comparison →](docs/overview/comparisons.md)
 
 ## Testing
 
-GitSetu has automated unit, integration, tamper, concurrency, packaging, and platform tests. Run the complete local suite with `bash tests/run_all.sh`; the Windows Sandbox harness is an additional experimental environment and is not a release qualification gate until its legacy fixtures are reconciled.
+GitSetu has comprehensive automated unit, integration, tamper, concurrency, packaging, and platform test suites across Linux, macOS, and Windows.
 
 ```bash
-# Run unit & E2E tests
+# Run all test suites
 bash tests/run_all.sh
 
-# Run comprehensive audit (auto-creates isolation; experimental, not a release gate)
-bash sandbox/comprehensive_audit.sh sandbox/results
+# Run tests against bundled artifact
+make dist-check
+make test-bundle
 ```
-
-```powershell
-# Launch Windows Sandbox (disposable isolated VM)
-powershell -ExecutionPolicy Bypass -File sandbox\launch_sandbox.ps1
-
-# Or via Command Prompt:
-sandbox\launch_sandbox.bat
-```
-
-See [sandbox/README.md](sandbox/README.md) for details.
 
 ---
 

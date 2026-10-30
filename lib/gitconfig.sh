@@ -688,7 +688,7 @@ build_profile_gitconfig() {
             return 1
         }
     else
-        [[ "$sign_commits" == "0" || "$sign_commits" == "1" ]] || {
+        [[ "$sign_commits" == "0" || "$sign_commits" == "1" || "$sign_commits" == "inherit" ]] || {
             print_error "Invalid sign_commits flag for profile '$label'."
             return 1
         }

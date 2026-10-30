@@ -38,6 +38,9 @@ CODEOWNERS text eol=lf
 *.bat text eol=crlf
 *.cmd text eol=crlf
 
+# Binary artifacts and fixtures
+*.vault binary
+
 # Export ignore rules for clean, deterministic release archives
 .github export-ignore
 .gitattributes export-ignore

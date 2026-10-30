@@ -449,7 +449,7 @@ cmd_prompt() {
         provider_user="$_GITSETU_DECODED_FIELD"
 
         [[ "$label" =~ ^[a-z][a-z0-9-]{0,19}$ && "$label" != *- ]] || return 0
-        [[ "$sign_commits" == "0" || "$sign_commits" == "1" ]] || return 0
+        [[ "$sign_commits" == "0" || "$sign_commits" == "1" || "$sign_commits" == "inherit" ]] || return 0
         _gitsetu_prompt_valid_provider "$provider" || return 0
         _gitsetu_prompt_valid_user "$provider_user" || return 0
         [[ -n "$key_path" ]] || return 0
@@ -808,7 +808,7 @@ ${BOLD}USAGE${RESET}
     gitsetu verify                   Test SSH keys and git config
     gitsetu doctor [--repair] [--dry-run] [--json]
                                      Run diagnostic checks or auto-heal configuration
-    gitsetu update --development     Verify a clean local development checkout
+    gitsetu update                   Check for updates or update GitSetu
     gitsetu prompt                   Print active profile for \$PS1
     gitsetu backup [out_file]        Export encrypted identity state
     gitsetu restore <in_file>        Import encrypted identity state
@@ -1106,42 +1106,8 @@ _gitsetu_update_git() {
 }
 
 cmd_update() {
-    local mode="${1:-}"
+    print_section "GitSetu Update"
     detect_os
-
-    if [[ "$mode" == "--development" || "$mode" == "--dev" ]]; then
-        if [[ ! -d "$GITSETU_DIR/.git" ]]; then
-            print_error "Development verification requires the canonical GitSetu checkout."
-            return 1
-        fi
-        local status
-        status=$(_gitsetu_update_git status --porcelain=v1 --untracked-files=all 2>/dev/null) || {
-            print_error "Unable to verify the development checkout status."
-            return 1
-        }
-        if [[ -n "$status" ]]; then
-            print_error "Development checkout is dirty; no update or reset was attempted."
-            return 1
-        fi
-        local branch
-        branch=$(_gitsetu_update_git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
-        local expected_branch="${GITSETU_DEVELOPMENT_BRANCH:-feature/v1.1.0-onboarding-overhaul}"
-        if [[ "$branch" != "$expected_branch" && "$branch" != "main" && "$branch" != "master" ]]; then
-            print_error "Development branch drift detected (expected '$expected_branch', found '${branch:-detached}')."
-            return 1
-        fi
-        local commit
-        commit=$(_gitsetu_update_git rev-parse --verify 'HEAD^{commit}' 2>/dev/null) || {
-            print_error "Development checkout HEAD could not be verified."
-            return 1
-        }
-        [[ "$commit" =~ ^[0-9a-fA-F]{40,64}$ ]] || {
-            print_error "Development checkout HEAD is not a verified commit object."
-            return 1
-        }
-        print_success "Development checkout verified ($commit)."
-        return 0
-    fi
 
     # 1. Git checkout
     if [[ -d "$GITSETU_DIR/.git" ]]; then
@@ -1175,6 +1141,14 @@ cmd_update() {
         if [[ "$current_tag" == "$latest_tag" ]]; then
             print_success "GitSetu is already up to date ($latest_tag)."
             return 0
+        fi
+
+        local latest_version="${latest_tag#v}"
+        if declare -f _gitsetu_version_ge >/dev/null 2>&1; then
+            if _gitsetu_version_ge "$GITSETU_VERSION" "$latest_version"; then
+                print_success "GitSetu v$GITSETU_VERSION is current (latest release: $latest_tag)."
+                return 0
+            fi
         fi
 
         print_step "Updating to $latest_tag..."
@@ -1216,14 +1190,14 @@ cmd_update() {
 
     if [[ -n "$install_root" && -f "$install_root/install.marker" ]]; then
         print_info "GitSetu was installed from a release package."
-        print_info "To install or update the latest GitSetu release, download the verified release archive from:"
-        printf '  https://github.com/bhaskarjha-dev/gitsetu/releases/latest\n'
+        print_info "To update to the latest GitSetu release, run:"
+        printf '  curl -fsSL https://github.com/bhaskarjha-dev/gitsetu/releases/latest/download/install.sh | bash\n'
         return 0
     fi
 
     # 5. Default / standalone
-    print_info "To install or update the latest GitSetu release, download the verified release archive from:"
-    printf '  https://github.com/bhaskarjha-dev/gitsetu/releases/latest\n'
+    print_info "To install or update to the latest GitSetu release, run:"
+    printf '  curl -fsSL https://github.com/bhaskarjha-dev/gitsetu/releases/latest/download/install.sh | bash\n'
     return 0
 }
 
@@ -1975,11 +1949,11 @@ main() {
             cmd_import "$@"
             ;;
         update)
-            if [[ $# -gt 1 || ( $# -eq 1 && "$1" != "--development" && "$1" != "--dev" ) ]]; then
-                print_error "Usage: gitsetu update [--development]"
+            if [[ $# -ne 0 ]]; then
+                print_error "Usage: gitsetu update"
                 return 1
             fi
-            cmd_update "${1:-}"
+            cmd_update
             ;;
         --help|-h|help)
             if [[ $# -ne 0 ]]; then

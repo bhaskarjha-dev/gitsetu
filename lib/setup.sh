@@ -180,7 +180,7 @@ preset_guided_onboarding() {
                 # shellcheck disable=SC2034
                 PROFILE_PROVIDERS[0]="github.com"
                 # shellcheck disable=SC2034
-                PROFILE_SIGNS[0]="0"
+                PROFILE_SIGNS[0]="${GITSETU_DEFAULT_SIGN:-inherit}"
                 # shellcheck disable=SC2034
                 PROFILE_KEYS[0]="$global_key"
                 # shellcheck disable=SC2034
@@ -275,7 +275,7 @@ preset_guided_onboarding() {
                 # shellcheck disable=SC2034
                 PROFILE_PROVIDERS[0]="github.com"
                 # shellcheck disable=SC2034
-                PROFILE_SIGNS[0]="0"
+                PROFILE_SIGNS[0]="${GITSETU_DEFAULT_SIGN:-inherit}"
                 # shellcheck disable=SC2034
                 PROFILE_KEYS[0]="$global_key"
                 # shellcheck disable=SC2034
@@ -295,7 +295,7 @@ preset_guided_onboarding() {
                 # shellcheck disable=SC2034
                 PROFILE_PROVIDERS[1]="github.com"
                 # shellcheck disable=SC2034
-                PROFILE_SIGNS[1]="0"
+                PROFILE_SIGNS[1]="${GITSETU_DEFAULT_SIGN:-inherit}"
                 # shellcheck disable=SC2034
                 PROFILE_KEYS[1]="${work_key:-$HOME/.ssh/id_ed25519_work}"
                 # shellcheck disable=SC2034
@@ -315,7 +315,7 @@ preset_guided_onboarding() {
                 # shellcheck disable=SC2034
                 PROFILE_PROVIDERS[2]="github.com"
                 # shellcheck disable=SC2034
-                PROFILE_SIGNS[2]="0"
+                PROFILE_SIGNS[2]="${GITSETU_DEFAULT_SIGN:-inherit}"
                 # shellcheck disable=SC2034
                 PROFILE_KEYS[2]="${personal_key:-$HOME/.ssh/id_ed25519_personal}"
                 # shellcheck disable=SC2034
@@ -433,7 +433,7 @@ prompt_add_profile() {
     
     ask "Git Provider Host (e.g. github.com, gitlab.com, git.corp.internal)" "github.com"
     PROFILE_PROVIDERS[PROFILE_COUNT]="$REPLY"
-    PROFILE_SIGNS[PROFILE_COUNT]="${GITSETU_DEFAULT_SIGN:-0}"
+    PROFILE_SIGNS[PROFILE_COUNT]="${GITSETU_DEFAULT_SIGN:-inherit}"
 
     ask "Provider Username (e.g. GitHub handle, for HTTPS cloning)" ""
     PROFILE_USERS[PROFILE_COUNT]="$REPLY"
@@ -1681,7 +1681,7 @@ cmd_profile() {
                 PROFILE_EMAILS[idx]=""
                 PROFILE_DIRS[idx]="$HOME/$label"
                 PROFILE_PROVIDERS[idx]="github.com"
-                PROFILE_SIGNS[idx]="${GITSETU_DEFAULT_SIGN:-0}"
+                PROFILE_SIGNS[idx]="${GITSETU_DEFAULT_SIGN:-inherit}"
                 PROFILE_KEYS[idx]="$HOME/.ssh/id_ed25519_${label}"
                 PROFILE_USERS[idx]=""
                 PROFILE_PATS[idx]=""
@@ -1698,11 +1698,12 @@ cmd_profile() {
                     --provider=*) PROFILE_PROVIDERS[idx]="${1#*=}" ;;
                     --key=*) PROFILE_KEYS[idx]=$(normalize_path "${1#*=}") ;;
                     --fido2) PROFILE_KEYS[idx]="$HOME/.ssh/id_ed25519_sk_${label}" ;;
+                    --sign=*) PROFILE_SIGNS[idx]="${1#*=}" ;;
                     --sign) PROFILE_SIGNS[idx]="1" ;;
                     --no-sign) PROFILE_SIGNS[idx]="0" ;;
                     --guard) GITSETU_GUARD_FLAG=1 ;;
                     --no-guard) GITSETU_GUARD_FLAG=0 ;;
-                    --provider-user=*) PROFILE_USERS[idx]="${1#*=}" ;;
+                    --provider-user=*|--user=*) PROFILE_USERS[idx]="${1#*=}" ;;
                     --remote=*)
                         local r_val="${1#*=}"
                         if [[ -n "$r_val" ]]; then

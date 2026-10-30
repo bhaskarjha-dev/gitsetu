@@ -80,9 +80,12 @@ try {
     $cmdShim = Join-Path $installRoot "bin\gitsetu.cmd"
     $psShim = Join-Path $installRoot "bin\gitsetu.ps1"
     $altCmdShim = Join-Path $installRoot "bin\git-setu.cmd"
-    foreach ($required in @($cmdShim, $psShim, $altCmdShim, (Join-Path $installRoot "install.marker"), (Join-Path $installRoot "current.txt"))) {
+    $altPsShim = Join-Path $installRoot "bin\git-setu.ps1"
+    foreach ($required in @($cmdShim, $altCmdShim, (Join-Path $installRoot "install.marker"), (Join-Path $installRoot "current.txt"))) {
         if (-not (Test-Path -LiteralPath $required)) { throw "Installed file is missing: $required" }
     }
+    if (Test-Path -LiteralPath $psShim) { throw "PowerShell shim must not be created: $psShim" }
+    if (Test-Path -LiteralPath $altPsShim) { throw "PowerShell shim must not be created: $altPsShim" }
 
     # The CMD shim must not fall back to a caller-controlled powershell.exe.
     $cmdText = [IO.File]::ReadAllText($cmdShim)
@@ -181,10 +184,10 @@ public static class HostilePowerShell {
     $previousAction = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        $psOutput = (& $trustedPowerShell -NoProfile -ExecutionPolicy Bypass -File $psShim --version 2>&1 | Out-String)
-        $psExit = $LASTEXITCODE
+        $cliOutput = (& $cmdShim --version 2>&1 | Out-String)
+        $cliExit = $LASTEXITCODE
     } finally { $ErrorActionPreference = $previousAction }
-    if ($psExit -ne 0 -or $psOutput -notmatch "gitsetu v1\.1\.0") { throw "PowerShell alias failed: $psOutput" }
+    if ($cliExit -ne 0 -or $cliOutput -notmatch "gitsetu v1\.1\.0") { throw "Direct CLI invocation failed: $cliOutput" }
 
     $env:GITSETU_INSTALL_DIR = $installRoot
     & $trustedPowerShell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot "uninstall.ps1") -Force

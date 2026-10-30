@@ -368,51 +368,28 @@ make_development_checkout() {
     printf '%s' "$checkout"
 }
 
-test_update_rejects_dirty_development_checkout() {
+test_update_rejects_dirty_checkout() {
     local checkout output rc=0
     checkout=$(make_development_checkout)
     printf 'dirty\n' > "$checkout/untracked.txt"
-    output=$(bash "$checkout/gitsetu" update --development 2>&1) || rc=$?
-    assert_equals "1" "$rc" "dirty development checkout is rejected" || return 1
+    output=$(bash "$checkout/gitsetu" update 2>&1) || rc=$?
+    assert_equals "1" "$rc" "dirty checkout is rejected" || return 1
     assert_contains "$output" "dirty" "dirty checkout diagnostic is visible" || return 1
 }
 
-test_update_rejects_branch_drift() {
+test_update_rejects_unrecognized_flag() {
     local checkout output rc=0
     checkout=$(make_development_checkout)
-    git -C "$checkout" checkout --quiet -b drifted-branch
-    output=$(bash "$checkout/gitsetu" update --development 2>&1) || rc=$?
-    assert_equals "1" "$rc" "branch drift is rejected" || return 1
-    assert_contains "$output" "branch drift" "branch drift diagnostic is visible" || return 1
+    output=$(bash "$checkout/gitsetu" update --bogus 2>&1) || rc=$?
+    assert_equals "1" "$rc" "unrecognized flag is rejected" || return 1
 }
 
-test_update_propagates_verification_failure() {
-    local checkout real_git output rc=0 wrapper_dir
+test_crlf_trampoline_preserves_exit_code() {
+    local checkout output rc=0
     checkout=$(make_development_checkout)
-    real_git=$(command -v git)
-    wrapper_dir="$TEST_HOME/fake-git-bin"
-    rm -rf "$wrapper_dir"
-    mkdir -p "$wrapper_dir"
-    cat > "$wrapper_dir/git" <<EOF
-#!/usr/bin/env bash
-seen_rev_parse=0
-for arg in "\$@"; do
-    if [[ "\$seen_rev_parse" -eq 1 && "\$arg" == "--verify" ]]; then
-        exit 19
-    fi
-    if [[ "\$arg" == "rev-parse" ]]; then
-        seen_rev_parse=1
-    fi
-done
-exec "$real_git" "\$@"
-EOF
-    chmod +x "$wrapper_dir/git"
-    local wrapper_path="$wrapper_dir"
-    if command -v cygpath >/dev/null 2>&1; then wrapper_path=$(cygpath -u "$wrapper_dir"); fi
-    output=$(PATH="$wrapper_path:$PATH" bash "$checkout/gitsetu" update --development 2>&1) || rc=$?
-    assert_equals "1" "$rc" "failed local verification is propagated" || return 1
-    assert_contains "$output" "HEAD could not be verified" "verification failure is visible" || return 1
-    assert_not_contains "$output" "Development checkout verified" "failed verification emits no success claim" || return 1
+    output=$(bash "$checkout/gitsetu" --version 2>&1) || rc=$?
+    assert_equals "0" "$rc" "version command succeeds through CRLF trampoline" || return 1
+    assert_contains "$output" "gitsetu v1.1.0" "version output is accurate" || return 1
 }
 
 # ------------------------------------------------------------------------------
@@ -595,9 +572,9 @@ run_test "module source failures abort startup" test_module_load_failure_is_not_
 run_test "CRLF source staging ignores HOME, PWD, and TMPDIR" test_source_staging_ignores_caller_directories
 run_test "inherited Port 443 routing state is cleared" test_port443_routing_state_is_process_owned
 run_test "teardown failure propagates and releases its lock" test_teardown_failure_propagates_and_releases_lock
-run_test "development update rejects dirty checkout" test_update_rejects_dirty_development_checkout
-run_test "development update rejects branch drift" test_update_rejects_branch_drift
-run_test "development update propagates verification failure" test_update_propagates_verification_failure
+run_test "update rejects dirty checkout" test_update_rejects_dirty_checkout
+run_test "update rejects unrecognized flag" test_update_rejects_unrecognized_flag
+run_test "CRLF trampoline preserves exit code" test_crlf_trampoline_preserves_exit_code
 run_test "unsafe inherited numeric values fail closed" test_crlf_rejects_unsafe_inherited_numbers
 run_test "read-only install path uses private CRLF runtime" test_crlf_read_only_install_uses_private_runtime
 
