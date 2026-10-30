@@ -104,6 +104,8 @@ Every test gate across POSIX and Windows native platforms is green:
 - **Cleanroom Installed E2E (`tests/e2e_installed.sh --source` & installed):** 18/18 & 19/19 PASSED.
 - **Documentation Link & Anchor Verification (`node scripts/check-docs.mjs`):** 33/33 PASSED.
 - **Codebase Linting & Release Policy (`make metadata docs lint`):** PASS (ShellCheck clean).
+- **GitHub Actions CI Pipeline (Run #147):** 100% GREEN (`Lint Ubuntu/macOS`, `Tests Ubuntu/macOS/Windows`).
+- **Distribution Matrix Verification (Run #45):** 100% GREEN (Linux, macOS native Bash 3.2, Windows native launcher).
 
 **Verdict: GitSetu v1.1.0 achieves complete GO status.**
 
