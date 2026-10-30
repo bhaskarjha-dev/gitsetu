@@ -34,6 +34,11 @@ The following architectural hardening milestones describe the current local rele
 - **Bash 3.2 Array Panic Prevention**: Native C-style POSIX loop structures replacing fragile subshell bounds.
 - **Path Injection Prevention**: Strict newline sanitization preventing INI boundary corruption.
 - **Authenticated State Export**: Versioned authenticated v2 vault packaging (`gitsetu backup` / `gitsetu restore`) with staging, tamper checks, and rollback. Older vault formats are rejected.
+- **Remote-URL Routing (FUT-01)**: Dynamic identity routing by `includeIf "hasconfig:remote.*.url:..."` patterns in the tail block for repositories cloned outside designated folders.
+- **SSH Greeting Account Verification (FUT-02)**: Validating authenticated remote usernames against configured provider accounts during `verify` checks without false-mismatch regressions.
+- **Safe Adoption & Diagnostics (FUT-04)**: Non-destructive configuration trace (`gitsetu explain`) and interactive adoption (`gitsetu import`) with existing key reuse and explicit confirmation.
+- **Structured Telemetry API**: Native machine-readable JSON output via `gitsetu status --json` and `gitsetu doctor --json` for editor integration and automated audits.
+- **Inherited Tri-State Commit Signing**: Preserving global GPG and hardware signing configurations by defaulting to `inherit`.
 - **Empirical Sandbox Verification**: Windows Sandbox is an optional environment check. Record the tested revision and terminal status; a run with no terminal status is inconclusive, not a product pass.
 
 ---
@@ -67,18 +72,27 @@ The following architectural hardening milestones describe the current local rele
 
 ---
 
-## Phase 1.5: Codebase Consolidation & Key Systems (v1.2.0)
+## Phase 1.5: Codebase Consolidation, Key Systems & Migration (v1.2.0)
 
-**Goal:** Shrink the codebase to a maintainable core and expand hardware key/agent integration with zero regressions.
+**Goal:** Shrink the codebase to an ultra-lean maintainable core, expand agent/hardware key routing, and automate upstream package submissions.
 
 - **Core Codebase Consolidation (FUT-03):**
-  - Following the feature-freeze and stabilization of v1.1.0, shrink the codebase footprint toward a tight core of under 6,000 lines.
+  - Following the v1.1.0 release and feature freeze, shrink the product codebase footprint toward a tight core of under 6,000 lines.
   - Simplify concurrency locking by replacing the token-and-PID lock with a single atomic `mkdir` directory lock with stale-timeout detection.
   - Consolidate redundant path-safety helpers across modules into a single, unified canonical normalizer.
+  - Prune CRLF execution trampolines once Git for Windows upstream runtime behavior stabilizes.
   - Target ≥80% statement coverage across Linux, macOS, and Windows.
 - **External SSH Agents & Resident Hardware Keys (FUT-05):**
-  - Integrate native routing for 1Password (`op-ssh-sign`), Bitwarden, and Secretive SSH agents.
-  - Add native support for FIDO2 resident keys and hardware security tokens without forcing filesystem-bound key file generation.
+  - Integrate native routing for 1Password (`op-ssh-sign`), Bitwarden, and Secretive SSH agent sockets.
+  - Add native support for FIDO2 resident keys (`ed25519-sk`) and hardware security tokens without forcing filesystem-bound private key generation.
+- **Smart Identity-Aware Clone (`gitsetu clone <url>`):**
+  - Query remote-URL routing rules (`FUT-01`) before cloning, automatically routing repositories to their appropriate directory root (e.g., corporate repos to `~/work` and personal to `~/personal`).
+- **Legacy v1.0.0 Vault In-Memory Import Bridge (D8):**
+  - Implement an in-memory legacy OpenSSL PBKDF2/Salted__ envelope parser to directly import legacy v1.0.0 vaults without requiring users to check out v1.0.0.
+- **Community Package Repository Ingestion (D3):**
+  - Submit official, pinned formulas and manifests to Homebrew Core, Windows Scoop (`main` bucket), WinGet (`winget-pkgs`), Arch Linux AUR, and Nixpkgs Flake once v1.1.0 release tags and SHA256SUMS are published.
+- **Compiler Marker Evolution Safety:**
+  - Maintain backward compatibility for both `# [gitsetu:managed:head:start]` and `# [gitsetu:managed:start]` markers across all future compiler iterations.
 
 ---
 
@@ -90,7 +104,7 @@ The following architectural hardening milestones describe the current local rele
 - **Fuzzy Profile Switching (`fzf`):** Implement interactive, ultra-fast `fzf`-powered runtime profile selection (`gitsetu switch`).
 - **Native VS Code Extension:** Publish an official VS Code extension to surface the active profile directly within the editor status bar, halting commits visually within the GUI if identities misalign.
 - **PGP / GPG Key Auto-Wiring:** Extend commit signing capabilities beyond native SSH to automatically wire classical PGP / GPG key targets on a per-profile basis.
-- **Machine-Readable API (`--json`):** Expose all diagnostic and structural queries (`gitsetu status --json`, `gitsetu doctor --json`) via structured JSON payloads to empower community tooling and editor plugins.
+- **Rich Terminal UI & Visual Dashboard:** Deploy an interactive terminal UI dashboard (`gitsetu dashboard`) visualizing active identity routes, mapped SSH keys, and commit signatures.
 
 ---
 
