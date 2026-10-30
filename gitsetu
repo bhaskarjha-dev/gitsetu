@@ -97,7 +97,9 @@ if [[ "$_crlf_probe" == *$'\r'* ]]; then  #
             if [[ -d "$_crlf_runtime_candidate" && ! -L "$_crlf_runtime_candidate" && -O "$_crlf_runtime_candidate" ]]; then #
                 if chmod 700 "$_crlf_runtime_candidate" 2>/dev/null; then _crlf_runtime_dir="$_crlf_runtime_candidate"; break; fi #
             fi #
-            [[ ! -d "$_crlf_runtime_candidate" || ! -L "$_crlf_runtime_candidate" ]] && rmdir "$_crlf_runtime_candidate" 2>/dev/null || true #
+            if [[ ! -d "$_crlf_runtime_candidate" || ! -L "$_crlf_runtime_candidate" ]]; then #
+                rmdir "$_crlf_runtime_candidate" 2>/dev/null || true #
+            fi #
         done #
         [[ -n "$_crlf_runtime_dir" ]] || { printf '%s\n' "Error: the GitSetu install directory is not writable and no trusted private runtime directory is available." >&2; exit 1; } #
         _crlf_temp_dir="$_crlf_runtime_dir" #
@@ -115,7 +117,22 @@ if [[ "$_crlf_probe" == *$'\r'* ]]; then  #
     else  #
         unset _GITSETU_CRLF_RUNTIME_DIR _GITSETU_CRLF_ORIGIN_DIR 2>/dev/null || true  #
     fi  #
-    _crlf_parent_cleanup() { case "$_crlf_tmp" in "$_crlf_temp_dir"/.gitsetu_crlf.*) [[ -f "$_crlf_tmp" && ! -L "$_crlf_tmp" && -O "$_crlf_tmp" ]] && rm -f "$_crlf_tmp" 2>/dev/null || true ;; esac; [[ -n "${_crlf_runtime_dir:-}" ]] && { case "$_crlf_runtime_dir" in /tmp/.gitsetu-runtime.*|/var/tmp/.gitsetu-runtime.*) [[ -d "$_crlf_runtime_dir" && ! -L "$_crlf_runtime_dir" && -O "$_crlf_runtime_dir" ]] && rmdir "$_crlf_runtime_dir" 2>/dev/null || true ;; esac; }; }  #
+    _crlf_parent_cleanup() { #
+        case "$_crlf_tmp" in #
+            "$_crlf_temp_dir"/.gitsetu_crlf.*) #
+                if [[ -f "$_crlf_tmp" && ! -L "$_crlf_tmp" && -O "$_crlf_tmp" ]]; then #
+                    rm -f "$_crlf_tmp" 2>/dev/null || true #
+                fi ;; #
+        esac #
+        if [[ -n "${_crlf_runtime_dir:-}" ]]; then #
+            case "$_crlf_runtime_dir" in #
+                /tmp/.gitsetu-runtime.*|/var/tmp/.gitsetu-runtime.*) #
+                    if [[ -d "$_crlf_runtime_dir" && ! -L "$_crlf_runtime_dir" && -O "$_crlf_runtime_dir" ]]; then #
+                        rmdir "$_crlf_runtime_dir" 2>/dev/null || true #
+                    fi ;; #
+            esac #
+        fi #
+    } #
     trap '_crlf_parent_cleanup' EXIT  #
 
     _crlf_normalized=0  #

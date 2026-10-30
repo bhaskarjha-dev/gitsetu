@@ -100,15 +100,27 @@ EOF
 }
 
 setup_run_fixture() {
-    local external_dir="$TEST_STATE_DIR/gitsetu-test-external-$$"
-    local work_dir="$HOME/work"
+    external_dir="$TEST_STATE_DIR/gitsetu-test-external-$$"
+    work_dir="$HOME/work"
     if command -v cygpath >/dev/null 2>&1; then
         external_dir=$(cygpath -w "$external_dir")
         external_dir="${external_dir//\\//}"
         work_dir=$(cygpath -w "$work_dir")
         work_dir="${work_dir//\\//}"
+        if [[ "$external_dir" =~ ^([a-zA-Z]):(/.*)?$ ]]; then
+            local drive rest
+            drive=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
+            rest="${BASH_REMATCH[2]:-/}"
+            external_dir="${drive}:${rest}"
+        fi
+        if [[ "$work_dir" =~ ^([a-zA-Z]):(/.*)?$ ]]; then
+            local drive rest
+            drive=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
+            rest="${BASH_REMATCH[2]:-/}"
+            work_dir="${drive}:${rest}"
+        fi
     fi
-    rm -rf "$external_dir"
+    rm -rf "$external_dir" "$TEST_STATE_DIR/gitsetu-test-external-$$"
     mkdir -p "$external_dir" "$GITSETU_PROFILES_DIR" "$HOME/.ssh" "$work_dir"
     chmod 700 "$external_dir" 2>/dev/null || true
     ssh-keygen -q -t ed25519 -N '' -f "$external_dir/identity"
@@ -127,17 +139,18 @@ test_cli_run_uses_strict_external_key_field() {
     output=$(bash "$GITSETU_EXE" run work -- bash -c 'printf "%s|%s" "$GIT_AUTHOR_EMAIL" "$GIT_COMMITTER_EMAIL"' 2>&1) || rc=$?
     assert_equals "0" "$rc" "run succeeds with a validated external v2 key" || return 1
     assert_equals "work@example.com|work@example.com" "$output" "run exports the strict profile identity" || return 1
-    rm -rf "$TEST_STATE_DIR/gitsetu-test-external-$$"
+    rm -rf "$external_dir" "$TEST_STATE_DIR/gitsetu-test-external-$$"
 }
 
 test_cli_run_missing_key_never_defaults() {
     setup_run_fixture
-    rm -f "$TEST_STATE_DIR/gitsetu-test-external-$$/identity" "$TEST_STATE_DIR/gitsetu-test-external-$$/identity.pub"
+    rm -f "$external_dir/identity" "$external_dir/identity.pub" \
+          "$TEST_STATE_DIR/gitsetu-test-external-$$/identity" "$TEST_STATE_DIR/gitsetu-test-external-$$/identity.pub"
     local output rc=0
     output=$(bash "$GITSETU_EXE" run work -- true 2>&1) || rc=$?
     assert_equals "1" "$rc" "run fails when the v2 key field is missing" || return 1
     assert_contains "$output" "missing, unsafe, or non-canonical SSH key path" "run reports the missing strict key" || return 1
-    rm -rf "$TEST_STATE_DIR/gitsetu-test-external-$$"
+    rm -rf "$external_dir" "$TEST_STATE_DIR/gitsetu-test-external-$$"
 }
 
 # Regression: the initial blueprint deliberately stores the global profile's

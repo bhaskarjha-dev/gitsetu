@@ -97,7 +97,9 @@ if [[ "$_crlf_probe" == *$'\r'* ]]; then  #
             if [[ -d "$_crlf_runtime_candidate" && ! -L "$_crlf_runtime_candidate" && -O "$_crlf_runtime_candidate" ]]; then #
                 if chmod 700 "$_crlf_runtime_candidate" 2>/dev/null; then _crlf_runtime_dir="$_crlf_runtime_candidate"; break; fi #
             fi #
-            [[ ! -d "$_crlf_runtime_candidate" || ! -L "$_crlf_runtime_candidate" ]] && rmdir "$_crlf_runtime_candidate" 2>/dev/null || true #
+            if [[ ! -d "$_crlf_runtime_candidate" || ! -L "$_crlf_runtime_candidate" ]]; then #
+                rmdir "$_crlf_runtime_candidate" 2>/dev/null || true #
+            fi #
         done #
         [[ -n "$_crlf_runtime_dir" ]] || { printf '%s\n' "Error: the GitSetu install directory is not writable and no trusted private runtime directory is available." >&2; exit 1; } #
         _crlf_temp_dir="$_crlf_runtime_dir" #
@@ -115,7 +117,22 @@ if [[ "$_crlf_probe" == *$'\r'* ]]; then  #
     else  #
         unset _GITSETU_CRLF_RUNTIME_DIR _GITSETU_CRLF_ORIGIN_DIR 2>/dev/null || true  #
     fi  #
-    _crlf_parent_cleanup() { case "$_crlf_tmp" in "$_crlf_temp_dir"/.gitsetu_crlf.*) [[ -f "$_crlf_tmp" && ! -L "$_crlf_tmp" && -O "$_crlf_tmp" ]] && rm -f "$_crlf_tmp" 2>/dev/null || true ;; esac; [[ -n "${_crlf_runtime_dir:-}" ]] && { case "$_crlf_runtime_dir" in /tmp/.gitsetu-runtime.*|/var/tmp/.gitsetu-runtime.*) [[ -d "$_crlf_runtime_dir" && ! -L "$_crlf_runtime_dir" && -O "$_crlf_runtime_dir" ]] && rmdir "$_crlf_runtime_dir" 2>/dev/null || true ;; esac; }; }  #
+    _crlf_parent_cleanup() { #
+        case "$_crlf_tmp" in #
+            "$_crlf_temp_dir"/.gitsetu_crlf.*) #
+                if [[ -f "$_crlf_tmp" && ! -L "$_crlf_tmp" && -O "$_crlf_tmp" ]]; then #
+                    rm -f "$_crlf_tmp" 2>/dev/null || true #
+                fi ;; #
+        esac #
+        if [[ -n "${_crlf_runtime_dir:-}" ]]; then #
+            case "$_crlf_runtime_dir" in #
+                /tmp/.gitsetu-runtime.*|/var/tmp/.gitsetu-runtime.*) #
+                    if [[ -d "$_crlf_runtime_dir" && ! -L "$_crlf_runtime_dir" && -O "$_crlf_runtime_dir" ]]; then #
+                        rmdir "$_crlf_runtime_dir" 2>/dev/null || true #
+                    fi ;; #
+            esac #
+        fi #
+    } #
     trap '_crlf_parent_cleanup' EXIT  #
 
     _crlf_normalized=0  #
@@ -5698,7 +5715,9 @@ _vault_regenerate_restored_state() {
         fi
     fi
     chmod 700 "$GITSETU_HOOKS_DIR" 2>/dev/null || true
-    [[ -f "$GITSETU_HOOKS_DIR/pre-commit" ]] && chmod 700 "$GITSETU_HOOKS_DIR/pre-commit" 2>/dev/null || true
+    if [[ -f "$GITSETU_HOOKS_DIR/pre-commit" ]]; then
+        chmod 700 "$GITSETU_HOOKS_DIR/pre-commit" 2>/dev/null || true
+    fi
     chmod 700 "$GITSETU_PROFILES_DIR" 2>/dev/null || true
     chmod 600 "$GITSETU_PROFILES_CONF" 2>/dev/null || true
     return 0
@@ -5723,8 +5742,12 @@ _vault_signal_handler() {
         [[ -n "$dest" ]] || continue
         rm -f "${dest}.gitsetu-restore.$$.$k" 2>/dev/null || true
     done
-    [[ -n "${_VAULT_ACTIVE_TEMP:-}" ]] && rm -rf "$_VAULT_ACTIVE_TEMP" 2>/dev/null || true
-    type release_lock >/dev/null 2>&1 && release_lock >/dev/null 2>&1 || true
+    if [[ -n "${_VAULT_ACTIVE_TEMP:-}" ]]; then
+        rm -rf "$_VAULT_ACTIVE_TEMP" 2>/dev/null || true
+    fi
+    if type release_lock >/dev/null 2>&1; then
+        release_lock >/dev/null 2>&1 || true
+    fi
     if [[ "$rollback_failed" -eq 0 ]]; then
         print_error "Restore interrupted; the previous state was rolled back."
     fi
@@ -9496,7 +9519,9 @@ _doctor_rollback_files() {
 _doctor_discard_rollbacks() {
     local path
     for path in ${doctor_rollback_paths[@]+"${doctor_rollback_paths[@]}"}; do
-        [[ -n "$path" ]] && rm -f "$path" 2>/dev/null || true
+        if [[ -n "$path" ]]; then
+            rm -f "$path" 2>/dev/null || true
+        fi
     done
     doctor_rollback_paths=()
     doctor_rollback_targets=()
@@ -9664,7 +9689,7 @@ run_doctor_repair() {
     local doctor_rollback_exists=()
     local doctor_rollback_modes=()
 
-    # shellcheck disable=SC2329
+    # shellcheck disable=SC2317,SC2329
     _doctor_emergency_rollback() {
         _doctor_rollback_files 2>/dev/null || true
         _doctor_discard_rollbacks 2>/dev/null || true

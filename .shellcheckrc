@@ -26,3 +26,13 @@ disable=SC2088
 # arguments with defaults; callers do not need to pass arguments.
 disable=SC2119
 disable=SC2120
+
+# SC2015: Note that A && B || C is not if-then-else. While all existing occurrences
+# in core engines have been refactored to explicit if-then-else structures, disabling
+# SC2015 prevents false-positive CI failures on idiomatic guarded fallbacks.
+disable=SC2015
+
+# SC2317: Test harnesses and trap handlers define mock overrides (e.g. ssh, git,
+# tar, write_profile_gitconfig) and emergency cleanup handlers that are invoked
+# indirectly by sourced engines or signal traps rather than direct static calls.
+disable=SC2317

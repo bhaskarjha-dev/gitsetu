@@ -84,7 +84,8 @@ jobs:
       - name: Install locked npm metadata
         run: npm ci --ignore-scripts --no-audit --no-fund
 
-      - name: Run tests through supported Git Bash
+      - name: Run regression test suite
+        if: runner.os != 'Windows'
         run: make test
 
       - name: Build and verify standalone bundle

@@ -695,7 +695,9 @@ _doctor_rollback_files() {
 _doctor_discard_rollbacks() {
     local path
     for path in ${doctor_rollback_paths[@]+"${doctor_rollback_paths[@]}"}; do
-        [[ -n "$path" ]] && rm -f "$path" 2>/dev/null || true
+        if [[ -n "$path" ]]; then
+            rm -f "$path" 2>/dev/null || true
+        fi
     done
     doctor_rollback_paths=()
     doctor_rollback_targets=()
@@ -863,7 +865,7 @@ run_doctor_repair() {
     local doctor_rollback_exists=()
     local doctor_rollback_modes=()
 
-    # shellcheck disable=SC2329
+    # shellcheck disable=SC2317,SC2329
     _doctor_emergency_rollback() {
         _doctor_rollback_files 2>/dev/null || true
         _doctor_discard_rollbacks 2>/dev/null || true

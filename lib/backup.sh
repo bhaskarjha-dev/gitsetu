@@ -2061,7 +2061,9 @@ _vault_regenerate_restored_state() {
         fi
     fi
     chmod 700 "$GITSETU_HOOKS_DIR" 2>/dev/null || true
-    [[ -f "$GITSETU_HOOKS_DIR/pre-commit" ]] && chmod 700 "$GITSETU_HOOKS_DIR/pre-commit" 2>/dev/null || true
+    if [[ -f "$GITSETU_HOOKS_DIR/pre-commit" ]]; then
+        chmod 700 "$GITSETU_HOOKS_DIR/pre-commit" 2>/dev/null || true
+    fi
     chmod 700 "$GITSETU_PROFILES_DIR" 2>/dev/null || true
     chmod 600 "$GITSETU_PROFILES_CONF" 2>/dev/null || true
     return 0
@@ -2086,8 +2088,12 @@ _vault_signal_handler() {
         [[ -n "$dest" ]] || continue
         rm -f "${dest}.gitsetu-restore.$$.$k" 2>/dev/null || true
     done
-    [[ -n "${_VAULT_ACTIVE_TEMP:-}" ]] && rm -rf "$_VAULT_ACTIVE_TEMP" 2>/dev/null || true
-    type release_lock >/dev/null 2>&1 && release_lock >/dev/null 2>&1 || true
+    if [[ -n "${_VAULT_ACTIVE_TEMP:-}" ]]; then
+        rm -rf "$_VAULT_ACTIVE_TEMP" 2>/dev/null || true
+    fi
+    if type release_lock >/dev/null 2>&1; then
+        release_lock >/dev/null 2>&1 || true
+    fi
     if [[ "$rollback_failed" -eq 0 ]]; then
         print_error "Restore interrupted; the previous state was rolled back."
     fi

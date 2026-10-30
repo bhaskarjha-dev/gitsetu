@@ -5,6 +5,9 @@ set -euo pipefail
 TEST_ROOT=$(mktemp -d "$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)/gitsetu-foundations.XXXXXX")
 trap 'rm -rf "$TEST_ROOT"' EXIT
 export HOME="$TEST_ROOT/home"
+export XDG_CONFIG_HOME="$HOME/.config"
+unset XDG_STATE_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_RUNTIME_DIR
+unset GITSETU_CONFIG_DIR GITSETU_PROFILES_DIR GITSETU_PROFILES_CONF GITSETU_BACKUP_DIR GITSETU_HOOKS_DIR
 mkdir -p "$HOME/.config/gitsetu/profiles" "$HOME/work" "$HOME/.ssh"
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -297,6 +300,7 @@ populate_v2_profiles() {
     PROFILE_KEYS=("$key" "$key")
     PROFILE_USERS=('' work-user)
     PROFILE_PATS=('' '')
+    mkdir -p "$GITSETU_PROFILES_DIR"
     cat > "$GITSETU_PROFILES_DIR/global.gitconfig" <<'EOF'
 [user]
     name = Global User
