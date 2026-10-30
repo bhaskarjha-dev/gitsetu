@@ -21,7 +21,7 @@ Potential threat vectors include credential leakage, stale keys, unmanaged autom
 The following architectural hardening milestones describe the current local release-candidate baseline. They are not timeless claims: verification is tied to a named source commit and test run, and an isolated Windows Sandbox run is environment-dependent; a run without a terminal status is inconclusive rather than a product pass:
 - **Zero-Trust Identity Guard**: Hard pre-commit intercepts preventing dual-state leaks with longest-prefix directory matching, Windows/macOS case-insensitivity, and dynamic email re-reading.
 - **Single Source of Truth (SSOT)**: Dynamic resolution via isolated `.gitconfig` files without registry polling.
-- **Native Windows PowerShell Distribution**: Provides local-candidate `install.ps1` & `uninstall.ps1` installers, automated Command Prompt (`gitsetu.cmd`) and PowerShell (`gitsetu.ps1`) shims in `%LOCALAPPDATA%\gitsetu\bin`, and User `PATH` environment management.
+- **Native Windows PowerShell Distribution**: Provides local-candidate `install.ps1` & `uninstall.ps1` installers, ExecutionPolicy-safe Command Prompt (`gitsetu.cmd`) shims in `%LOCALAPPDATA%\gitsetu\bin`, native compiled C# launcher (`gitsetu.exe`), and User `PATH` environment management.
 - **Package Formula Definitions**: Maintains withheld Homebrew and Scoop templates for a future intentional publication; neither is a current public package.
 - **Headless & Dotfiles Automation**: Scriptable, non-interactive profile provisioning via `gitsetu add` and `gitsetu profile add` backed by POSIX directory concurrency locking (`profiles.lock`).
 - **Automated Workspace Provisioning**: Auto-creates missing workspace directories (`mkdir -p`) upon profile registration, with clean unmounting and pruning on profile deletion.
@@ -64,6 +64,21 @@ The following architectural hardening milestones describe the current local rele
 - **GitHub CLI Extensions (`gh gitsetu` / `gh setu`):** Publish separate `gh-gitsetu` and `gh-setu` extension repositories, allowing developers working inside GitHub CLI workflows to run either command natively.
 - **Smart Auto-Discovery (`gitsetu setup --auto`):** Expand the discovery engine in `lib/discovery.sh` into a one-shot setup command that auto-detects existing Git identities, SSH keys, and workspace folders (`~/work`, `~/personal`), while keeping the current apply-mode and TTY consent boundaries visible.
 - **Sponsorship & Governance:** Establish a formal Technical Steering Committee and define open-source contribution guidelines to guarantee long-term operational sustainability.
+
+---
+
+## Phase 1.5: Codebase Consolidation & Key Systems (v1.2.0)
+
+**Goal:** Shrink the codebase to a maintainable core and expand hardware key/agent integration with zero regressions.
+
+- **Core Codebase Consolidation (FUT-03):**
+  - Following the feature-freeze and stabilization of v1.1.0, shrink the codebase footprint toward a tight core of under 6,000 lines.
+  - Simplify concurrency locking by replacing the token-and-PID lock with a single atomic `mkdir` directory lock with stale-timeout detection.
+  - Consolidate redundant path-safety helpers across modules into a single, unified canonical normalizer.
+  - Target ≥80% statement coverage across Linux, macOS, and Windows.
+- **External SSH Agents & Resident Hardware Keys (FUT-05):**
+  - Integrate native routing for 1Password (`op-ssh-sign`), Bitwarden, and Secretive SSH agents.
+  - Add native support for FIDO2 resident keys and hardware security tokens without forcing filesystem-bound key file generation.
 
 ---
 
