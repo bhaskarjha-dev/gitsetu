@@ -409,6 +409,9 @@ print_results() {
     if [[ "$TESTS_FAILED" -gt 0 ]]; then
         return 1
     fi
+    if [[ "$TESTS_SKIPPED" -gt 0 ]]; then
+        return 77
+    fi
     return 0
 }
 
@@ -1046,13 +1049,13 @@ setup_test_home() {
 
     _test_clear_managed_environment
     export HOME="$TEST_HOME"
-    export GITSETU_TEST=1
 
     # Keep platform profile roots inside the same sandbox for child tools.
     export USERPROFILE="$TEST_HOME"
     export APPDATA="$TEST_HOME/AppData/Roaming"
     export LOCALAPPDATA="$TEST_HOME/AppData/Local"
-    mkdir -p "$HOME/.ssh" "$HOME/.config" "$APPDATA" "$LOCALAPPDATA"
+    export XDG_STATE_HOME="$TEST_HOME/.local/state"
+    mkdir -p "$HOME/.ssh" "$HOME/.config" "$XDG_STATE_HOME" "$APPDATA" "$LOCALAPPDATA"
     if [[ "${OSTYPE:-}" == "msys"* ]] || [[ "${OSTYPE:-}" == "cygwin"* ]] || [[ "${OSTYPE:-}" == "mingw"* ]]; then
         case "$TEST_HOME" in
             [A-Za-z]:/*)
@@ -1076,10 +1079,7 @@ setup_test_home() {
     export GITSETU_PROFILES_DIR="$GITSETU_CONFIG_DIR/profiles"
     export GITSETU_HOOKS_DIR="$GITSETU_CONFIG_DIR/hooks"
     export GITSETU_PROFILES_CONF="$GITSETU_CONFIG_DIR/profiles.conf"
-    # Keep test locks in a disposable per-HOME runtime tree, never in the
-    # removable config tree that teardown is expected to delete.
-    export GITSETU_TEST_RUNTIME_DIR="$HOME/.gitsetu-test-runtime"
-    export GITSETU_LOCK_DIR="$GITSETU_TEST_RUNTIME_DIR/profiles.lock"
+    export GITSETU_LOCK_DIR="$XDG_STATE_HOME/gitsetu/profiles.lock"
     GITSETU_DEFAULT_LOCK_DIR="$GITSETU_LOCK_DIR"
     GITSETU_LOCK_RUNTIME_CONFIGURED=0
     GITSETU_LOCK_PATH=""

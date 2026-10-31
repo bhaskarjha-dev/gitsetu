@@ -4,7 +4,7 @@
 **Accepted** (May 2026)
 
 ## Context
-As established in ADR 0001, GitSetu must generate OS-level SSH host aliases (`Host github-pro`) to provide a manual fallback for complex dependency cloning workflows. 
+As established in ADR 0001, GitSetu can generate OS-level SSH host aliases (`Host gitsetu-pro`) to provide a manual fallback for complex dependency cloning workflows. 
 
 Historically, GitSetu implemented this by using inline `awk` commands to rip open the user's global `~/.ssh/config` file, locate specific `[gitsetu:managed:start]` markers, and surgically replace the text blocks. 
 

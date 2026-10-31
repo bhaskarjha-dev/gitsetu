@@ -532,8 +532,8 @@ EOF
 # copy_to_clipboard — Opportunistically copies text to the system clipboard
 # ------------------------------------------------------------------------------
 copy_to_clipboard() {
-    # Skip clipboard in headless CI or test environments
-    if [[ -n "${CI:-}" || -n "${GITSETU_TEST:-}" ]]; then
+    # Skip clipboard in headless CI or non-terminal environments
+    if [[ -n "${CI:-}" || ! -t 0 ]]; then
         return 1
     fi
 

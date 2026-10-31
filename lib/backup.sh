@@ -377,21 +377,16 @@ _vault_password_contains_line_break() {
     [[ "$password" != *$'\n'* && "$password" != *$'\r'* ]]
 }
 
-_vault_test_password_enabled() {
-    [[ "${GITSETU_TEST:-0}" == "1" && "${GITSETU_TEST_VAULT_MODE:-0}" == "1" ]]
-}
-
 _vault_read_new_password() {
     local password confirm
     if [[ -n "${GITSETU_VAULT_PASSWORD:-}" ]]; then
         password="$GITSETU_VAULT_PASSWORD"
+        unset GITSETU_VAULT_PASSWORD
         if [[ "${#password}" -lt 12 ]]; then
             print_error "Vault password must contain at least 12 characters."
             return 1
         fi
         _VAULT_ROOT_KEY="$password"
-    elif _vault_test_password_enabled && [[ -n "${GITSETU_TEST_VAULT_PASS:-}" ]]; then
-        _VAULT_ROOT_KEY="$GITSETU_TEST_VAULT_PASS"
     else
         ask_password "Enter a strong vault password (minimum 12 characters): "
         password="$REPLY"
@@ -426,8 +421,7 @@ _vault_read_restore_password() {
     local password
     if [[ -n "${GITSETU_VAULT_PASSWORD:-}" ]]; then
         password="$GITSETU_VAULT_PASSWORD"
-    elif _vault_test_password_enabled && [[ -n "${GITSETU_TEST_VAULT_PASS:-}" ]]; then
-        password="$GITSETU_TEST_VAULT_PASS"
+        unset GITSETU_VAULT_PASSWORD
     else
         ask_password "Enter vault password: "
         password="$REPLY"
@@ -549,32 +543,79 @@ _vault_hex_matches_file() {
     [[ "$actual_hex" == "$expected_hex" ]]
 }
 
-_vault_derive_cipher_key() {
-    local root_key="$1" enc_salt="$2" iters="$3"
-    local salt_suffix="${enc_salt:16}" out key
-    out=$(printf 'gitsetu-v2-encryption:%s:%s\n' "$root_key" "$salt_suffix" |
-        openssl enc -aes-256-ctr -P -salt -pbkdf2 -iter "$iters" -md sha256 \
-            -S "${enc_salt:0:16}" -pass stdin 2>/dev/null) || return 1
-    key=$(printf '%s\n' "$out" | sed -n 's/^key=//p' | tr -d ' \r\n')
-    [[ -n "$key" && "$key" =~ ^[0-9A-Fa-f]{64}$ ]] || return 1
-    printf '%s' "$key"
+_VAULT_OPENSSL_SALTED_HEADER=""
+
+_vault_openssl_has_salted_header() {
+    if [[ -z "$_VAULT_OPENSSL_SALTED_HEADER" ]]; then
+        local probe
+        probe=$(printf x | openssl enc -aes-256-ctr -pbkdf2 -iter 1000 -md sha256 \
+            -S 0011223344556677 -pass pass:probe 2>/dev/null | head -c 8)
+        if [[ "$probe" == "Salted__" ]]; then
+            _VAULT_OPENSSL_SALTED_HEADER=1
+        else
+            _VAULT_OPENSSL_SALTED_HEADER=0
+        fi
+    fi
+    [[ "$_VAULT_OPENSSL_SALTED_HEADER" -eq 1 ]]
 }
 
 _vault_encrypt_stream() {
     local root_key="$1" enc_salt="$2" iv="$3" input="$4" output="$5"
-    local key
-    key=$(_vault_derive_cipher_key "$root_key" "$enc_salt" "$GITSETU_VAULT_ITERATIONS") || return 1
-    openssl enc -aes-256-ctr -nosalt -K "$key" -iv "$iv" \
-        -in "$input" -out "$output" 2>/dev/null
+    local iters="$GITSETU_VAULT_ITERATIONS"
+    local salt_suffix="${enc_salt:16}"
+    local salt_prefix="${enc_salt:0:16}"
+
+    if _vault_openssl_has_salted_header; then
+        local tmp="${output}.enc.tmp"
+        if ! printf 'gitsetu-v2-encryption:%s:%s\n' "$root_key" "$salt_suffix" | \
+            openssl enc -aes-256-ctr -salt -pbkdf2 -iter "$iters" -md sha256 \
+                -S "$salt_prefix" -iv "$iv" -pass stdin \
+                -in "$input" -out "$tmp" 2>/dev/null; then
+            rm -f "$tmp"
+            return 1
+        fi
+        if ! tail -c +17 "$tmp" > "$output" 2>/dev/null; then
+            rm -f "$tmp" "$output"
+            return 1
+        fi
+        rm -f "$tmp"
+    else
+        printf 'gitsetu-v2-encryption:%s:%s\n' "$root_key" "$salt_suffix" | \
+            openssl enc -aes-256-ctr -salt -pbkdf2 -iter "$iters" -md sha256 \
+                -S "$salt_prefix" -iv "$iv" -pass stdin \
+                -in "$input" -out "$output" 2>/dev/null
+    fi
 }
 
 _vault_decrypt_stream() {
     local root_key="$1" enc_salt="$2" iv="$3" input="$4" output="$5"
     local iters="${6:-$GITSETU_VAULT_ITERATIONS}"
-    local key
-    key=$(_vault_derive_cipher_key "$root_key" "$enc_salt" "$iters") || return 1
-    openssl enc -d -aes-256-ctr -nosalt -K "$key" -iv "$iv" \
-        -in "$input" -out "$output" 2>/dev/null
+    local salt_suffix="${enc_salt:16}"
+    local salt_prefix="${enc_salt:0:16}"
+
+    if _vault_openssl_has_salted_header; then
+        local tmp="${output}.dec.tmp"
+        local hex_fmt="" i
+        for (( i=0; i<16; i+=2 )); do
+            hex_fmt="${hex_fmt}\\x${salt_prefix:i:2}"
+        done
+        if ! { printf 'Salted__'; printf '%b' "$hex_fmt"; cat "$input"; } > "$tmp" 2>/dev/null; then
+            rm -f "$tmp"
+            return 1
+        fi
+        printf 'gitsetu-v2-encryption:%s:%s\n' "$root_key" "$salt_suffix" | \
+            openssl enc -d -aes-256-ctr -salt -pbkdf2 -iter "$iters" -md sha256 \
+                -S "$salt_prefix" -iv "$iv" -pass stdin \
+                -in "$tmp" -out "$output" 2>/dev/null
+        local rc=$?
+        rm -f "$tmp"
+        return $rc
+    else
+        printf 'gitsetu-v2-encryption:%s:%s\n' "$root_key" "$salt_suffix" | \
+            openssl enc -d -aes-256-ctr -salt -pbkdf2 -iter "$iters" -md sha256 \
+                -S "$salt_prefix" -iv "$iv" -pass stdin \
+                -in "$input" -out "$output" 2>/dev/null
+    fi
 }
 
 _vault_write_authenticated_vault() {
@@ -1388,12 +1429,12 @@ _vault_rewrite_staged_registry_for_target() {
         else
             profile_dir_lexical=$(_gitsetu_lexical_path "$directory") || return 1
             profile_dir_key=$(_vault_portable_path_key "$profile_dir_lexical") || return 1
-            if [[ "$profile_dir_key" != "$source_home_key" && "$profile_dir_key" != "$source_home_key/"* ]]; then
-                print_error "Vault contains a nonportable external profile directory: $directory"
-                return 1
+            if [[ "$profile_dir_key" == "$source_home_key" || "$profile_dir_key" == "$source_home_key/"* ]]; then
+                mapped_dir=$(_vault_map_home_bound_path "$profile_dir_lexical" "$source_home_lexical") || return 1
+                mapped_dir=$(normalize_path "$mapped_dir") || return 1
+            else
+                mapped_dir="$profile_dir_lexical"
             fi
-            mapped_dir=$(_vault_map_home_bound_path "$profile_dir_lexical" "$source_home_lexical") || return 1
-            mapped_dir=$(normalize_path "$mapped_dir") || return 1
             validate_profile_directory "$mapped_dir" 0 || return 1
         fi
 

@@ -27,13 +27,13 @@ Runs offline structural, configuration, permission, and identity diagnostics. It
 If GitSetu generated a fresh keypair for your target profile, you **must** manually associate the public side of that signature with your upstream provider (GitHub, GitLab, Bitbucket).
 1. Output the public signature: `cat ~/.ssh/id_ed25519_<profile>.pub`
 2. Navigate to your provider's SSH Settings portal and paste the block exactly.
-3. Verify connection manually using the generated alias when needed: `ssh -T git@github-<profile>` (for example, `github-work`).
+3. Verify connection manually using the generated alias when needed: `ssh -T git@gitsetu-<profile>` (for example, `gitsetu-work`).
 
 > [!IMPORTANT]
 > **"Key already exists" Error on GitHub:** GitHub strictly enforces a 1-to-1 mapping. Each SSH public key can only be attached to **ONE** GitHub account. If you see this error, you are trying to add a key to your `work` account that is already attached to your `personal` account. You must generate a unique key for each account (which `gitsetu setup` handles automatically).
 
 > [!NOTE]
-> **"Could not resolve hostname github-pro":** GitSetu generates aliases such as `github-work` for explicit external workflows. You do not need to use them for ordinary clones; continue with standard `git@github.com:...` URLs and review the effective SSH configuration.
+> **"Could not resolve hostname gitsetu-pro":** GitSetu generates aliases such as `gitsetu-work` for explicit external workflows. You do not need to use them for ordinary clones; continue with standard `git@github.com:...` URLs and review the effective SSH configuration.
 
 ### Resolution: Agent Saturation ("Too many authentication failures")
 If you manually loaded multiple legacy keys into your global `ssh-agent`, target hosts may disconnect after your host attempts to cycle blindly through incorrect signatures.
@@ -92,17 +92,6 @@ Under Linux/macOS, OpenSSH strictly demands `chmod 600` for private keys. On Win
 ### Path Casing & Virtual Mount Points
 - **Drive Letters**: Always use forward slashes in Git configurations (e.g. `C:/Users/name/work` rather than `C:\Users\name\work`). GitSetu automatically normalizes all paths to canonical `C:/path` format.
 - **Case Sensitivity**: Windows paths are case-insensitive. GitSetu automatically injects `gitdir/i:` so directory matching works whether paths are referenced with uppercase or lowercase drive letters (`C:` vs `c:`).
-
-### Isolated Verification via Windows Sandbox
-If you want to verify GitSetu, test adding profiles, or debug configurations in total isolation from your host:
-```powershell
-# Native PowerShell:
-powershell -ExecutionPolicy Bypass -File .\sandbox\launch_sandbox.ps1
-
-# Or via Command Prompt / Explorer:
-.\sandbox\launch_sandbox.bat
-```
-This boots a clean, disposable Windows Sandbox container and attempts the available regression and audit checks without modifying the host setup. The harness is experimental and is not a release qualification gate while its legacy fixtures are reconciled. A run with no terminal status is **inconclusive**, not a product pass.
 
 ---
 

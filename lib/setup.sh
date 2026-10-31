@@ -18,9 +18,6 @@ _gitsetu_configure_lock_path() {
     # core's safe state default is not an explicit override.
     if [[ "$force" != "1" && -n "$current" && "$current" != "$configured_default" && "$current" != "$core_default" ]]; then
         candidate="$current"
-    elif [[ "${GITSETU_TEST:-0}" -eq 1 ]]; then
-        state_base="${GITSETU_TEST_RUNTIME_DIR:-$HOME/.gitsetu-test-runtime}"
-        candidate="${state_base%/}/profiles.lock"
     elif [[ -n "${XDG_STATE_HOME:-}" ]]; then
         state_base="$XDG_STATE_HOME"
         candidate="${state_base%/}/gitsetu/profiles.lock"
@@ -454,10 +451,10 @@ prompt_security() {
             PROFILE_SIGNS[i]=1
         done
     else
-        GITSETU_DEFAULT_SIGN=0
+        GITSETU_DEFAULT_SIGN=inherit
         local i
         for (( i=0; i<PROFILE_COUNT; i++ )); do
-            PROFILE_SIGNS[i]=0
+            PROFILE_SIGNS[i]=inherit
         done
     fi
     
@@ -733,9 +730,8 @@ _gitsetu_lock_parent_is_safe() {
 # shellcheck disable=SC2120
 acquire_lock() {
     local target_lock="${1:-}"
-    if [[ -z "$target_lock" && ( "${GITSETU_LOCK_RUNTIME_CONFIGURED:-0}" -ne 1 || "${GITSETU_TEST:-0}" -eq 1 ) ]]; then
+    if [[ -z "$target_lock" && "${GITSETU_LOCK_RUNTIME_CONFIGURED:-0}" -ne 1 ]]; then
         local configure_force=0
-        [[ "${GITSETU_TEST:-0}" -eq 1 ]] && configure_force=1
         _gitsetu_configure_lock_path 0 "$configure_force" || {
             print_error "Could not configure a safe absolute runtime lock path."
             return 1
@@ -755,11 +751,7 @@ acquire_lock() {
             print_error "GITSETU_LOCK_TIMEOUT must be an integer from 1 to 3600."
             return 1
         fi
-        if [[ "${GITSETU_TEST:-0}" -eq 1 ]]; then
-            max_retries=$((GITSETU_LOCK_TIMEOUT * 50))
-        else
-            max_retries=$((GITSETU_LOCK_TIMEOUT * 10))
-        fi
+        max_retries=$((GITSETU_LOCK_TIMEOUT * 10))
     fi
 
     # Re-entrancy applies only to the exact lock already held by this shell.
@@ -797,8 +789,6 @@ acquire_lock() {
     local retry=0
     local dead_pid_count=0
     local incomplete_count=0
-    local test_mode=0
-    [[ "${GITSETU_TEST:-0}" -eq 1 ]] && test_mode=1
 
     while ! (umask 077 && mkdir "$target_lock") 2>/dev/null; do
         # Never follow or remove a symlink posing as the lock directory.
@@ -854,11 +844,10 @@ acquire_lock() {
             dead_pid_count=0
             incomplete_count=$((incomplete_count + 1))
             local required_incomplete=250
-            [[ "$test_mode" -eq 1 ]] && required_incomplete=5
             if [[ "$incomplete_count" -ge "$required_incomplete" ]]; then
                 local lock_age=""
                 lock_age=$(_gitsetu_lock_age_seconds "$target_lock" || printf '')
-                if [[ "$test_mode" -eq 1 || ( -n "$lock_age" && "$lock_age" -ge 60 ) ]]; then
+                if [[ -n "$lock_age" && "$lock_age" -ge 60 ]]; then
                     observed_signature=$(_gitsetu_lock_marker_signature "$target_lock" 2>/dev/null || printf '')
                     if [[ -n "$observed_signature" ]] &&
                        _gitsetu_lock_reap_if_unchanged "$target_lock" "$lock_token" "$observed_signature"; then
@@ -875,7 +864,6 @@ acquire_lock() {
             return 1
         fi
         local sleep_dur=0.1
-        [[ "$test_mode" -eq 1 ]] && sleep_dur=0.02
         sleep "$sleep_dur"
     done
 

@@ -13,7 +13,7 @@ GitSetu exists to reduce these operations to a reviewable, repeatable configurat
 ## Uncompromising Principles
 
 ### 1. Native URLs and Managed Routing
-GitSetu does not require specialized clone URLs for ordinary repositories inside mapped workspaces. It also generates optional aliases such as `github-work` for explicit external package-manager and cache workflows; those aliases are an escape hatch, not a requirement.
+GitSetu does not require specialized clone URLs for ordinary repositories inside mapped workspaces. It also generates optional aliases such as `gitsetu-work` for explicit external package-manager and cache workflows; those aliases are an escape hatch, not a requirement.
 
 GitSetu uses directory-scoped `includeIf` mapping to provide profile-specific `core.sshCommand` parameters when Git evaluates a managed path. Developers can use standard Git URLs; the operating system, Git, and OpenSSH still determine the final effective connection. The configuration compiler adds no daemon.
 

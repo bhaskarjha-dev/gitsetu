@@ -801,20 +801,8 @@ try_gh_key_upload() {
         return 1
     fi
 
-    # d) If non-TTY or GITSETU_TEST is set, do NOT prompt interactively — skip or return 1 (unless mock is testing it)
-    if [[ -n "${GITSETU_TEST:-}" ]]; then
-        local is_mock=0
-        if [[ -n "${GITSETU_TEST_GH:-}" || -n "${GITSETU_TEST_GH_MOCK:-}" ]]; then
-            is_mock=1
-        elif [[ "$(type -t gh 2>/dev/null)" == "function" ]]; then
-            is_mock=1
-        elif [[ -n "${TEST_HOME:-}" && "$(command -v gh 2>/dev/null)" == *"$TEST_HOME"* ]]; then
-            is_mock=1
-        fi
-        if [[ "$is_mock" -eq 0 ]]; then
-            return 1
-        fi
-    elif [[ ! -t 0 ]]; then
+    # d) If non-TTY, do NOT prompt interactively — skip or return 1
+    if [[ ! -t 0 ]]; then
         return 1
     fi
 
@@ -822,14 +810,8 @@ try_gh_key_upload() {
     printf >&2 '  GitHub CLI: logged in as @%s\n' "$login"
 
     # f) Confirm: default to "n"
-    if [[ -n "${GITSETU_TEST:-}" ]]; then
-        if [[ "${GITSETU_TEST_DECLINE:-0}" -eq 1 ]]; then
-            return 1
-        fi
-    else
-        if ! confirm "Upload '$label' key to GitHub (@$login)?" "n"; then
-            return 1
-        fi
+    if ! confirm "Upload '$label' key to GitHub (@$login)?" "n"; then
+        return 1
     fi
 
     # g) Run upload
@@ -1125,20 +1107,6 @@ verify_ssh_handshake() {
         host_key_mode="accept-new"
     fi
 
-    # Tests skip all network access unless they explicitly provide a mock.
-    if [[ -n "${GITSETU_TEST:-}" ]]; then
-        local is_mock=0
-        if [[ -n "${GITSETU_TEST_SSH_VERIFY:-}" || -n "${GITSETU_TEST_SSH:-}" ]]; then
-            is_mock=1
-        elif [[ "$(type -t ssh 2>/dev/null)" == "function" ]]; then
-            is_mock=1
-        elif [[ -n "${TEST_HOME:-}" && "$(command -v ssh 2>/dev/null)" == *"$TEST_HOME"* ]]; then
-            is_mock=1
-        fi
-        if [[ "$is_mock" -eq 0 ]]; then
-            return 0
-        fi
-    fi
 
     local out ssh_status=0
     if out=$(ssh -T -i "$key_path" -o IdentitiesOnly=yes -o ConnectTimeout=6 \

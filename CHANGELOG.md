@@ -5,31 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.1.0 — Verified publication-ready release candidate]
+## [1.1.0] - 2026-10-31
 
-The v1.1.0 line is a verified, security-hardened, publication-ready release candidate. This versioned entry is intentionally separate from the public release history until the preparation workflow creates the clean source commit, immutable tag, detached release manifest, signed artifacts, provenance, and a separately reviewed publication step. It must not be treated as permission to install a mutable branch artifact. Once those gates pass, this entry becomes the dated `[1.1.0]` public-release entry without requiring a rewrite of the feature or security documentation.
+### Added
+- Retrospective identity commit audit command (`gitsetu audit [count]`).
+- Configuration explanation and diagnostics command (`gitsetu explain`).
+- Interactive and scripted profile import command (`gitsetu import`).
+- Automatic remote URL routing via `--remote` (`hasconfig:remote.*.url:`).
+- Machine-readable `--json` and `--porcelain` output flags.
+- Explicit `--guard` and `--no-guard` identity verification flags.
+- Explicit `--provider-user` support for HTTPS profile mappings.
+- Backward-compatible v1 profile registry migration (`profiles.conf` v1 -> v2).
 
 ### Changed
+- Profile registry uses versioned, strictly escaped v2 format (`profiles.conf`).
+- Backup vault uses authenticated v2 PBKDF2/AES-256-CTR encryption with transactional restore verification.
+- Generated OpenSSH host aliases updated from `github-<label>` to `gitsetu-<label>` to avoid host routing ambiguity.
+- Tightened input/path validation, canonical worktree routing, lock ownership, and FIDO2 fallback handling.
+- Fail-closed pre-commit guard with fail-open behavior on unmanaged repositories.
 
-- Replaced the colon-delimited profile registry with a versioned, strictly escaped v2 registry. There is no migration reader or legacy flag.
-- Replaced backup vaults with an authenticated v2 format and transactional restore validation. Older unauthenticated/CBC vaults are rejected.
-- Tightened numeric/path/input validation, canonical worktree routing, lock ownership, process cleanup, SSH command quoting, and FIDO2 failure handling.
-- Added explicit managed/unmanaged guard semantics, fail-closed managed identity checks, and honest diagnostics.
-- Hardened installer/updater provenance, package metadata, Windows argv/path handling, CI credential isolation, and generated-bundle checks.
-- Separated generated release provenance from tagged source metadata; the release workflow is now preparation-only until a separately reviewed publish-only gate exists.
-- Made setup dry-run avoid GitHub account lookups and PAT storage, with regression coverage for the offline boundary.
-- Made the HTTPS credential broker honor Git's exact `path=` tuple component, with strict protocol parsing and an explicit environment override for controlled wrappers.
-- Restricted GitHub Port 443 SSH routing and verification to the exact `github.com` host, with deceptive-host regression coverage.
-- Added a fail-latching regression harness, isolated test environments, adversarial tamper/concurrency tests, and supported-platform matrix coverage.
+### Removed
+- Removed native credential broker and token storage in favor of OS-native credential helpers.
+- Removed legacy package manager templates (AUR, Scoop, WinGet, Nix, Homebrew) and GitHub CLI extension; official distribution is focused on GitHub Releases and npm.
+- Removed `update --development` mutable branch updater.
 
-### Security policy notes
-
-- Native OS credential stores are preferred. The explicitly selected zero-dependency file backend remains plaintext and is disclosed as such; it is permission-checked and warned about, not described as encrypted.
-- v1.1.0 is not yet a published release. Public asset absence is not treated as a vulnerability; release metadata and mutable aliases must remain withheld or pinned until an intentional release.
+### Breaking Changes
+- Profile registry migrated to v2 format automatically; older v1-only tooling cannot read v2 registry.
+- SSH host aliases renamed from `github-<label>` to `gitsetu-<label>`.
+- Older unauthenticated / CBC backup vaults are no longer restored.
 
 ## [1.0.0] - 2026-09-10
-
-> Historical release notes below describe the pre-v1.1 implementation. They are not current product guarantees; the v1.1 development branch uses the strict v2 registry, authenticated v2 vaults, explicit credential-backend policy, and the guard semantics documented above.
 
 The inaugural General Availability (GA) production release of GitSetu — a zero-dependency, pure Bash 3.2 CLI compiler for automated Git multi-identity orchestration and OpenSSH key management across Linux, macOS, and Windows.
 
@@ -52,17 +57,17 @@ The inaugural General Availability (GA) production release of GitSetu — a zero
 - **Dual Routing Architecture (ADR-0001):** Combines directory-scoped `core.sshCommand` with `~/.ssh/config` host aliases to support external package manager clones (`go get`, `npm`, `cargo`) outside mapped directories.
 - **SSH Commit Signing:** Native support for SSH-based commit signatures (`gpg.format = ssh`, `commit.gpgsign = true`).
 
-#### Native Credential Delegation
-- **Cross-Platform HTTPS Delegation:** Per-profile `credential.https://<host>.username` configuration delegating token authentication to Git's native credential ecosystem.
-- **Platform Credential Manager Integration:** Seamless integration with Git Credential Manager (Windows), Apple Keychain (`osxkeychain` on macOS), and Secret Service (`libsecret` on Linux).
-- **Compatibility Shim:** Inert `gitsetu credential` command draining stdin to `/dev/null` for backward compatibility with legacy v1.0.0 configurations.
+#### Native Credential Broker
+- **Cross-Platform HTTPS Authentication:** Namespaced credential helper (`gitsetu credential`) proxying HTTPS Personal Access Tokens (PATs) to prevent cross-account token pollution.
+- **Native OS Keychain Integration:** Directly interfaces with macOS Keychain (`security`), Linux Secret Service (`secret-tool`), and Windows Credential Manager (`credential.helper = manager` via Git Credential Manager / DPAPI).
+- **Secure File Fallback:** Restrictive fallback token storage in `~/.config/gitsetu/.tokens` enforced with `chmod 600`.
 
 #### Security Guard Rails & Integrity
 - **Fail-Closed Pre-Commit Guard (`gitsetu guard`):** Global pre-commit hook (`core.hooksPath`) that blocks commits if `user.email` diverges from the expected profile for the repository directory.
 - **Hook Proxying:** Transparently passes through to project-level hooks (`husky`, `lefthook`, `pre-commit`) when identity verification succeeds.
 - **Subshell-Free Environment Switching (`gitsetu run`):** Runs one-off commands under an explicit profile identity via environment variables without subshell overhead.
-- **Low-Latency Shell Prompt Integration (`gitsetu prompt`):** Low-overhead `$PS1` / Starship prompt context identifier implemented in pure Bash parameter expansion.
-- **Encrypted State Vault (`gitsetu backup` / `restore`):** The historical 1.0.0 implementation used an OpenSSL AES-256-CBC envelope (`-pbkdf2` / `-iter 100000`). Current v1.1.0 candidates use the authenticated v2 format documented above; the older format is rejected.
+- **Sub-2ms Shell Prompt Integration (`gitsetu prompt`):** Ultra-low-latency `$PS1` / Starship prompt context identifier implemented in pure Bash parameter expansion.
+- **Encrypted State Vault (`gitsetu backup` / `restore`):** Bundles and encrypts all GitSetu state and software SSH keys using OpenSSL AES-256-CBC (`-pbkdf2` / `-iter 100000`). Pre-flight safety net backs up existing state before restore.
 - **Clean State Teardown (`gitsetu teardown`):** Completely purges GitSetu managed blocks, unsets `core.hooksPath`, and removes application directories while preserving generated SSH keys. Supports deep cleanup (`--deep`) of matched local repository overrides.
 
 #### Windows Platform Support & Sandbox Testing
@@ -74,23 +79,20 @@ The inaugural General Availability (GA) production release of GitSetu — a zero
 - **Windows Sandbox Test Harness:** Fully automated, disposable test harness in `sandbox/` featuring `launch_sandbox.ps1`, `launch_sandbox.bat`, `gitsetu_test.wsb`, `bootstrap.ps1`, and `comprehensive_audit.sh` (31 phases, 107 empirical checks) for host-isolated zero-trust validation.
 
 #### Distribution, Quality Assurance & Tooling
-
-> The distribution notes in this section describe repository capabilities at the 1.0.0 release. They are not current publication claims; the candidate entry above is the authoritative v1.1.0 status.
-
 - **Multi-Platform Packaging Ecosystem:** Complete distribution support across all developer platforms:
   - **Standalone Monolith Bundle (`dist/gitsetu`):** Self-contained, single-file Bash executable built via `scripts/bundle.sh` (`make dist`).
-  - **Node.js npm/npx Package (`package.json`, `bin/gitsetu.js`):** The package definition exposes `gitsetu` and `git-setu`; public publication remains withheld by current release policy.
-  - **Microsoft WinGet Manifest Templates (`packaging/winget/templates/`):** Validated templates; no public manifest is published for the current candidate.
-  - **Native Windows C# Launcher (`packaging/windows/gitsetu.cs`):** Deterministic local launcher with trusted discovery and Windows quoting.
-  - **Windows Scoop Template (`packaging/scoop/`):** Validated template; no public package is published for the current candidate.
-  - **Homebrew Template (`packaging/homebrew/`):** Validated template; no public formula is published for the current candidate.
-  - **Arch Linux AUR Template (`packaging/aur/`):** Validated template; no public package is published for the current candidate.
-  - **Nix Flake (`flake.nix`):** Zero-dependency hermetic execution from a reviewed local checkout.
-  - **GitHub CLI Extension Wrappers (`packaging/gh-extension/`):** Local `gh-gitsetu` and `gh-setu` wrappers; public extension repositories are not published.
+  - **Node.js npm/npx Package (`package.json`, `bin/gitsetu.js`):** Instant zero-install execution via `npx gitsetu setup --auto` and global installation via `npm i -g gitsetu`.
+  - **Microsoft WinGet Manifest Triad (`packaging/winget/`):** Official Microsoft Windows Package Manager manifests validated against Microsoft CLI schema.
+  - **Native Windows C# Launcher (`packaging/windows/gitsetu.cs`):** Compiled via `build_launcher.ps1` (`csc.exe`) for transparent execution.
+  - **Windows Scoop Manifest (`packaging/scoop/gitsetu.json`):** Compatible with Scoop package manager.
+  - **Homebrew Formula (`packaging/homebrew/gitsetu.rb`):** Compatible with macOS & Linux Homebrew.
+  - **Arch Linux AUR (`packaging/aur/`):** Validated `PKGBUILD` and `.SRCINFO` package specification.
+  - **Nix Flake (`flake.nix`):** Zero-dependency hermetic execution via `nix run github:bhaskarjha-dev/gitsetu`.
+  - **GitHub CLI Extension (`packaging/gh-extension/`):** Executable extension wrapper (`gh gitsetu`).
 - **Multi-OS GitHub Actions CI Matrix:** Continuous delivery matrix running automated validation across 5 platforms: Ubuntu Linux 24.04, Arch Linux container (`makepkg`), Alpine Linux container (Musl/BusyBox), macOS Apple Silicon (native `/bin/bash` 3.2), and Windows Native (PowerShell, WinGet, Scoop).
 - **Installer Regression Pipeline:** Added automated end-to-end testing for both POSIX and Windows PowerShell installer/uninstaller pipelines in `tests/test_installer.sh` with `$GITSETU_INSTALL_DIR` non-destructive test isolation.
-- **Comprehensive Regression & E2E Test Suites:** Full serial test coverage spanning core logic, CLI, SSH, Git configuration, guard behavior, credential brokering, backup/restore, concurrency, teardown, validation, platform detection, discovery, doctor, prompt, resilience, installers, keychain, manual-mode policy, bundling, npm wrapper, WinGet, AUR, Nix flake, GitHub extension, CRLF self-healing, audit regressions, clean-room npm E2E, and adversarial/concurrency stress.
-- **Unified Test Runner:** `tests/run_all.sh` provides aggregated status, bounded process-tree cleanup, and honest PASS/FAIL/SKIP summaries across the full suite set.
+- **36 Comprehensive Regression & E2E Test Suites:** Full test suite covering core logic, CLI, SSH, gitconfig, guard, credential broker, backup/restore, concurrency, teardown, validation, platform detection, discovery, doctor, prompt, resilience, installer, keychain, manual mode, bundler, npm wrapper, winget, AUR, Nix flake, GH extension, CRLF self-healing, audit regressions, clean-room npm E2E (`test_npm_cleanroom_e2e.sh`), and adversarial & concurrency stress (`test_adversarial_stress.sh`).
+- **Unified Test Runner:** Added `tests/run_all.sh` providing aggregated status and colored summaries across all 36 test suites.
 - **Developer Makefile:** Targets for `make test`, `make lint` (ShellCheck), `make check`, and `make hooks`.
 - **Shell Autocompletion:** TAB autocompletion for subcommands and profile labels in Bash and Zsh.
 - **Diagnostic Doctor (`gitsetu doctor`):** Multi-point diagnostic scanner for registry validity, OpenSSH include directives, SSH agent status, and local repository configuration drift.

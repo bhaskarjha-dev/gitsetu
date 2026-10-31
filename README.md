@@ -11,7 +11,7 @@
 [![CI](https://github.com/bhaskarjha-dev/gitsetu/actions/workflows/ci.yml/badge.svg)](https://github.com/bhaskarjha-dev/gitsetu/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/github/license/bhaskarjha-dev/gitsetu?color=blue)](LICENSE)
 [![Bash 3.2+](https://img.shields.io/badge/bash-3.2%2B-orange?logo=gnubash&logoColor=white)](https://www.gnu.org/software/bash/)
-[![Tests](https://img.shields.io/badge/regression-tested-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-passing-brightgreen)](#testing)
 [![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey)](#cross-platform)
 [![Website](https://img.shields.io/badge/docs-gitsetu.bhaskarjha.dev-00c4cc)](https://gitsetu.bhaskarjha.dev)
 
@@ -43,7 +43,7 @@ GitSetu scans your machine, discovers your existing Git identities, and **in one
 
 **Pure Bash 3.2 core. Native Git and OpenSSH integration. Optional platform stores and OpenSSL are detected explicitly.**
 
-> **Release state:** v1.1.0 is a verified, publication-ready release candidate. The current release workflow is preparation-only and has not published package-manager assets, a public signed release, or an immutable `v1.1.0` download. Use a reviewed local checkout and verify its provenance; see [Installation](#installation) and [Security Policy](SECURITY.md).
+> **Release:** GitSetu v1.1.0 is released via GitHub Releases and npm. See [Installation](#installation) and [Security Policy](SECURITY.md).
 
 ---
 
@@ -52,15 +52,20 @@ GitSetu scans your machine, discovers your existing Git identities, and **in one
 ### Quick Start
 
 ```bash
-# For the current publication-ready candidate, run from a reviewed checkout:
-bash install.sh
+# Install the latest release
+curl -fsSL https://github.com/bhaskarjha-dev/gitsetu/releases/latest/download/install.sh | bash
 export PATH="$HOME/.local/bin:$PATH"
 
-# Setup (discovers identities automatically)
-gitsetu setup --auto
+# Add a profile
+gitsetu add work "Your Name" you@company.com ~/work
 
-# Verify the managed configuration
+# Verify configuration
 gitsetu status
+```
+
+Add the printed public key at [github.com/settings/ssh/new](https://github.com/settings/ssh/new), then run:
+```bash
+GITSETU_VERIFY_NETWORK=1 gitsetu verify
 ```
 
 ### What Just Happened?
@@ -259,7 +264,7 @@ See [full comparison →](docs/overview/comparisons.md)
 | [Architecture](docs/overview/architecture.md) | How the configuration compiler works |
 | [Identity Routing](docs/core-engines/identity-routing.md) | Deep dive into `includeIf` engine |
 | [SSH Orchestrator](docs/core-engines/ssh-orchestrator.md) | Key generation and host alias routing |
-| [HTTPS Credentials](docs/core-engines/https-credentials.md) | Git credential helper delegation and PAT routing |
+| [HTTPS Credentials](docs/core-engines/https-credentials.md) | Per-profile HTTPS username with your platform's credential helper |
 | [Pre-Commit Guard](docs/core-engines/precommit-guard.md) | Fail-closed identity verification |
 | [Hardware Keys](docs/guides/hardware-keys.md) | FIDO2 / YubiKey setup |
 | [Vault Backups](docs/guides/vault-backups.md) | Encrypted export/import |
@@ -273,11 +278,14 @@ See [full comparison →](docs/overview/comparisons.md)
 
 ## Testing
 
-GitSetu has comprehensive automated unit, integration, tamper, concurrency, packaging, and platform test suites across Linux, macOS, and Windows.
+GitSetu has comprehensive automated test coverage validated in CI: the full test suite on Linux and macOS, and the end-to-end harness and native PowerShell suites on Windows.
 
 ```bash
-# Run all test suites
+# Run all test suites (Linux & macOS)
 bash tests/run_all.sh
+
+# Run end-to-end cleanroom harness (Linux, macOS, and Windows Git Bash)
+bash tests/e2e_installed.sh
 
 # Run tests against bundled artifact
 make dist-check

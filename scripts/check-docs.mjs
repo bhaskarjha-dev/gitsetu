@@ -32,37 +32,37 @@ if (!development && !released) {
 }
 
 const changelog = read('CHANGELOG.md');
-const changelogHeading = changelog.match(/^## \[[^\n]+\]/m)?.[0] || '';
-if (development) {
-  if (!/^## \[1\.1\.0 — Verified publication-ready release candidate\]/.test(changelogHeading)) {
-    failures.push(`publication-ready changelog heading is not explicit: ${changelogHeading || 'missing'}`);
+const changelogHeading = changelog.match(/^## \[[^\n]+/m)?.[0] || '';
+if (!/^## \[1\.1\.0\] - \d{4}-\d{2}-\d{2}$/.test(changelogHeading)) {
+  failures.push(`changelog heading is not dated [1.1.0]: ${changelogHeading || 'missing'}`);
+}
+if (/^## \[Unreleased/m.test(changelog)) {
+  failures.push('active changelog section still uses an ambiguous Unreleased heading');
+}
+
+for (const file of currentDocs) {
+  const text = read(file);
+  if (/publication-ready|verified\s+(?:\w+\s+)*release candidate/i.test(text)) {
+    failures.push(`${file} contains forbidden release candidate wording`);
   }
-  if (/^## \[Unreleased/m.test(changelog)) {
-    failures.push('active changelog section still uses an ambiguous Unreleased heading');
-  }
-  for (const file of ['README.md', 'SECURITY.md', 'packaging/README.md', 'docs/getting-started/installation.md', 'docs/reference/cli-commands.md']) {
-    const text = read(file);
-    if (!/(publication-ready|release\s+candidate|unpublished|not (?:yet )?a public release)/i.test(text)) {
-      failures.push(`${file} does not state the current publication-ready candidate status`);
-    }
-  }
-  if (/download(?:ed|ing)? a published release artifact/i.test(read('docs/getting-started/installation.md'))) {
-    failures.push('installation guide implies a public v1.1.0 artifact exists before publication');
-  }
-  if (/Baseline GA Release/i.test(read('docs/enterprise/product-roadmap.md'))) {
-    failures.push('product roadmap still calls the candidate baseline a GA release');
-  }
-  if (/gitsetu init --auto/i.test(read('docs/enterprise/product-roadmap.md'))) {
-    failures.push('product roadmap uses the stale gitsetu init --auto command');
-  }
-  const troubleshooting = read('docs/reference/troubleshooting.md');
-  if (/(?:can|may|utilize|use).{0,80}(?:--no-verify|git commit -n).{0,80}(?:bypass|guard|identity)/i.test(troubleshooting)) {
-    failures.push('troubleshooting guide recommends bypassing the identity guard');
-  }
-} else if (released) {
-  if (!/^## \[1\.1\.0\] - \d{4}-\d{2}-\d{2}$/.test(changelogHeading)) {
-    failures.push(`released changelog heading is not dated: ${changelogHeading || 'missing'}`);
-  }
+}
+
+const readmeText = read('README.md');
+if (!/https:\/\/github\.com\/bhaskarjha-dev\/gitsetu\/releases/i.test(readmeText)) {
+  failures.push('README.md quick start does not reference the GitHub Releases URL');
+}
+
+if (/Baseline GA Release/i.test(read('docs/enterprise/product-roadmap.md'))) {
+  failures.push('product roadmap still calls the candidate baseline a GA release');
+}
+if (/gitsetu init --auto/i.test(read('docs/enterprise/product-roadmap.md'))) {
+  failures.push('product roadmap uses the stale gitsetu init --auto command');
+}
+const troubleshooting = read('docs/reference/troubleshooting.md');
+if (/(?:can|may|utilize|use).{0,80}(?:--no-verify|git commit -n).{0,80}(?:bypass|guard|identity)/i.test(troubleshooting)) {
+  failures.push('troubleshooting guide recommends bypassing the identity guard');
+}
+if (released) {
   for (const file of ['README.md', 'SECURITY.md', 'packaging/README.md', 'docs/getting-started/installation.md', 'docs/reference/cli-commands.md']) {
     if (/not (?:yet )?a public release|unpublished/i.test(read(file))) {
       failures.push(`${file} still describes the published release as unpublished`);

@@ -251,7 +251,7 @@ bundle_export_fixture_environment() {
     unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_INDEX_FILE GIT_NAMESPACE
     unset GIT_PAGER GIT_EDITOR GIT_SEQUENCE_EDITOR GIT_EXTERNAL_DIFF
     unset GIT_ASKPASS SSH_ASKPASS SSH_AUTH_SOCK GIT_SSH_COMMAND GIT_SSH
-    unset GITSETU_TEST_VAULT_MODE GITSETU_TEST_VAULT_PASS GITSETU_VAULT_PASS
+    unset GITSETU_VAULT_PASSWORD GITSETU_VAULT_PASS
     unset GITSETU_ALLOW_TEST_LIB_DIR GITSETU_AUTO_MODE GITSETU_CRLF_DEPTH
     unset GITSETU_DEFAULT_LOCK_DIR GITSETU_LOCK_RUNTIME_CONFIGURED
     unset GITSETU_LOCK_PATH GITSETU_LOCK_TOKEN GITSETU_LOCK_PROCESS_START
@@ -745,9 +745,10 @@ bundle_guard_install_is_explicitly_skipped_for_standalone() {
         return 0
     fi
     if [[ "$BUNDLE_OUTPUT" == *"canonical regular-file GitSetu library root"* ]]; then
-        skip_test "bundle guard --install" \
+        printf '    FAIL: bundle guard --install: %s\n' \
             "persistent hook installation requires a canonical lib/ checkout; a single-file artifact has no hermetic library tree"
-        return 0
+        mark_test_failure
+        return 1
     fi
 
     printf '    FAIL: guard --install failed for an unexpected reason\n'
@@ -805,11 +806,7 @@ bundle_backup_restore_round_trip() {
         return 0
     fi
 
-    # This product test hook supplies a non-interactive password while the
-    # command still performs the real v2 encryption, authentication, and
-    # transactional restore.  It is used only inside this isolated fixture.
-    export GITSETU_TEST_VAULT_MODE=1
-    export GITSETU_TEST_VAULT_PASS='bundle-contract-password-123'
+    export GITSETU_VAULT_PASSWORD='bundle-contract-password-123'
     BUNDLE_CWD="$BUNDLE_RUN_DIR"
     bundle_invoke backup "$BUNDLE_VAULT_DIR/bundle.vault"
     bundle_assert_ok "bundle backup creates a vault" || return 1
@@ -825,6 +822,7 @@ bundle_backup_restore_round_trip() {
     assert_file_not_contains "$BUNDLE_HOME/.gitconfig" "# [gitsetu:managed:start]" "teardown removes the managed Git block" || return 1
     assert_file_exists "$BUNDLE_KEY_GLOBAL" "teardown preserves the global private key" || return 1
     assert_file_exists "$BUNDLE_KEY_WORK" "teardown preserves the work private key" || return 1
+    export GITSETU_VAULT_PASSWORD='bundle-contract-password-123'
     bundle_invoke restore "$BUNDLE_VAULT_DIR/bundle.vault"
     bundle_assert_ok "bundle restore succeeds from the standalone artifact" || return 1
     assert_contains "$BUNDLE_OUTPUT" "Authenticated v2 vault restored successfully" "restore reports successful authentication" || return 1

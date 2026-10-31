@@ -90,6 +90,6 @@ Loading multiple keys concurrently often saturates remote authentication boundar
 
 GitSetu's compiler natively intercepts and resolves these session blocks:
 - **`IdentitiesOnly yes`:** Hardcoded into every generated target file to prevent OpenSSH from blindly presenting unmapped keys cached in the global agent socket.
-- **Keychain Injection:** Automates passphrase pre-loading on macOS (`UseKeychain yes`) and supported Linux agents.
+- **Portable Host Config:** Emits standard OpenSSH directives without host-specific extensions (`UseKeychain`), ensuring cross-platform portability.
 - **Windows NTFS Permission Tolerance:** Under POSIX systems, OpenSSH mandates strict `0600` permissions on private keys. In supported Git Bash/MSYS NTFS contexts, POSIX modes may appear as `644`; GitSetu's diagnostic and verification engines recognize that environment without relaxing the POSIX requirement.
-- **Dual Routing Architecture (ADR-0001):** Combines directory-scoped `core.sshCommand` with `~/.ssh/config` host aliases in the form `<provider-first-label>-<profile-label>` (for example, `github-work`), supporting mapped workspaces and explicitly configured external dependency clones (`go get`, `npm`, `cargo`).
+- **Dual Routing Architecture (ADR-0001):** Combines directory-scoped `core.sshCommand` with `~/.ssh/config` host aliases in the form `gitsetu-<profile-label>` (for example, `gitsetu-work`), supporting mapped workspaces and explicitly configured external dependency clones (`go get`, `npm`, `cargo`).

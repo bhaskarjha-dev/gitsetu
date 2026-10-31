@@ -147,13 +147,15 @@ else
         else
             error "GitSetu v${GITSETU_RELEASE_VERSION} is in development. Use --local-development from a clean reviewed checkout; no public artifact exists."
         fi
-    elif [[ "$GITSETU_RELEASE_STATE" == "released" ]]; then
+    elif [[ "$GITSETU_RELEASE_STATE" == "released" || "$GITSETU_RELEASE_STATE" == "published" ]]; then
         [[ "$LOCAL_DEVELOPMENT" -eq 0 ]] || error "--local-development is valid only while the release state is development"
         [[ "$GITSETU_RELEASE_TAG" == "v${GITSETU_RELEASE_VERSION}" ]] || error "Release tag and version do not match"
-        [[ "$GITSETU_RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || error "Release commit pin is missing or invalid"
-        [[ "$GITSETU_ARTIFACT_URL" == "https://github.com/bhaskarjha-dev/gitsetu/releases/download/${GITSETU_RELEASE_TAG}/"* ]] || error "Artifact URL is not pinned to the immutable GitSetu release"
-        [[ "$GITSETU_SIGNATURE_URL" == "${GITSETU_ARTIFACT_URL%/*}/"* && "$GITSETU_SIGNATURE_BUNDLE_URL" == "${GITSETU_ARTIFACT_URL%/*}/"* ]] || error "Signature URLs are not pinned beside the artifact"
-        [[ "$GITSETU_CERTIFICATE_IDENTITY" == https://github.com/bhaskarjha-dev/gitsetu/* ]] || error "Signature certificate identity is outside the GitSetu repository"
+        if [[ "${GITSETU_EMBEDDED_RELEASE:-0}" -ne 1 ]]; then
+            [[ "$GITSETU_RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || error "Release commit pin is missing or invalid"
+            [[ "$GITSETU_ARTIFACT_URL" == "https://github.com/bhaskarjha-dev/gitsetu/releases/download/${GITSETU_RELEASE_TAG}/"* ]] || error "Artifact URL is not pinned to the immutable GitSetu release"
+            [[ "$GITSETU_SIGNATURE_URL" == "${GITSETU_ARTIFACT_URL%/*}/"* && "$GITSETU_SIGNATURE_BUNDLE_URL" == "${GITSETU_ARTIFACT_URL%/*}/"* ]] || error "Signature URLs are not pinned beside the artifact"
+            [[ "$GITSETU_CERTIFICATE_IDENTITY" == https://github.com/bhaskarjha-dev/gitsetu/* ]] || error "Signature certificate identity is outside the GitSetu repository"
+        fi
         ARTIFACT_FILE="$GITSETU_ARTIFACT_URL"
         EXPECTED_SHA256="$GITSETU_ARTIFACT_SHA256"
         EXPECTED_SIZE="$GITSETU_ARTIFACT_SIZE"

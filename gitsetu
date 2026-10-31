@@ -62,7 +62,7 @@ if [[ -n "$_gitsetu_lock_timeout" ]]; then  #
     if [[ "$_gitsetu_lock_timeout" == "0" || "${#_gitsetu_lock_timeout}" -gt 4 || ( "${#_gitsetu_lock_timeout}" -eq 4 && "$_gitsetu_lock_timeout" -gt 3600 ) ]]; then printf '%s\n' "Error: GITSETU_LOCK_TIMEOUT is outside the supported range (1-3600 seconds)." >&2; exit 1; fi  #
 fi #
 
-for _gitsetu_flag_name in GITSETU_PORT443_NEEDED GITSETU_TEST GITSETU_VERIFY_NETWORK GITSETU_ALLOW_SSH_HOST_KEY GITSETU_SSH_ACCEPT_NEW_HOST GITSETU_ALLOW_SSH_PORT443 GITSETU_DEFAULT_SIGN; do  #
+for _gitsetu_flag_name in GITSETU_PORT443_NEEDED GITSETU_VERIFY_NETWORK GITSETU_ALLOW_SSH_HOST_KEY GITSETU_SSH_ACCEPT_NEW_HOST GITSETU_ALLOW_SSH_PORT443 GITSETU_DEFAULT_SIGN; do  #
     _gitsetu_flag_value="${!_gitsetu_flag_name:-0}"  #
     if [[ "$_gitsetu_flag_value" != "0" && "$_gitsetu_flag_value" != "1" ]]; then printf '%s\n' "Error: $_gitsetu_flag_name must be 0 or 1." >&2; exit 1; fi  #
 done #

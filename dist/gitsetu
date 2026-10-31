@@ -62,7 +62,7 @@ if [[ -n "$_gitsetu_lock_timeout" ]]; then  #
     if [[ "$_gitsetu_lock_timeout" == "0" || "${#_gitsetu_lock_timeout}" -gt 4 || ( "${#_gitsetu_lock_timeout}" -eq 4 && "$_gitsetu_lock_timeout" -gt 3600 ) ]]; then printf '%s\n' "Error: GITSETU_LOCK_TIMEOUT is outside the supported range (1-3600 seconds)." >&2; exit 1; fi  #
 fi #
 
-for _gitsetu_flag_name in GITSETU_PORT443_NEEDED GITSETU_TEST GITSETU_VERIFY_NETWORK GITSETU_ALLOW_SSH_HOST_KEY GITSETU_SSH_ACCEPT_NEW_HOST GITSETU_ALLOW_SSH_PORT443 GITSETU_DEFAULT_SIGN; do  #
+for _gitsetu_flag_name in GITSETU_PORT443_NEEDED GITSETU_VERIFY_NETWORK GITSETU_ALLOW_SSH_HOST_KEY GITSETU_SSH_ACCEPT_NEW_HOST GITSETU_ALLOW_SSH_PORT443 GITSETU_DEFAULT_SIGN; do  #
     _gitsetu_flag_value="${!_gitsetu_flag_name:-0}"  #
     if [[ "$_gitsetu_flag_value" != "0" && "$_gitsetu_flag_value" != "1" ]]; then printf '%s\n' "Error: $_gitsetu_flag_name must be 0 or 1." >&2; exit 1; fi  #
 done #
@@ -598,9 +598,6 @@ fi
 if [[ -n "${LOCALAPPDATA:-}" ]]; then
     LOCALAPPDATA="${LOCALAPPDATA//\\//}"
 fi
-if [[ -n "${GITSETU_TEST_RUNTIME_DIR:-}" ]]; then
-    GITSETU_TEST_RUNTIME_DIR="${GITSETU_TEST_RUNTIME_DIR//\\//}"
-fi
 
 GITSETU_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu"
 GITSETU_BACKUP_DIR="$GITSETU_CONFIG_DIR/backups"
@@ -634,9 +631,7 @@ _gitsetu_lock_path_canonicalish() {
 
 _gitsetu_default_runtime_lock_path() {
     local base candidate config_root fallback
-    if [[ "${GITSETU_TEST:-0}" == "1" ]]; then
-        base="${GITSETU_TEST_RUNTIME_DIR:-${HOME:-}/.gitsetu-test-runtime}"
-    elif [[ -n "${XDG_STATE_HOME:-}" ]]; then
+    if [[ -n "${XDG_STATE_HOME:-}" ]]; then
         base="$XDG_STATE_HOME"
     elif [[ "${GITSETU_OS:-}" == "gitbash" || "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == mingw* || "${OSTYPE:-}" == cygwin* ]] &&
          [[ -n "${LOCALAPPDATA:-}" ]]; then
@@ -646,11 +641,7 @@ _gitsetu_default_runtime_lock_path() {
     fi
     base="${base%/}"
     [[ -n "$base" && "$base" != "/" ]] || return 1
-    if [[ "${GITSETU_TEST:-0}" == "1" ]]; then
-        candidate="$base/profiles.lock"
-    else
-        candidate="$base/gitsetu/profiles.lock"
-    fi
+    candidate="$base/gitsetu/profiles.lock"
 
     # Invalid/ relative state variables must not silently redirect locking into
     # the config tree.  Fall back to a per-user state directory instead.
@@ -2714,8 +2705,8 @@ EOF
 # copy_to_clipboard — Opportunistically copies text to the system clipboard
 # ------------------------------------------------------------------------------
 copy_to_clipboard() {
-    # Skip clipboard in headless CI or test environments
-    if [[ -n "${CI:-}" || -n "${GITSETU_TEST:-}" ]]; then
+    # Skip clipboard in headless CI or non-terminal environments
+    if [[ -n "${CI:-}" || ! -t 0 ]]; then
         return 1
     fi
 
@@ -4031,21 +4022,16 @@ _vault_password_contains_line_break() {
     [[ "$password" != *$'\n'* && "$password" != *$'\r'* ]]
 }
 
-_vault_test_password_enabled() {
-    [[ "${GITSETU_TEST:-0}" == "1" && "${GITSETU_TEST_VAULT_MODE:-0}" == "1" ]]
-}
-
 _vault_read_new_password() {
     local password confirm
     if [[ -n "${GITSETU_VAULT_PASSWORD:-}" ]]; then
         password="$GITSETU_VAULT_PASSWORD"
+        unset GITSETU_VAULT_PASSWORD
         if [[ "${#password}" -lt 12 ]]; then
             print_error "Vault password must contain at least 12 characters."
             return 1
         fi
         _VAULT_ROOT_KEY="$password"
-    elif _vault_test_password_enabled && [[ -n "${GITSETU_TEST_VAULT_PASS:-}" ]]; then
-        _VAULT_ROOT_KEY="$GITSETU_TEST_VAULT_PASS"
     else
         ask_password "Enter a strong vault password (minimum 12 characters): "
         password="$REPLY"
@@ -4080,8 +4066,7 @@ _vault_read_restore_password() {
     local password
     if [[ -n "${GITSETU_VAULT_PASSWORD:-}" ]]; then
         password="$GITSETU_VAULT_PASSWORD"
-    elif _vault_test_password_enabled && [[ -n "${GITSETU_TEST_VAULT_PASS:-}" ]]; then
-        password="$GITSETU_TEST_VAULT_PASS"
+        unset GITSETU_VAULT_PASSWORD
     else
         ask_password "Enter vault password: "
         password="$REPLY"
@@ -4203,32 +4188,79 @@ _vault_hex_matches_file() {
     [[ "$actual_hex" == "$expected_hex" ]]
 }
 
-_vault_derive_cipher_key() {
-    local root_key="$1" enc_salt="$2" iters="$3"
-    local salt_suffix="${enc_salt:16}" out key
-    out=$(printf 'gitsetu-v2-encryption:%s:%s\n' "$root_key" "$salt_suffix" |
-        openssl enc -aes-256-ctr -P -salt -pbkdf2 -iter "$iters" -md sha256 \
-            -S "${enc_salt:0:16}" -pass stdin 2>/dev/null) || return 1
-    key=$(printf '%s\n' "$out" | sed -n 's/^key=//p' | tr -d ' \r\n')
-    [[ -n "$key" && "$key" =~ ^[0-9A-Fa-f]{64}$ ]] || return 1
-    printf '%s' "$key"
+_VAULT_OPENSSL_SALTED_HEADER=""
+
+_vault_openssl_has_salted_header() {
+    if [[ -z "$_VAULT_OPENSSL_SALTED_HEADER" ]]; then
+        local probe
+        probe=$(printf x | openssl enc -aes-256-ctr -pbkdf2 -iter 1000 -md sha256 \
+            -S 0011223344556677 -pass pass:probe 2>/dev/null | head -c 8)
+        if [[ "$probe" == "Salted__" ]]; then
+            _VAULT_OPENSSL_SALTED_HEADER=1
+        else
+            _VAULT_OPENSSL_SALTED_HEADER=0
+        fi
+    fi
+    [[ "$_VAULT_OPENSSL_SALTED_HEADER" -eq 1 ]]
 }
 
 _vault_encrypt_stream() {
     local root_key="$1" enc_salt="$2" iv="$3" input="$4" output="$5"
-    local key
-    key=$(_vault_derive_cipher_key "$root_key" "$enc_salt" "$GITSETU_VAULT_ITERATIONS") || return 1
-    openssl enc -aes-256-ctr -nosalt -K "$key" -iv "$iv" \
-        -in "$input" -out "$output" 2>/dev/null
+    local iters="$GITSETU_VAULT_ITERATIONS"
+    local salt_suffix="${enc_salt:16}"
+    local salt_prefix="${enc_salt:0:16}"
+
+    if _vault_openssl_has_salted_header; then
+        local tmp="${output}.enc.tmp"
+        if ! printf 'gitsetu-v2-encryption:%s:%s\n' "$root_key" "$salt_suffix" | \
+            openssl enc -aes-256-ctr -salt -pbkdf2 -iter "$iters" -md sha256 \
+                -S "$salt_prefix" -iv "$iv" -pass stdin \
+                -in "$input" -out "$tmp" 2>/dev/null; then
+            rm -f "$tmp"
+            return 1
+        fi
+        if ! tail -c +17 "$tmp" > "$output" 2>/dev/null; then
+            rm -f "$tmp" "$output"
+            return 1
+        fi
+        rm -f "$tmp"
+    else
+        printf 'gitsetu-v2-encryption:%s:%s\n' "$root_key" "$salt_suffix" | \
+            openssl enc -aes-256-ctr -salt -pbkdf2 -iter "$iters" -md sha256 \
+                -S "$salt_prefix" -iv "$iv" -pass stdin \
+                -in "$input" -out "$output" 2>/dev/null
+    fi
 }
 
 _vault_decrypt_stream() {
     local root_key="$1" enc_salt="$2" iv="$3" input="$4" output="$5"
     local iters="${6:-$GITSETU_VAULT_ITERATIONS}"
-    local key
-    key=$(_vault_derive_cipher_key "$root_key" "$enc_salt" "$iters") || return 1
-    openssl enc -d -aes-256-ctr -nosalt -K "$key" -iv "$iv" \
-        -in "$input" -out "$output" 2>/dev/null
+    local salt_suffix="${enc_salt:16}"
+    local salt_prefix="${enc_salt:0:16}"
+
+    if _vault_openssl_has_salted_header; then
+        local tmp="${output}.dec.tmp"
+        local hex_fmt="" i
+        for (( i=0; i<16; i+=2 )); do
+            hex_fmt="${hex_fmt}\\x${salt_prefix:i:2}"
+        done
+        if ! { printf 'Salted__'; printf '%b' "$hex_fmt"; cat "$input"; } > "$tmp" 2>/dev/null; then
+            rm -f "$tmp"
+            return 1
+        fi
+        printf 'gitsetu-v2-encryption:%s:%s\n' "$root_key" "$salt_suffix" | \
+            openssl enc -d -aes-256-ctr -salt -pbkdf2 -iter "$iters" -md sha256 \
+                -S "$salt_prefix" -iv "$iv" -pass stdin \
+                -in "$tmp" -out "$output" 2>/dev/null
+        local rc=$?
+        rm -f "$tmp"
+        return $rc
+    else
+        printf 'gitsetu-v2-encryption:%s:%s\n' "$root_key" "$salt_suffix" | \
+            openssl enc -d -aes-256-ctr -salt -pbkdf2 -iter "$iters" -md sha256 \
+                -S "$salt_prefix" -iv "$iv" -pass stdin \
+                -in "$input" -out "$output" 2>/dev/null
+    fi
 }
 
 _vault_write_authenticated_vault() {
@@ -5042,12 +5074,12 @@ _vault_rewrite_staged_registry_for_target() {
         else
             profile_dir_lexical=$(_gitsetu_lexical_path "$directory") || return 1
             profile_dir_key=$(_vault_portable_path_key "$profile_dir_lexical") || return 1
-            if [[ "$profile_dir_key" != "$source_home_key" && "$profile_dir_key" != "$source_home_key/"* ]]; then
-                print_error "Vault contains a nonportable external profile directory: $directory"
-                return 1
+            if [[ "$profile_dir_key" == "$source_home_key" || "$profile_dir_key" == "$source_home_key/"* ]]; then
+                mapped_dir=$(_vault_map_home_bound_path "$profile_dir_lexical" "$source_home_lexical") || return 1
+                mapped_dir=$(normalize_path "$mapped_dir") || return 1
+            else
+                mapped_dir="$profile_dir_lexical"
             fi
-            mapped_dir=$(_vault_map_home_bound_path "$profile_dir_lexical" "$source_home_lexical") || return 1
-            mapped_dir=$(normalize_path "$mapped_dir") || return 1
             validate_profile_directory "$mapped_dir" 0 || return 1
         fi
 
@@ -6911,20 +6943,8 @@ try_gh_key_upload() {
         return 1
     fi
 
-    # d) If non-TTY or GITSETU_TEST is set, do NOT prompt interactively — skip or return 1 (unless mock is testing it)
-    if [[ -n "${GITSETU_TEST:-}" ]]; then
-        local is_mock=0
-        if [[ -n "${GITSETU_TEST_GH:-}" || -n "${GITSETU_TEST_GH_MOCK:-}" ]]; then
-            is_mock=1
-        elif [[ "$(type -t gh 2>/dev/null)" == "function" ]]; then
-            is_mock=1
-        elif [[ -n "${TEST_HOME:-}" && "$(command -v gh 2>/dev/null)" == *"$TEST_HOME"* ]]; then
-            is_mock=1
-        fi
-        if [[ "$is_mock" -eq 0 ]]; then
-            return 1
-        fi
-    elif [[ ! -t 0 ]]; then
+    # d) If non-TTY, do NOT prompt interactively — skip or return 1
+    if [[ ! -t 0 ]]; then
         return 1
     fi
 
@@ -6932,14 +6952,8 @@ try_gh_key_upload() {
     printf >&2 '  GitHub CLI: logged in as @%s\n' "$login"
 
     # f) Confirm: default to "n"
-    if [[ -n "${GITSETU_TEST:-}" ]]; then
-        if [[ "${GITSETU_TEST_DECLINE:-0}" -eq 1 ]]; then
-            return 1
-        fi
-    else
-        if ! confirm "Upload '$label' key to GitHub (@$login)?" "n"; then
-            return 1
-        fi
+    if ! confirm "Upload '$label' key to GitHub (@$login)?" "n"; then
+        return 1
     fi
 
     # g) Run upload
@@ -7235,20 +7249,6 @@ verify_ssh_handshake() {
         host_key_mode="accept-new"
     fi
 
-    # Tests skip all network access unless they explicitly provide a mock.
-    if [[ -n "${GITSETU_TEST:-}" ]]; then
-        local is_mock=0
-        if [[ -n "${GITSETU_TEST_SSH_VERIFY:-}" || -n "${GITSETU_TEST_SSH:-}" ]]; then
-            is_mock=1
-        elif [[ "$(type -t ssh 2>/dev/null)" == "function" ]]; then
-            is_mock=1
-        elif [[ -n "${TEST_HOME:-}" && "$(command -v ssh 2>/dev/null)" == *"$TEST_HOME"* ]]; then
-            is_mock=1
-        fi
-        if [[ "$is_mock" -eq 0 ]]; then
-            return 0
-        fi
-    fi
 
     local out ssh_status=0
     if out=$(ssh -T -i "$key_path" -o IdentitiesOnly=yes -o ConnectTimeout=6 \
@@ -11859,9 +11859,6 @@ _gitsetu_configure_lock_path() {
     # core's safe state default is not an explicit override.
     if [[ "$force" != "1" && -n "$current" && "$current" != "$configured_default" && "$current" != "$core_default" ]]; then
         candidate="$current"
-    elif [[ "${GITSETU_TEST:-0}" -eq 1 ]]; then
-        state_base="${GITSETU_TEST_RUNTIME_DIR:-$HOME/.gitsetu-test-runtime}"
-        candidate="${state_base%/}/profiles.lock"
     elif [[ -n "${XDG_STATE_HOME:-}" ]]; then
         state_base="$XDG_STATE_HOME"
         candidate="${state_base%/}/gitsetu/profiles.lock"
@@ -12295,10 +12292,10 @@ prompt_security() {
             PROFILE_SIGNS[i]=1
         done
     else
-        GITSETU_DEFAULT_SIGN=0
+        GITSETU_DEFAULT_SIGN=inherit
         local i
         for (( i=0; i<PROFILE_COUNT; i++ )); do
-            PROFILE_SIGNS[i]=0
+            PROFILE_SIGNS[i]=inherit
         done
     fi
 
@@ -12574,9 +12571,8 @@ _gitsetu_lock_parent_is_safe() {
 # shellcheck disable=SC2120
 acquire_lock() {
     local target_lock="${1:-}"
-    if [[ -z "$target_lock" && ( "${GITSETU_LOCK_RUNTIME_CONFIGURED:-0}" -ne 1 || "${GITSETU_TEST:-0}" -eq 1 ) ]]; then
+    if [[ -z "$target_lock" && "${GITSETU_LOCK_RUNTIME_CONFIGURED:-0}" -ne 1 ]]; then
         local configure_force=0
-        [[ "${GITSETU_TEST:-0}" -eq 1 ]] && configure_force=1
         _gitsetu_configure_lock_path 0 "$configure_force" || {
             print_error "Could not configure a safe absolute runtime lock path."
             return 1
@@ -12596,11 +12592,7 @@ acquire_lock() {
             print_error "GITSETU_LOCK_TIMEOUT must be an integer from 1 to 3600."
             return 1
         fi
-        if [[ "${GITSETU_TEST:-0}" -eq 1 ]]; then
-            max_retries=$((GITSETU_LOCK_TIMEOUT * 50))
-        else
-            max_retries=$((GITSETU_LOCK_TIMEOUT * 10))
-        fi
+        max_retries=$((GITSETU_LOCK_TIMEOUT * 10))
     fi
 
     # Re-entrancy applies only to the exact lock already held by this shell.
@@ -12638,8 +12630,6 @@ acquire_lock() {
     local retry=0
     local dead_pid_count=0
     local incomplete_count=0
-    local test_mode=0
-    [[ "${GITSETU_TEST:-0}" -eq 1 ]] && test_mode=1
 
     while ! (umask 077 && mkdir "$target_lock") 2>/dev/null; do
         # Never follow or remove a symlink posing as the lock directory.
@@ -12695,11 +12685,10 @@ acquire_lock() {
             dead_pid_count=0
             incomplete_count=$((incomplete_count + 1))
             local required_incomplete=250
-            [[ "$test_mode" -eq 1 ]] && required_incomplete=5
             if [[ "$incomplete_count" -ge "$required_incomplete" ]]; then
                 local lock_age=""
                 lock_age=$(_gitsetu_lock_age_seconds "$target_lock" || printf '')
-                if [[ "$test_mode" -eq 1 || ( -n "$lock_age" && "$lock_age" -ge 60 ) ]]; then
+                if [[ -n "$lock_age" && "$lock_age" -ge 60 ]]; then
                     observed_signature=$(_gitsetu_lock_marker_signature "$target_lock" 2>/dev/null || printf '')
                     if [[ -n "$observed_signature" ]] &&
                        _gitsetu_lock_reap_if_unchanged "$target_lock" "$lock_token" "$observed_signature"; then
@@ -12716,7 +12705,6 @@ acquire_lock() {
             return 1
         fi
         local sleep_dur=0.1
-        [[ "$test_mode" -eq 1 ]] && sleep_dur=0.02
         sleep "$sleep_dur"
     done
 
