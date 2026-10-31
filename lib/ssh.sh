@@ -801,11 +801,6 @@ try_gh_key_upload() {
         return 1
     fi
 
-    # d) If non-TTY, do NOT prompt interactively — skip or return 1
-    if [[ ! -t 0 ]]; then
-        return 1
-    fi
-
     # e) Display: GitHub CLI: logged in as @$login
     printf >&2 '  GitHub CLI: logged in as @%s\n' "$login"
 

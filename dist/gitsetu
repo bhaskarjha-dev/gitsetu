@@ -6943,11 +6943,6 @@ try_gh_key_upload() {
         return 1
     fi
 
-    # d) If non-TTY, do NOT prompt interactively — skip or return 1
-    if [[ ! -t 0 ]]; then
-        return 1
-    fi
-
     # e) Display: GitHub CLI: logged in as @$login
     printf >&2 '  GitHub CLI: logged in as @%s\n' "$login"
 
@@ -12685,6 +12680,10 @@ acquire_lock() {
             dead_pid_count=0
             incomplete_count=$((incomplete_count + 1))
             local required_incomplete=250
+            if [[ -n "${GITSETU_LOCK_TIMEOUT:-}" ]]; then
+                required_incomplete=$(( max_retries / 2 ))
+                [[ "$required_incomplete" -lt 3 ]] && required_incomplete=3
+            fi
             if [[ "$incomplete_count" -ge "$required_incomplete" ]]; then
                 local lock_age=""
                 lock_age=$(_gitsetu_lock_age_seconds "$target_lock" || printf '')

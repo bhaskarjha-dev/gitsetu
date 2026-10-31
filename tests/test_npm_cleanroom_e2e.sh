@@ -322,9 +322,7 @@ else
 fi
 
 # F13: backup
-export GITSETU_TEST=1
-export GITSETU_TEST_VAULT_MODE=1
-export GITSETU_TEST_VAULT_PASS="SecretPassword123!"
+export GITSETU_VAULT_PASSWORD="SecretPassword123!"
 BACKUP_FILE="$SANDBOX_ROOT/vault.tar.gz.enc"
 BACKUP_RC=0
 # Vault KDF work can exceed the generic Windows/Cygwin timeout on clean-room
@@ -339,6 +337,7 @@ else
 fi
 
 # F14: restore
+export GITSETU_VAULT_PASSWORD="SecretPassword123!"
 OUT_RESTORE=$(RUN_CMD restore "$BACKUP_FILE" 2>&1 || true)
 
 # F14b: Exercise the npm wrapper with MSYS-form HOME/XDG paths.  The wrapper
@@ -358,8 +357,10 @@ if command -v cygpath >/dev/null 2>&1; then
         # The MSYS path round-trip is the regression under test; do not wrap
         # it in the Windows/Cygwin `timeout` process-group helper, which can
         # deliver SIGTERM to the Git Bash child instead of bounding it.
+        export GITSETU_VAULT_PASSWORD="SecretPassword123!"
         CROSS_OUT=$(RUN_CMD backup "$CROSS_BACKUP" 2>&1) || CROSS_RC=$?
         if [[ "$CROSS_RC" -eq 0 && -f "$CROSS_BACKUP" ]]; then
+            export GITSETU_VAULT_PASSWORD="SecretPassword123!"
             CROSS_OUT=$(RUN_CMD restore "$CROSS_BACKUP" 2>&1) || CROSS_RC=$?
         else
             CROSS_RC=${CROSS_RC:-1}
@@ -370,7 +371,7 @@ if command -v cygpath >/dev/null 2>&1; then
     export HOME="$SAVED_NPM_HOME"
     export XDG_CONFIG_HOME="$SAVED_NPM_XDG"
 fi
-unset GITSETU_TEST GITSETU_TEST_VAULT_MODE GITSETU_TEST_VAULT_PASS
+unset GITSETU_TEST GITSETU_VAULT_PASSWORD
 if [[ "$OUT_RESTORE" == *"Authenticated v2 vault restored successfully"* ]]; then
     pass "Feature 14: restore authenticates and reactivates profiles"
 else

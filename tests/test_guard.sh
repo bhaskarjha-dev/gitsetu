@@ -153,25 +153,22 @@ test_guard_reads_v2_profile_identity() {
     assert_not_contains "$output" "FAILED" "guard allowed commit using the dynamically read email" || return 1
 }
 
-test_guard_prompt_bypassed_in_test_mode() {
+test_guard_prompt_bypassed_in_non_interactive_mode() {
     rm -f "$GITSETU_HOOKS_DIR/pre-commit"
     local should_prompt=0
-    if [[ ! -f "$GITSETU_HOOKS_DIR/pre-commit" ]] && [[ -z "${GITSETU_TEST:-}" ]]; then
+    if [[ ! -f "$GITSETU_HOOKS_DIR/pre-commit" ]] && _ui_tty_available && [[ -z "${CI:-}" ]]; then
         should_prompt=1
     fi
-    assert_equals "0" "$should_prompt" "guard prompt bypassed when GITSETU_TEST=1" || return 1
+    assert_equals "0" "$should_prompt" "guard prompt bypassed in non-interactive mode" || return 1
 }
 
 test_guard_prompt_skipped_if_already_installed() {
     install_guard 2>/dev/null
     assert_file_exists "$GITSETU_HOOKS_DIR/pre-commit" "hook exists" || return 1
     local should_prompt=0
-    local saved_test="${GITSETU_TEST:-}"
-    unset GITSETU_TEST
-    if [[ ! -f "$GITSETU_HOOKS_DIR/pre-commit" ]] && [[ -z "${GITSETU_TEST:-}" ]]; then
+    if [[ ! -f "$GITSETU_HOOKS_DIR/pre-commit" ]]; then
         should_prompt=1
     fi
-    export GITSETU_TEST="${saved_test:-1}"
     assert_equals "0" "$should_prompt" "guard prompt skipped when hook already installed" || return 1
 }
 
@@ -353,7 +350,7 @@ run_test "missing registry is unmanaged and fails open" test_guard_missing_regis
 run_test "guard passes through to local hooks" test_guard_pass_through
 run_test "guard passes through to relative local hooks from subdirectory" test_guard_pass_through_subdirectory_monorepo
 run_test "guard reads identity from v2 profile config" test_guard_reads_v2_profile_identity
-run_test "guard prompt bypassed in test mode" test_guard_prompt_bypassed_in_test_mode
+run_test "guard prompt bypassed in non-interactive mode" test_guard_prompt_bypassed_in_non_interactive_mode
 run_test "guard prompt skipped if already installed" test_guard_prompt_skipped_if_already_installed
 run_test "guard prompt defaults to no" test_guard_prompt_default_no
 run_test "guard preserves prior core.hooksPath" test_guard_preserves_existing_hooks_path

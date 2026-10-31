@@ -844,6 +844,10 @@ acquire_lock() {
             dead_pid_count=0
             incomplete_count=$((incomplete_count + 1))
             local required_incomplete=250
+            if [[ -n "${GITSETU_LOCK_TIMEOUT:-}" ]]; then
+                required_incomplete=$(( max_retries / 2 ))
+                [[ "$required_incomplete" -lt 3 ]] && required_incomplete=3
+            fi
             if [[ "$incomplete_count" -ge "$required_incomplete" ]]; then
                 local lock_age=""
                 lock_age=$(_gitsetu_lock_age_seconds "$target_lock" || printf '')

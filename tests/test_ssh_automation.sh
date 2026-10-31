@@ -256,7 +256,8 @@ test_try_gh_key_already_registered() {
             fi
             return 0
         }
-        GITSETU_TEST_GH_MOCK=1 try_gh_key_upload "work" "$dummy_pub" "octocat" 2>&1
+        confirm() { return 0; }
+        try_gh_key_upload "work" "$dummy_pub" "octocat" 2>&1
     ) || rc=$?
 
     assert_equals "0" "$rc" "returns 0 when key already in use" || return 1
@@ -282,7 +283,8 @@ test_try_gh_upload_success() {
             fi
             return 0
         }
-        GITSETU_TEST_GH_MOCK=1 try_gh_key_upload "work" "$dummy_pub" "octocat" 2>&1
+        confirm() { return 0; }
+        try_gh_key_upload "work" "$dummy_pub" "octocat" 2>&1
     ) || rc=$?
 
     assert_equals "0" "$rc" "returns 0 on successful key upload" || return 1

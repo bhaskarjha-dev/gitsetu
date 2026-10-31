@@ -102,7 +102,6 @@ _cross_activate_home() {
     export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
     export GIT_CONFIG_NOSYSTEM=1
     export GIT_TERMINAL_PROMPT=0
-    export GITSETU_TEST=1
     export GITSETU_CONFIG_DIR="$XDG_CONFIG_HOME/gitsetu"
     export GITSETU_BACKUP_DIR="$GITSETU_CONFIG_DIR/backups"
     export GITSETU_PROFILES_DIR="$GITSETU_CONFIG_DIR/profiles"
@@ -111,9 +110,7 @@ _cross_activate_home() {
     export GITSETU_TEST_RUNTIME_DIR="$HOME/.gitsetu-test-runtime"
     export GITSETU_LOCK_DIR="$GITSETU_TEST_RUNTIME_DIR/profiles.lock"
     export GITSETU_CREDENTIAL_BACKEND=file
-    export GITSETU_TEST_VAULT_MODE=1
-    export GITSETU_TEST_VAULT_PASS="$_CROSS_VAULT_PASSWORD"
-    unset GITSETU_VAULT_PASS
+    export GITSETU_VAULT_PASSWORD="$_CROSS_VAULT_PASSWORD"
 
     GITSETU_DEFAULT_LOCK_DIR="$GITSETU_LOCK_DIR"
     GITSETU_LOCK_RUNTIME_CONFIGURED=0
@@ -254,7 +251,7 @@ _cross_assert_no_sidecars() {
 }
 
 _cross_restore_vault() {
-    cmd_restore "$_CROSS_VAULT" --force >/dev/null 2>&1
+    GITSETU_VAULT_PASSWORD="$_CROSS_VAULT_PASSWORD" cmd_restore "$_CROSS_VAULT" --force >/dev/null 2>&1
 }
 
 # Build the source through the real backup command. This is the sole expensive
@@ -290,13 +287,13 @@ test_cross_home_backup_refuses_output_collisions() {
     printf '%s\n' 'do-not-overwrite' > "$candidate" || return 1
     chmod 600 "$candidate" || return 1
 
-    cmd_backup "$candidate" >/dev/null 2>&1 || status=$?
+    GITSETU_VAULT_PASSWORD="$_CROSS_VAULT_PASSWORD" cmd_backup "$candidate" >/dev/null 2>&1 || status=$?
     assert_equals "1" "$status" "backup refuses an existing output path" || return 1
     assert_file_contains "$candidate" "do-not-overwrite" \
         "failed backup collision leaves the existing file untouched" || return 1
 
     before=$(_cross_checksum_file "$_CROSS_VAULT") || return 1
-    cmd_backup "$_CROSS_VAULT" >/dev/null 2>&1 || status=$?
+    GITSETU_VAULT_PASSWORD="$_CROSS_VAULT_PASSWORD" cmd_backup "$_CROSS_VAULT" >/dev/null 2>&1 || status=$?
     after=$(_cross_checksum_file "$_CROSS_VAULT") || return 1
     assert_equals "1" "$status" "backup refuses to replace its own prior vault" || return 1
     assert_equals "$before" "$after" "output collision leaves the prior vault byte-identical" || return 1
@@ -394,7 +391,7 @@ test_cross_home_post_commit_cleanup_failure_preserves_commit() {
             done
             command rm "$@"
         }
-        cmd_restore "$_CROSS_VAULT" --force
+        GITSETU_VAULT_PASSWORD="$_CROSS_VAULT_PASSWORD" cmd_restore "$_CROSS_VAULT" --force
     ) >"$output_file" 2>&1; then
         status=0
     else
@@ -451,7 +448,7 @@ test_cross_home_failed_commit_rolls_back_without_marker() {
     if (
         # shellcheck disable=SC2329  # invoked indirectly by cmd_restore
         write_profile_gitconfig() { return 1; }
-        cmd_restore "$_CROSS_VAULT" --force
+        GITSETU_VAULT_PASSWORD="$_CROSS_VAULT_PASSWORD" cmd_restore "$_CROSS_VAULT" --force
     ) >/dev/null 2>&1; then
         status=0
     else
@@ -474,7 +471,7 @@ test_cross_home_failed_commit_rolls_back_without_marker() {
     _cross_assert_no_transaction "successful rollback" || return 1
     _cross_assert_no_sidecars "successful rollback"
 
-    output=$(cmd_restore "$_CROSS_VAULT" --force 2>&1 || true)
+    output=$(GITSETU_VAULT_PASSWORD="$_CROSS_VAULT_PASSWORD" cmd_restore "$_CROSS_VAULT" --force 2>&1 || true)
     assert_contains "$output" "Authenticated v2 vault restored successfully" \
         "sanity check: shared source vault remains reusable after rollback" || return 1
 }
@@ -494,7 +491,7 @@ test_cross_home_incomplete_rollback_leaves_recovery_marker() {
         write_profile_gitconfig() { return 1; }
         # shellcheck disable=SC2329  # invoked indirectly by abort helper
         _vault_rollback_transaction() { return 1; }
-        cmd_restore "$_CROSS_VAULT" --force
+        GITSETU_VAULT_PASSWORD="$_CROSS_VAULT_PASSWORD" cmd_restore "$_CROSS_VAULT" --force
     ) >"$TEST_HOME/incomplete-restore.out" 2>&1; then
         status=0
     else

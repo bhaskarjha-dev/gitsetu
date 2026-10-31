@@ -57,7 +57,7 @@ reset_backup_test_state() {
         return 1
     fi
 
-    unset GITSETU_TEST_VAULT_MODE GITSETU_TEST_VAULT_PASS GITSETU_VAULT_PASS
+    unset GITSETU_VAULT_PASSWORD GITSETU_VAULT_PASS
     GITSETU_CLEANUP_FILES=()
     GITSETU_CLEANUP_DIRS=()
     _VAULT_ROOT_KEY=""
@@ -269,8 +269,7 @@ test_multiple_backups_dont_overwrite() {
 }
 
 test_cmd_backup_restore() {
-    export GITSETU_TEST_VAULT_MODE=1
-    export GITSETU_TEST_VAULT_PASS="secure_password"
+    export GITSETU_VAULT_PASSWORD="secure_password"
     
     # Setup mock state: config dir + strict v2 profiles + SSH keys in ~/.ssh/
     test_v2_profile_config global "Global User" "global@example.com"
@@ -302,6 +301,7 @@ test_cmd_backup_restore() {
     rm -f "$HOME/.ssh/id_ed25519_test" "$HOME/.ssh/id_ed25519_test.pub"
     
     # 3. Test Restore
+    export GITSETU_VAULT_PASSWORD="secure_password"
     cmd_restore "$vault_file" || return 1
     
     # Verify config state is restored
@@ -322,7 +322,7 @@ test_cmd_backup_restore() {
     assert_no_vault_restore_sidecars || return 1
 
     rm -f "$vault_file"
-    unset GITSETU_TEST_VAULT_MODE GITSETU_TEST_VAULT_PASS
+    unset GITSETU_VAULT_PASSWORD
     return 0
 }
 
@@ -330,8 +330,7 @@ test_cmd_backup_restore() {
 # Transactional restore rollback; v2 restore has no migration password sidecar
 # ==============================================================================
 test_backup_restore_rolls_back_without_sidecars() {
-    export GITSETU_TEST_VAULT_MODE=1
-    export GITSETU_TEST_VAULT_PASS="rollback_test_pass"
+    export GITSETU_VAULT_PASSWORD="rollback_test_pass"
     local vault_file="$TEST_HOME/rollback_vault.enc"
     local status=0
 
@@ -351,7 +350,7 @@ test_backup_restore_rolls_back_without_sidecars() {
     if ! cmd_backup "$vault_file" >/dev/null 2>&1; then
         printf '    FAIL: could not create the rollback test vault\n'
         rm -f "$vault_file"
-        unset GITSETU_TEST_VAULT_MODE GITSETU_TEST_VAULT_PASS
+        unset GITSETU_VAULT_PASSWORD
         return 1
     fi
 
@@ -378,6 +377,7 @@ test_backup_restore_rolls_back_without_sidecars() {
 
     # Force a failure after the restore transaction has begun.  The product
     # must roll back rather than leave a half-restored state or a password file.
+    export GITSETU_VAULT_PASSWORD="rollback_test_pass"
     if (
         # shellcheck disable=SC2329  # invoked indirectly by cmd_restore
         write_profile_gitconfig() { return 1; }
@@ -399,7 +399,7 @@ test_backup_restore_rolls_back_without_sidecars() {
     assert_no_vault_restore_sidecars || return 1
 
     rm -f "$vault_file"
-    unset GITSETU_TEST_VAULT_MODE GITSETU_TEST_VAULT_PASS
+    unset GITSETU_VAULT_PASSWORD
     return 0
 }
 
@@ -495,8 +495,7 @@ test_backup_tar_isolated_in_private_temp_dir() {
     local captured_tar_path=""
     local captured_tar_dir_perms=""
 
-    export GITSETU_TEST_VAULT_MODE=1
-    export GITSETU_TEST_VAULT_PASS="testpass"
+    export GITSETU_VAULT_PASSWORD="testpassword123"
     if ! (
         # shellcheck disable=SC2329  # invoked indirectly by cmd_backup
         tar() {
@@ -546,7 +545,7 @@ test_backup_tar_isolated_in_private_temp_dir() {
 
     assert_file_not_exists "$captured_tar_path" "intermediate tar deleted after backup"
     rm -f "vault_check.enc" "$HOME/.captured_tar_path" "$HOME/.captured_tar_perms"
-    unset GITSETU_TEST_VAULT_MODE GITSETU_TEST_VAULT_PASS
+    unset GITSETU_VAULT_PASSWORD
 }
 
 # ==============================================================================
@@ -569,8 +568,7 @@ test_backup_vault_file_permissions_600() {
         return 0
     fi
 
-    export GITSETU_TEST_VAULT_MODE=1
-    export GITSETU_TEST_VAULT_PASS="testpass"
+    export GITSETU_VAULT_PASSWORD="testpassword123"
     local vault_out="$TEST_HOME/secure_vault.enc"
     cmd_backup "$vault_out" >/dev/null 2>&1
 
@@ -587,7 +585,7 @@ test_backup_vault_file_permissions_600() {
     fi
 
     rm -f "$vault_out"
-    unset GITSETU_TEST_VAULT_MODE GITSETU_TEST_VAULT_PASS
+    unset GITSETU_VAULT_PASSWORD
 }
 
 # ==============================================================================
@@ -597,8 +595,7 @@ test_backup_restore_cleanup_on_decryption_failure() {
     local corrupted_vault="$TEST_HOME/corrupted_vault.enc"
     echo "CORRUPTED_BINARY_DATA" > "$corrupted_vault"
 
-    export GITSETU_TEST_VAULT_MODE=1
-    export GITSETU_TEST_VAULT_PASS="wrongpass"
+    export GITSETU_VAULT_PASSWORD="wrongpassword123"
     local res=0
     cmd_restore "$corrupted_vault" >/dev/null 2>&1 || res=$?
 
@@ -612,15 +609,14 @@ test_backup_restore_cleanup_on_decryption_failure() {
     assert_equals "0" "$leaks" "no temporary vault files leaked on restore failure"
 
     rm -f "$corrupted_vault"
-    unset GITSETU_TEST_VAULT_MODE GITSETU_TEST_VAULT_PASS
+    unset GITSETU_VAULT_PASSWORD
 }
 
 # ==============================================================================
-# Verify GITSETU_VAULT_PASS is never exported into environment
+# Verify GITSETU_VAULT_PASSWORD is not left exported in environment
 # ==============================================================================
 test_backup_does_not_leak_env_var() {
-    export GITSETU_TEST_VAULT_MODE=1
-    export GITSETU_TEST_VAULT_PASS="test_secret_pass"
+    export GITSETU_VAULT_PASSWORD="test_secret_pass"
     test_v2_profile_config global "Global User" "global@example.com"
     test_v2_profile_config test "Test User" "test@example.com"
     mkdir -p "$HOME/.ssh"
@@ -636,13 +632,14 @@ test_backup_does_not_leak_env_var() {
     local vault_file="test_vault_env.enc"
     cmd_backup "$vault_file" >/dev/null 2>&1
 
-    assert_equals "" "${GITSETU_VAULT_PASS:-}" "GITSETU_VAULT_PASS is not exported during backup" || return 1
+    assert_equals "" "${GITSETU_VAULT_PASSWORD:-}" "GITSETU_VAULT_PASSWORD is not exported during backup" || return 1
 
+    export GITSETU_VAULT_PASSWORD="test_secret_pass"
     cmd_restore "$vault_file" >/dev/null 2>&1
-    assert_equals "" "${GITSETU_VAULT_PASS:-}" "GITSETU_VAULT_PASS is not exported during restore" || return 1
+    assert_equals "" "${GITSETU_VAULT_PASSWORD:-}" "GITSETU_VAULT_PASSWORD is not exported during restore" || return 1
 
     rm -f "$vault_file"
-    unset GITSETU_TEST_VAULT_MODE GITSETU_TEST_VAULT_PASS
+    unset GITSETU_VAULT_PASSWORD
 }
 
 # ==============================================================================
@@ -665,26 +662,24 @@ test_backup_rejects_path_traversal() {
     local -a extra_ssl_args=()
     read -r -a extra_ssl_args <<< "$(get_openssl_args)"
     ssl_args+=(${extra_ssl_args[@]+"${extra_ssl_args[@]}"})
-    printf '%s\n' "testpass" | openssl enc "${ssl_args[@]}" -in "$bad_tar" -out "$bad_vault" -pass stdin 2>/dev/null
+    printf '%s\n' "testpassword123" | openssl enc "${ssl_args[@]}" -in "$bad_tar" -out "$bad_vault" -pass stdin 2>/dev/null
     rm -f "$bad_tar"
 
-    export GITSETU_TEST_VAULT_MODE=1
-    export GITSETU_TEST_VAULT_PASS="testpass"
+    export GITSETU_VAULT_PASSWORD="testpassword123"
     local res=0
     cmd_restore "$bad_vault" >/dev/null 2>&1 || res=$?
 
     assert_equals 1 "$res" "restore rejects archive with path traversal" || return 1
 
     rm -f "$bad_vault"
-    unset GITSETU_TEST_VAULT_MODE GITSETU_TEST_VAULT_PASS
+    unset GITSETU_VAULT_PASSWORD
 }
 
 # ==============================================================================
 # Verify backup and restore preserve the remotes/ directory and its contents
 # ==============================================================================
 test_backup_preserves_remotes_directory() {
-    export GITSETU_TEST_VAULT_MODE=1
-    export GITSETU_TEST_VAULT_PASS="remotes_vault_pass"
+    export GITSETU_VAULT_PASSWORD="remotes_vault_pass"
 
     test_v2_profile_config global "Global User" "global@example.com"
     test_v2_profile_config work "Work User" "work@example.com"
@@ -706,13 +701,14 @@ test_backup_preserves_remotes_directory() {
     # Wipe remotes directory
     rm -rf "$GITSETU_CONFIG_DIR/remotes"
 
+    export GITSETU_VAULT_PASSWORD="remotes_vault_pass"
     cmd_restore "$vault_file" || return 1
 
     assert_file_exists "$GITSETU_CONFIG_DIR/remotes/work.remotes" "remotes file restored" || return 1
     assert_file_contains "$GITSETU_CONFIG_DIR/remotes/work.remotes" "work git@github-work:user/repo.git" "remotes file content preserved" || return 1
 
     rm -f "$vault_file"
-    unset GITSETU_TEST_VAULT_MODE GITSETU_TEST_VAULT_PASS
+    unset GITSETU_VAULT_PASSWORD
     return 0
 }
 

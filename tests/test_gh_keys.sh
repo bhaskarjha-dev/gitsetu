@@ -31,8 +31,9 @@ test_gh_key_title_formatting() {
         return 0
     }
 
-    GITSETU_TEST_GH_MOCK=1 try_gh_key_upload "work" "$dummy_pub" "monalisa" >/dev/null 2>&1
-    unset -f gh
+    confirm() { return 0; }
+    try_gh_key_upload "work" "$dummy_pub" "monalisa" >/dev/null 2>&1
+    unset -f gh confirm
 
     local captured_title=""
     if [[ -f "$TEST_HOME/title_cap" ]]; then
@@ -61,8 +62,9 @@ test_gh_key_scope_discipline() {
         return 0
     }
 
-    output=$(GITSETU_TEST_GH_MOCK=1 try_gh_key_upload "client" "$dummy_pub" "authorized_dev" 2>&1)
-    unset -f gh
+    confirm() { return 0; }
+    output=$(try_gh_key_upload "client" "$dummy_pub" "authorized_dev" 2>&1)
+    unset -f gh confirm
 
     assert_contains "$output" "GitHub CLI: logged in as @authorized_dev" "displays currently authenticated user" || return 1
     assert_contains "$output" "Key successfully added to GitHub!" "succeeds under current user scope" || return 1
@@ -113,8 +115,9 @@ test_gh_key_already_registered_idempotent() {
         return 0
     }
 
-    output=$(GITSETU_TEST_GH_MOCK=1 try_gh_key_upload "personal" "$dummy_pub" "monalisa" 2>&1) || rc=$?
-    unset -f gh
+    confirm() { return 0; }
+    output=$(try_gh_key_upload "personal" "$dummy_pub" "monalisa" 2>&1) || rc=$?
+    unset -f gh confirm
 
     assert_equals "0" "$rc" "returns 0 when key already registered" || return 1
     assert_contains "$output" "Key already registered on GitHub." "prints already registered status" || return 1
