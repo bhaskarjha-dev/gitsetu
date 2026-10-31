@@ -396,7 +396,7 @@ case_high10_keyscan() {
   new_home high10-keyscan || return
   local before; before=$(snap)
   add_work || return
-  local calls; calls=$(cat "$T/keyscan.log" 2>/dev/null | head -n1)
+  local calls; calls=$(head -n1 "$T/keyscan.log" 2>/dev/null)
   [[ -z "$calls" && ! -s "$HOME/.ssh/known_hosts" ]] && ok || bad "ssh-keyscan called with '$calls'; known_hosts lines=$(grep -c . "$HOME/.ssh/known_hosts" 2>/dev/null)"
 }
 
