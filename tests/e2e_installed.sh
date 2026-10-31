@@ -17,7 +17,7 @@ REAL_OPENSSL=$(command -v openssl) || REAL_OPENSSL=""
 command -v perl >/dev/null 2>&1 || { echo "perl is required (it ships with Git for Windows and macOS)"; exit 1; }
 git -C "$REPO" rev-parse -q --verify 'v1.0.0^{commit}' >/dev/null 2>&1 || { echo "tag v1.0.0 missing: check out with fetch-depth: 0"; exit 1; }
 ROOT=$(mktemp -d "${TMPDIR:-/tmp}/gs-e2e.XXXXXX") || exit 1   # no "gitsetu" in test paths: checks grep for it
-ROOT=$(cd "$ROOT" && pwd -P)   # macOS: /tmp and $TMPDIR sit behind symlinks, which install.sh refuses
+ROOT=$(cd "$ROOT" && (pwd -W 2>/dev/null || pwd -P))   # Windows/Git Bash: real drive path for git.exe; macOS: /private/tmp symlinks
 trap 'rm -rf "$ROOT"' EXIT
 PASS=0; FAIL=0; FAILED=""
 
@@ -37,7 +37,13 @@ snap() { local f; for f in "$HOME/.gitconfig" "$HOME/.ssh/config" "$HOME/.ssh/kn
 # Committed copy of the checkout (install.sh refuses a dirty one).
 copy_repo() {
   rm -rf "$1"
-  cp -a "$REPO" "$1"
+  cp -a "$REPO" "$1" 2>/dev/null || true
+  # Under Git Bash on Windows, dist/gitsetu and untracked dist/gitsetu.exe collide during cp -a:
+  if [[ -f "$REPO/dist/gitsetu" && ! -f "$1/dist/gitsetu" ]]; then
+    rm -f "$1/dist/gitsetu.exe"* 2>/dev/null || true
+    cp -f "$REPO/dist/gitsetu" "$1/dist/gitsetu" 2>/dev/null || true
+  fi
+  rm -f "$1/dist/"*.exe* "$1/dist/"*.zip* 2>/dev/null || true
   git -C "$1" add -A >/dev/null 2>&1
   git -C "$1" -c user.name=e2e -c user.email=e2e@example.com commit -qm e2e --allow-empty >/dev/null 2>&1
 }
@@ -53,7 +59,12 @@ bare_home() {
   printf '#!/bin/sh\ncase " $* " in *" -G "*) exec "%s" "$@";; esac\nprintf "%%s\\n" "$*" >> "%s/ssh.log"\nexit 128\n' "$REAL_SSH" "$T" > "$T/bin/ssh"
   printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s/keyscan.log"\nexit 1\n' "$T" > "$T/bin/ssh-keyscan"
   chmod +x "$T/bin/ssh" "$T/bin/ssh-keyscan"
-  export PATH="$T/bin:$HOME/.local/bin:$ORIG_PATH"
+  local bin_path="$T/bin" home_bin="$HOME/.local/bin"
+  if command -v cygpath >/dev/null 2>&1; then
+    bin_path=$(cygpath -u "$bin_path" 2>/dev/null || printf '%s' "$bin_path")
+    home_bin=$(cygpath -u "$home_bin" 2>/dev/null || printf '%s' "$home_bin")
+  fi
+  export PATH="$bin_path:$home_bin:$ORIG_PATH"
 }
 
 # bare_home + a global identity + the GitSetu under test in $GS.
@@ -234,7 +245,7 @@ case_crit11_vault() {
   git config --global user.name "Pat Example"; git config --global user.email pat.personal@example.com
   notty "$GS" restore "$vault" >> "$T/out" 2>&1; rc=$?
   [[ $rc -eq 0 ]] || why="$why restore where the source HOME path crosses a symlink rc=$rc ($(tail -n1 "$T/out" | sed 's/^ *//'));"
-  rm "$T/m1/home" && mv "$T/m1/home.real" "$T/m1/home"
+  rm -rf "$T/m1/home" && mv "$T/m1/home.real" "$T/m1/home"
   export HOME="$h1" XDG_CONFIG_HOME="$x1"
   # 3. A rotated (newer) key: refused without --force; with --force the replaced key is kept.
   rm -f "$HOME/.ssh/id_ed25519_work" "$HOME/.ssh/id_ed25519_work.pub"
@@ -280,7 +291,7 @@ case_crit11_interrupt() {
     local pid=$! i=0
     while [[ ! -e "$T/in-window" && $i -lt 300 ]]; do sleep 0.1; i=$((i+1)); done
     kill -INT "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; local rc=$?
-    rm -f "$T/bin/$tool"
+    rm -f "$T/bin/$tool"; hash -r 2>/dev/null || true
     local after; after=$(istate)
     local stray=0 sf
     for sf in "$HOME/.ssh"/*gitsetu-restore*; do
@@ -371,8 +382,17 @@ case_crit08_alias() {
   add_work || return
   # OpenSSH takes ~ from the account database, not $HOME: resolve both files against this HOME first.
   local gen="$HOME/.config/gitsetu/profiles/ssh_config"
-  if [[ -f "$gen" ]]; then sed "s#~#$HOME#g" "$gen" > "$T/gen.view"; else : > "$T/gen.view"; fi
-  sed -e "s#~#$HOME#g" -e "s#$gen#$T/gen.view#g" "$HOME/.ssh/config" > "$T/main.view"
+  local p_home="$HOME" pgen="$T/gen.view"
+  if command -v cygpath >/dev/null 2>&1; then
+    p_home=$(cygpath -u "$p_home" 2>/dev/null || printf '%s' "$p_home")
+    pgen=$(cygpath -u "$pgen" 2>/dev/null || printf '%s' "$pgen")
+  fi
+  if [[ -f "$gen" ]]; then sed "s#~#$p_home#g" "$gen" > "$T/gen.view"; else : > "$T/gen.view"; fi
+  sed -e "s#~#$p_home#g" -e "s#$gen#$pgen#g" "$HOME/.ssh/config" > "$T/main.view"
+  if command -v cygpath >/dev/null 2>&1; then
+    local gen_posix; gen_posix=$(cygpath -u "$gen" 2>/dev/null || printf '%s' "$gen")
+    sed -i "s#$gen_posix#$pgen#g" "$T/main.view"
+  fi
   local h g; h=$("$REAL_SSH" -F "$T/main.view" -G github-work 2>/dev/null | awk '$1 == "hostname" {print $2}')
   g=$("$REAL_SSH" -F "$T/main.view" -G gitsetu-work 2>/dev/null | awk '$1 == "hostname" {print $2}')
   [[ "$h" == "ghe.corp.example" && "$g" == "github.com" ]] && ok || bad "Host github-work resolves to '$h' (expected ghe.corp.example); gitsetu-work resolves to '$g' (expected github.com)"

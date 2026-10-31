@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd -P "$SCRIPT_DIR/.." && pwd)"
 OUTPUT_FILE="${1:-$REPO_DIR/dist/gitsetu}"
 case "$OUTPUT_FILE" in
-    /*) ;;
+    /*|[A-Za-z]:/*) ;;
     *) OUTPUT_FILE="$PWD/$OUTPUT_FILE" ;;
 esac
 OUTPUT_DIR="$(dirname "$OUTPUT_FILE")"

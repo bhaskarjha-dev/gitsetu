@@ -223,7 +223,7 @@ _gitsetu_is_reparse_point_uncached() {
     if [[ -z "${GITSETU_OS:-}" ]] && declare -f detect_os >/dev/null 2>&1; then
         detect_os
     fi
-    if [[ "${GITSETU_OS:-}" == "gitbash" ]] &&
+    if [[ "${GITSETU_OS:-}" == "gitbash" || "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == mingw* || "${OSTYPE:-}" == cygwin* ]] &&
        command -v cygpath >/dev/null 2>&1 &&
        command -v fsutil.exe >/dev/null 2>&1; then
         # A path that does not exist cannot be an existing reparse point;
@@ -488,7 +488,7 @@ _gitsetu_private_directory() {
     if [[ -z "${GITSETU_OS:-}" ]] && declare -f detect_os >/dev/null 2>&1; then
         detect_os
     fi
-    if [[ "${GITSETU_OS:-}" == "gitbash" ]]; then
+    if [[ "${GITSETU_OS:-}" == "gitbash" || "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == mingw* || "${OSTYPE:-}" == cygwin* ]]; then
         return 0
     fi
 

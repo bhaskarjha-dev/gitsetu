@@ -2232,6 +2232,58 @@ _vault_is_v1_vault() {
     [[ "$magic" == "Salted__" ]]
 }
 
+_vault_registries_are_equivalent() {
+    local f1="$1" f2="$2"
+    [[ -f "$f1" && ! -L "$f1" && -f "$f2" && ! -L "$f2" ]] || return 1
+    local -a lines1=() lines2=()
+    local line
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        lines1+=("$line")
+    done < "$f1"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        lines2+=("$line")
+    done < "$f2"
+
+    [[ ${#lines1[@]} -eq ${#lines2[@]} ]] || return 1
+    local count=${#lines1[@]} i
+    for (( i=0; i<count; i++ )); do
+        if [[ "${lines1[$i]}" == "${lines2[$i]}" ]]; then
+            continue
+        fi
+        if [[ $i -eq 0 ]]; then
+            return 1
+        fi
+        local l1="${lines1[$i]}" l2="${lines2[$i]}"
+        local el1 ed1 ep1 es1 ek1 eu1
+        local el2 ed2 ep2 es2 ek2 eu2
+        IFS=: read -r el1 ed1 ep1 es1 ek1 eu1 <<< "$l1"
+        IFS=: read -r el2 ed2 ep2 es2 ek2 eu2 <<< "$l2"
+        [[ "$el1" == "$el2" && "$ep1" == "$ep2" && "$es1" == "$es2" && "$eu1" == "$eu2" ]] || return 1
+
+        local d1 d2 k1 k2
+        d1=$(_unescape_registry_field_preserve_newlines "$ed1") || return 1
+        d2=$(_unescape_registry_field_preserve_newlines "$ed2") || return 1
+        k1=$(_unescape_registry_field_preserve_newlines "$ek1") || return 1
+        k2=$(_unescape_registry_field_preserve_newlines "$ek2") || return 1
+        d1=${d1%x}; d2=${d2%x}; k1=${k1%x}; k2=${k2%x}
+
+        if [[ "$d1" != "$d2" ]]; then
+            local kd1 kd2
+            kd1=$(_vault_portable_path_key "$d1") || return 1
+            kd2=$(_vault_portable_path_key "$d2") || return 1
+            [[ "$kd1" == "$kd2" ]] || return 1
+        fi
+
+        if [[ "$k1" != "$k2" ]]; then
+            local kk1 kk2
+            kk1=$(_vault_portable_path_key "$k1") || return 1
+            kk2=$(_vault_portable_path_key "$k2") || return 1
+            [[ "$kk1" == "$kk2" ]] || return 1
+        fi
+    done
+    return 0
+}
+
 # ------------------------------------------------------------------------------
 # cmd_restore — Authenticate, prevalidate, then transactionally restore
 # ------------------------------------------------------------------------------
@@ -2371,7 +2423,9 @@ cmd_restore() {
     done
     if [[ "$state_differs" -eq 0 && -f "$GITSETU_PROFILES_CONF" ]]; then
         if ! cmp -s "$GITSETU_PROFILES_CONF" "$archive_root/state/profiles.conf" 2>/dev/null; then
-            state_differs=1
+            if ! _vault_registries_are_equivalent "$GITSETU_PROFILES_CONF" "$archive_root/state/profiles.conf"; then
+                state_differs=1
+            fi
         fi
     fi
     if [[ "$state_differs" -eq 0 && -d "$GITSETU_CONFIG_DIR/remotes" ]]; then
