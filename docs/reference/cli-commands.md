@@ -2,10 +2,7 @@
 
 GitSetu is a Bash CLI for directory-scoped Git identities, SSH keys, and credential helpers. Commands that mutate state use explicit validation, private staging, and recoverable writes.
 
-> This reference describes the current v1.1.0 publication-ready release
-> candidate. Its canonical release state remains `development` until the
-> intentional public-release workflow completes; command availability does not
-> imply publication.
+> This reference describes the commands and flags for the current v1.1.0 release.
 
 ## Provisioning and setup
 
@@ -152,12 +149,9 @@ are passed without shell-word splitting. The selected profile must have a valid
 config and existing private/public key pair—there is no global-identity or
 missing-key fallback.
 
-### `gitsetu update --development` (`--dev` is also accepted)
+### `gitsetu update`
 
-Production updates are disabled while v1.1.0 is in development. The `--development` update option verifies a clean development checkout on the
-active branch and required tracked runtime files without fetching remote tags.
-When invoked without flags in a Git checkout, `gitsetu update` fetches tags from
-origin to inspect release availability.
+Checks origin tags and updates GitSetu to the latest stable release tag.
 
 ### `gitsetu guard --install` | `gitsetu guard --uninstall`
 
@@ -182,5 +176,17 @@ Displays command help.
 
 ### `gitsetu --version`, `gitsetu -v`
 
-Prints exactly the current CLI version line, `gitsetu v1.1.0`. It does not
-print a release channel or imply that the candidate is publicly published.
+Prints exactly the current CLI version line, `gitsetu v1.1.0`.
+
+---
+
+## Environment Overrides
+
+| Variable | Description |
+|---|---|
+| `HOME` | User home directory (standard POSIX root for `.gitconfig` and `.ssh/config`). |
+| `XDG_CONFIG_HOME` | Configuration root directory (defaults to `$HOME/.config`). Profiles reside in `$XDG_CONFIG_HOME/gitsetu/`. |
+| `GITSETU_CONFIG_DIR` | Direct override for the GitSetu configuration directory (defaults to `$XDG_CONFIG_HOME/gitsetu`). |
+| `GIT_CONFIG_GLOBAL` | Overrides the target global `.gitconfig` path (useful for testing and containerized isolation). |
+| `GITSETU_VERIFY_NETWORK` | Set to `1` to allow active network probes during `gitsetu verify`. |
+| `GITSETU_ALLOW_SSH_HOST_KEY` | Set to `1` to accept new SSH host keys during network verification. |

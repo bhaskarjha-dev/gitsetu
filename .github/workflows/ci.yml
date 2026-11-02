@@ -3,8 +3,8 @@ name: CI
 on:
   push:
     branches: ['**']
+    tags: ['v*']
   pull_request:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -94,9 +94,20 @@ jobs:
       - name: Run bundle-selected regression suite
         run: make test-bundle
 
-      - name: Run cleanroom installed-copy E2E suite
+      - name: Run cleanroom installed-copy E2E suite (source mode)
         if: runner.os != 'Windows'
         run: bash tests/e2e_installed.sh --source
+
+      - name: Run cleanroom installed-copy E2E suite (installed mode)
+        if: runner.os != 'Windows'
+        run: bash tests/e2e_installed.sh
+
+      - name: Run cleanroom installed-copy E2E suite on Windows (Git Bash)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          bash tests/e2e_installed.sh --source
+          bash tests/e2e_installed.sh
 
       - name: Parse and test Windows launchers/installers
         if: runner.os == 'Windows'

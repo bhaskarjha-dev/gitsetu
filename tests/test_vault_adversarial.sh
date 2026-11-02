@@ -20,8 +20,6 @@ source_gitsetu_libs
 
 _ADV_PASSWORD='fixture-only-vault-password'
 _ADV_LAST_RESTORE_OUTPUT=""
-export GITSETU_TEST_VAULT_MODE=1
-export GITSETU_TEST_VAULT_PASS="$_ADV_PASSWORD"
 
 _ADV_WORK="$TEST_HOME/vault-adversarial"
 # GNU tar treats a drive-letter archive argument as a remote host unless it is
@@ -378,10 +376,15 @@ _adv_expect_restore_rejected() {
     local status=0 output=""
 
     _adv_reset_live_target
-    _adv_write_authenticated_envelope "$archive" "$vault" || {
-        printf '    FAIL: could not authenticate adversarial fixture: %s\n' "$context"
-        return 1
-    }
+    if [[ "$archive" == *".vault" || "$archive" == *".enc" ]]; then
+        cp -f "$archive" "$vault" || return 1
+    else
+        _adv_write_authenticated_envelope "$archive" "$vault" || {
+            printf '    FAIL: could not authenticate adversarial fixture: %s\n' "$context"
+            return 1
+        }
+    fi
+    export GITSETU_VAULT_PASSWORD="$_ADV_PASSWORD"
     output=$(cmd_restore "$vault" 2>&1) || status=$?
     _ADV_LAST_RESTORE_OUTPUT="$output"
     if [[ "$status" -ne 1 ]]; then
@@ -461,6 +464,7 @@ test_vault_adversarial_authenticated_baseline_is_valid() {
     _adv_write_authenticated_envelope "$archive" "$vault" || return 1
     _adv_reset_live_target
 
+    export GITSETU_VAULT_PASSWORD="$_ADV_PASSWORD"
     cmd_restore "$vault" --force >/dev/null 2>&1 || status=$?
     assert_equals "0" "$status" "authenticated v2 adversarial baseline restores" || return 1
     assert_file_contains "$GITSETU_PROFILES_DIR/global.gitconfig" "Adversarial Fixture" \
@@ -761,8 +765,8 @@ test_vault_adversarial_rejects_envelope_mutations() {
             ;;
         password)
             cp -f "$base_vault" "$mutated" || return 1
-            GITSETU_TEST_VAULT_PASS='wrong-fixture-password' \
-                cmd_restore "$mutated" >/dev/null 2>&1 || expected=$?
+            export GITSETU_VAULT_PASSWORD='wrong-fixture-password'
+            cmd_restore "$mutated" >/dev/null 2>&1 || expected=$?
             _adv_reset_live_target
             ;;
         *)

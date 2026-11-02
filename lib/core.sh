@@ -28,9 +28,6 @@ fi
 if [[ -n "${LOCALAPPDATA:-}" ]]; then
     LOCALAPPDATA="${LOCALAPPDATA//\\//}"
 fi
-if [[ -n "${GITSETU_TEST_RUNTIME_DIR:-}" ]]; then
-    GITSETU_TEST_RUNTIME_DIR="${GITSETU_TEST_RUNTIME_DIR//\\//}"
-fi
 
 GITSETU_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/gitsetu"
 GITSETU_BACKUP_DIR="$GITSETU_CONFIG_DIR/backups"
@@ -64,9 +61,7 @@ _gitsetu_lock_path_canonicalish() {
 
 _gitsetu_default_runtime_lock_path() {
     local base candidate config_root fallback
-    if [[ "${GITSETU_TEST:-0}" == "1" ]]; then
-        base="${GITSETU_TEST_RUNTIME_DIR:-${HOME:-}/.gitsetu-test-runtime}"
-    elif [[ -n "${XDG_STATE_HOME:-}" ]]; then
+    if [[ -n "${XDG_STATE_HOME:-}" ]]; then
         base="$XDG_STATE_HOME"
     elif [[ "${GITSETU_OS:-}" == "gitbash" || "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == mingw* || "${OSTYPE:-}" == cygwin* ]] &&
          [[ -n "${LOCALAPPDATA:-}" ]]; then
@@ -76,11 +71,7 @@ _gitsetu_default_runtime_lock_path() {
     fi
     base="${base%/}"
     [[ -n "$base" && "$base" != "/" ]] || return 1
-    if [[ "${GITSETU_TEST:-0}" == "1" ]]; then
-        candidate="$base/profiles.lock"
-    else
-        candidate="$base/gitsetu/profiles.lock"
-    fi
+    candidate="$base/gitsetu/profiles.lock"
 
     # Invalid/ relative state variables must not silently redirect locking into
     # the config tree.  Fall back to a per-user state directory instead.

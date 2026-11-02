@@ -442,6 +442,7 @@ fi
 echo -e "\n${BOLD}${CYAN}[PHASE 11] Backup & Restore${RESET}"
 
 export GITSETU_TEST_VAULT_PASS="AuditPass123!"
+export GITSETU_VAULT_PASSWORD="AuditPass123!"
 bak_file="$HOME/audit_vault.tar.gz.enc"
 rm -f "$bak_file"
 "$GITSETU" backup "$bak_file" >/dev/null 2>&1
@@ -1081,9 +1082,11 @@ pre_alpha_email=$(git config -f "$GITSETU_CONFIG_DIR/profiles/rt-alpha.gitconfig
 
 # 25.1 Full round-trip: backup -> teardown -> restore -> verify
 export GITSETU_TEST_VAULT_PASS="RoundTripPass99"
+export GITSETU_VAULT_PASSWORD="RoundTripPass99"
 rt_vault="$rt_sandbox/rt_vault.tar.gz.enc"
 "$GITSETU" backup "$rt_vault" >/dev/null 2>&1 || true
 "$GITSETU" teardown --force >/dev/null 2>&1 || true
+export GITSETU_VAULT_PASSWORD="RoundTripPass99"
 "$GITSETU" restore "$rt_vault" >/dev/null 2>&1 || true
 
 if [[ -f "$GITSETU_CONFIG_DIR/profiles.conf" ]]; then
@@ -1127,6 +1130,7 @@ record_result "Security" "Authenticated Vault Adversarial Corpus" "tests/test_va
 
 # 25.7 Wrong password fails gracefully
 export GITSETU_TEST_VAULT_PASS="WRONG_PASSWORD_123"
+export GITSETU_VAULT_PASSWORD="WRONG_PASSWORD_123"
 wrong_pw_code=0
 "$GITSETU" restore "$rt_vault" >/dev/null 2>&1 || wrong_pw_code=$?
 if [[ "$wrong_pw_code" -ne 0 ]]; then
@@ -1143,6 +1147,7 @@ mkdir -p "$clean_home/.ssh"
 git config --file "$clean_home/.gitconfig" user.name "Clean User"
 git config --file "$clean_home/.gitconfig" user.email "clean@test.com"
 export GITSETU_TEST_VAULT_PASS="RoundTripPass99"
+export GITSETU_VAULT_PASSWORD="RoundTripPass99"
 clean_code=0
 "$GITSETU" restore "$rt_vault" >/dev/null 2>&1 || clean_code=$?
 if [[ "$clean_code" -eq 0 && -f "$GITSETU_CONFIG_DIR/profiles.conf" ]]; then
@@ -1155,7 +1160,7 @@ fi
 "$GITSETU" teardown --force >/dev/null 2>&1 || true
 export HOME="$RT_OLD_HOME"
 export GITSETU_CONFIG_DIR="$RT_OLD_HOME/.config/gitsetu"
-unset GITSETU_TEST_VAULT_PASS
+unset GITSETU_TEST_VAULT_PASS GITSETU_VAULT_PASSWORD GITSETU_VAULT_PASSWORD
 rm -rf "$rt_sandbox" "$clean_home"
 
 # ==============================================================================
@@ -1201,7 +1206,8 @@ else
 fi
 
 # 26.3 Backup vault permissions
-export GITSETU_TEST_VAULT_PASS="SecAuditPass"
+export GITSETU_TEST_VAULT_PASS="SecAuditPass123"
+export GITSETU_VAULT_PASSWORD="SecAuditPass123"
 sec_vault="$sec_sandbox/sec_vault.tar.gz.enc"
 "$GITSETU" backup "$sec_vault" >/dev/null 2>&1 || true
 if [[ -f "$sec_vault" ]]; then
@@ -1245,7 +1251,7 @@ if [[ -n "$SEC_OLD_RUNTIME_DIR" ]]; then
 else
     unset GITSETU_TEST_RUNTIME_DIR
 fi
-unset GITSETU_TEST_VAULT_PASS
+unset GITSETU_TEST_VAULT_PASS GITSETU_VAULT_PASSWORD
 rm -rf "$sec_sandbox"
 
 # ==============================================================================

@@ -2,30 +2,12 @@
 
 ## Current release state
 
-`v1.1.0` is a **verified, publication-ready release candidate**.
-`packaging/release.json` remains the canonical source-policy record and
-intentionally still declares the pre-publication state:
+`v1.1.0` release distribution is managed via GitHub Releases and npm.
+`packaging/release.json` is the canonical metadata specification:
 
-- `release.state = development`
-- `release.prerelease = true`
-- `release.public = false`
-- no public tag, publication date, artifact URL, or digest in the tracked source
-
-A local candidate bundle, Windows launcher/ZIP, npm tarball, and installers
-have been built and verified. They are preparation artifacts only. The current
-GitHub Actions workflow is **preparation-only**: it can build, hash, keyless-sign,
-and attest a detached preparation bundle, but it has no publication credentials,
-no `npm publish`, no GitHub release mutation, and no public release job.
-
-Consequently, this branch does not publish installable AUR, Homebrew, Scoop, or
-WinGet manifests and does not advertise a public v1.1.0 installer. The checked-in
-`package.json` remains private for the same reason. Missing public v1.1.0 assets
-are expected, not a release failure.
-
-The `development` state and publication-ready wording are intentional. Do not
-change them to `released` in a documentation-only commit. A public release must
-first pass a separately reviewed publish-only workflow that consumes the exact
-preparation run and its detached manifest.
+- GitHub Releases provides standalone binaries (`gitsetu`, `gitsetu-windows.zip`) and install scripts (`install.sh`, `install.ps1`).
+- npm provides the Node.js package (`gitsetu` and `git-setu`).
+- Package manager manifests (AUR, Homebrew, Scoop, WinGet) are withheld for v1.1.0.
 
 ## Release provenance model
 
@@ -55,15 +37,10 @@ an artifact digest back into a file that is included in that artifact's hash.
 |---|---|---|
 | Standalone bundle | `bash scripts/bundle.sh` | Exact artifact and digest in the detached release manifest |
 | POSIX installer | `bash install.sh --local-development` from a clean checkout | Installer, generated `release.env`, and detached manifest |
-| Windows installer | Test mode with a controlled local ZIP only | Windows ZIP/launcher, generated `release.env`, and detached manifest |
-| npm | `npm pack` / `npx` from this checkout; package is private | npm tarball named by the detached manifest |
-| GitHub CLI extensions | `packaging/gh-extension/gh-gitsetu` and `gh-setu` from this checkout | Signed, pinned standalone artifact |
-| AUR / Homebrew / Scoop / WinGet | Templates are validated but must not be rendered | Generated only by a future publish-only workflow |
+| Windows installer | `install.ps1` from a clean checkout or release archive | Windows ZIP/launcher, generated `release.env`, and detached manifest |
+| npm | `npm pack` / `npx` from this checkout | npm package published to npm registry |
 
-The npm command aliases are `gitsetu` and `git-setu` (the latter provides
-`git setu`). GitHub CLI exposes one command per installed extension, so the
-primary `gh-gitsetu` repository provides `gh gitsetu` and the separately packaged
-`gh-setu` repository provides the compatibility command `gh setu`.
+The npm command aliases are `gitsetu` and `git-setu` (the latter provides `git setu`).
 
 ## Development metadata and preparation
 

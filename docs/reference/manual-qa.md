@@ -2,11 +2,7 @@
 
 A step-by-step integration test checklist for verifying that every GitSetu feature works on a real machine. Run this before every release to ensure the README claims are true.
 
-> **Release-state boundary:** This checklist validates the current v1.1.0
-> publication-ready release candidate. It does not authorize publication. A
-> public release requires a clean source commit, immutable tag, detached
-> release manifest, signed artifacts, provenance, and a separately reviewed
-> publish-only workflow as described in `packaging/README.md`.
+> **Release-state boundary:** This checklist validates the current v1.1.0 release.
 
 > **Prerequisites:** A machine with `bash`, `git`, and `ssh-keygen`. On
 > Windows, install Git for Windows so the native PowerShell installer and the
@@ -96,7 +92,7 @@ gitsetu setup
 - [ ] `~/.gitconfig` contains `includeIf` block: `grep -A2 'includeIf' ~/.gitconfig`
 - [ ] Profile gitconfig exists: `cat ~/.config/gitsetu/profiles/personal.gitconfig`
 - [ ] SSH config has Include directive: `grep 'Include' ~/.ssh/config`
-- [ ] Isolated SSH config has host alias: `grep -A3 'Host github-personal' ~/.config/gitsetu/profiles/ssh_config`
+- [ ] Isolated SSH config has host alias: `grep -A3 'Host gitsetu-personal' ~/.config/gitsetu/profiles/ssh_config`
 - [ ] Registry file exists and starts with the v2 header: `head -n 1 ~/.config/gitsetu/profiles.conf`
 
 ---
@@ -248,7 +244,8 @@ printf 'protocol=https\nhost=github.com\n\n' | gitsetu credential erase
 > Verifies: TAB completion
 
 ```bash
-source ~/.local/share/gitsetu/lib/completion.sh
+# Sourced from source checkout
+source lib/completion.sh
 gitsetu <TAB><TAB>
 ```
 

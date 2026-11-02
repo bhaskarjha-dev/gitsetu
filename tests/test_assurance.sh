@@ -177,7 +177,6 @@ first_home="$HOME"
 [[ -z "${GITSETU_ASSURANCE_SENTINEL-}" ]]
 [[ -z "${GIT_CONFIG_GLOBAL-}" ]]
 [[ -z "${CI-}" ]]
-[[ "$GITSETU_TEST" == "1" ]]
 
 setup_test_home
 second_home="$HOME"

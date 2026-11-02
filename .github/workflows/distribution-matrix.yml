@@ -2,9 +2,9 @@ name: Distribution Matrix Verification
 
 on:
   push:
-    branches: [main]
+    branches: ['**']
+    tags: ['v*']
   pull_request:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -49,6 +49,7 @@ jobs:
         run: |
           bash tests/test_npm_wrapper.sh
           bash tests/e2e_installed.sh --source
+          bash tests/e2e_installed.sh
 
   macos:
     name: macOS native Bash 3.2
@@ -71,7 +72,9 @@ jobs:
       - name: Run native-Bash tests
         run: /bin/bash tests/run_all.sh
       - name: Run cleanroom installed-copy E2E suite
-        run: /bin/bash tests/e2e_installed.sh --source
+        run: |
+          /bin/bash tests/e2e_installed.sh --source
+          /bin/bash tests/e2e_installed.sh
 
   windows:
     name: Windows native launcher, PowerShell installers, and shims
@@ -103,6 +106,11 @@ jobs:
         run: |
           make dist-check
           make test-bundle
+      - name: Run cleanroom installed-copy E2E suite on Windows (Git Bash)
+        shell: bash
+        run: |
+          bash tests/e2e_installed.sh --source
+          bash tests/e2e_installed.sh
       - name: Run Windows-specific security tests
         run: |
           $errors = $null

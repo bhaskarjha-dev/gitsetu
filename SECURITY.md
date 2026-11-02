@@ -2,17 +2,15 @@
 
 ## Supported Versions
 
-The v1.1.0 line is a **verified, publication-ready release candidate**. The canonical release metadata remains non-public until an intentional release process creates a clean tag, signed artifacts, and published provenance. The latest official release remains the release documented by its published tag.
-
-“Release candidate” describes an unpublished local channel, not a public production claim. Verification is tied to a named clean source commit, test run, and matching provenance; the current tree is not a public production artifact until an intentional release process publishes and signs it.
+The v1.1.0 release is distributed via GitHub Releases and npm. Cryptographic release artifacts and provenance are published to the official GitHub repository releases page.
 
 | Version/channel | Security handling |
 | --------------- | ----------------- |
-| v1.1.0 release-candidate branch | Tracked and tested locally; not a published release |
+| v1.1.0 release | Actively supported |
 | Latest official release | Supported according to the maintainers' release policy |
 | Older development snapshots | Not supported |
 
-Do not treat a local development version, mutable branch URL, or unreleased manifest as a release trust root. The publication-ready wording is intentional: it must not be changed to a public-release claim as a documentation-only edit.
+Only install release artifacts downloaded from verified release channels with matching cryptographic signatures.
 
 ## Reporting a Vulnerability
 

@@ -23,7 +23,7 @@ Modern developer environments are highly fragmented. Context-switching between d
 ## Architectural Distinctions
 
 ### Native clone URLs, with optional aliases
-GitSetu does not require a custom SSH alias for ordinary clones inside a mapped workspace. It can generate optional aliases such as `github-work` for explicit external workflows; review the effective OpenSSH configuration before using them.
+GitSetu does not require a custom SSH alias for ordinary clones inside a mapped workspace. It can generate optional aliases such as `gitsetu-work` for explicit external workflows; review the effective OpenSSH configuration before using them.
 
 By generating conditional `core.sshCommand` and OpenSSH include rules, GitSetu lets Git and OpenSSH select the profile key for a managed directory. The operating systems and credential stores still enforce their own security controls.
 

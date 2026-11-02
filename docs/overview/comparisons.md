@@ -2,7 +2,7 @@
 
 **An editorial, time-sensitive comparison of multi-identity Git managers across architecture, features, security guardrails, and developer experience.** Star counts, maintenance labels, and competitor behavior require independent citations and retrieval dates; they are not product guarantees.
 
-Managing multiple directory-scoped Git identities securely across work, open-source, and personal contexts is a foundational engineering problem. This document provides a side-by-side editorial snapshot based on repository evidence available in **September 2026**; verify external figures before relying on them. The GitSetu column describes the current **publication-ready v1.1.0 release candidate**; public availability is controlled by the release metadata.
+Managing multiple directory-scoped Git identities securely across work, open-source, and personal contexts is a foundational engineering problem. This document provides a side-by-side editorial snapshot based on repository evidence available in **September 2026**; verify external figures before relying on them. The GitSetu column describes the current **v1.1.0 release**; public availability is controlled by the release metadata.
 
 ---
 
@@ -27,7 +27,7 @@ Managing multiple directory-scoped Git identities securely across work, open-sou
 | **Identity Switching Mechanics** | | | | | | | |
 | Directory auto-switch (`cd` trigger) | ✓ | ✓ | ✓ | ✓ | ✓ | ~ | ~ |
 | Native Git `includeIf` integration | ✓ | ✓ | ✗ | ~ | ✗ | ~ | ✓ |
-| Remote URL auto-matching | ✗ | ✗ | **✓** | ✗ | ✗ | ✗ | ✗ |
+| Remote URL auto-matching | ✓ | ✗ | **✓** | ✗ | ✗ | ✗ | ✗ |
 | Manual CLI profile override / switch | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Ephemeral identity runner (`run <prof> -- <cmd>`) | **✓** | ✗ | ✗ | ✗ | ✗ | ✗ | ~ |
 | **SSH & Cryptography Orchestration** | | | | | | | |
@@ -40,14 +40,14 @@ Managing multiple directory-scoped Git identities securely across work, open-sou
 | Standard clone URLs (`git@github.com`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ |
 | **Safety Guard Rails & Integrity** | | | | | | | |
 | Fail-closed Pre-Commit Identity Guard | **✓** (Global) | ✓ (Per-repo) | ✓ (Warn/Block) | ✓ | ✗ | ✗ | ✗ |
-| Hook passthrough (Husky / Lefthook) | **✓** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| Commit history identity audit | ✗ | ✗ | **✓** | ✗ | ✗ | ✗ | ✗ |
+| Pre-commit hook chaining (Husky / Lefthook) | **✓** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Commit history identity audit | **✓** | ✗ | **✓** | ✗ | ✗ | ✗ | ✗ |
 | Self-healing configuration repair | **✓** (`--repair`) | **✓** (`--repair`) | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Built-in diagnostic doctor | ✓ | ✓ | ✗ | ✓ | ✗ | ✗ | ✗ |
 | **Backup & Distribution** | | | | | | | |
 | Encrypted state export & restore | **✓** (authenticated v2 vault) | ~ (Unencrypted) | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Zero runtime dependencies | **✓** (Bash 3.2+) | ✗ (Go) | ✗ (Go) | ✓ (Shell) | ✗ (Go) | ✗ (Node) | **✓** |
-| Distribution channels | 0 public; candidate/preparation templates only | 4 channels | Go install | Git clone | Go install | npm | N/A |
+| Distribution channels | GitHub Releases, npm | 4 channels | Go install | Git clone | Go install | npm | N/A |
 
 *(✓ = fully supported, ~ = partial support or manual intervention required, ✗ = unsupported)*
 
