@@ -33,26 +33,29 @@ for arg in "$@"; do
     esac
 done
 
-[[ -n "${HOME:-}" && "$HOME" == /* ]] || error "HOME must be set to an absolute path"
+[[ -n "${HOME:-}" && ( "$HOME" == /* || "$HOME" =~ ^[A-Za-z]:/ ) ]] || error "HOME must be set to an absolute path"
 if is_test_mode; then
     INSTALL_ROOT="${GITSETU_INSTALL_DIR:-$HOME/.local/share/gitsetu}"
     BIN_DIR="${GITSETU_TEST_BIN_DIR:-$HOME/.local/bin}"
 else
     DATA_BASE="${XDG_DATA_HOME:-$HOME/.local/share}"
-    [[ "$DATA_BASE" == /* ]] || error "XDG_DATA_HOME must be an absolute path"
+    [[ "$DATA_BASE" == /* || "$DATA_BASE" =~ ^[A-Za-z]:/ ]] || error "XDG_DATA_HOME must be an absolute path"
     INSTALL_ROOT="$DATA_BASE/gitsetu"
     BIN_DIR="$HOME/.local/bin"
 fi
 
-[[ "$INSTALL_ROOT" == /* && "$INSTALL_ROOT" != "/" && "$INSTALL_ROOT" != "$HOME" ]] || error "Refusing an unsafe installation root"
-[[ "$BIN_DIR" == /* && "$BIN_DIR" != "/" && "$BIN_DIR" != "$HOME" ]] || error "Refusing an unsafe executable directory"
+[[ ( "$INSTALL_ROOT" == /* || "$INSTALL_ROOT" =~ ^[A-Za-z]:/ ) && "$INSTALL_ROOT" != "/" && ! "$INSTALL_ROOT" =~ ^[A-Za-z]:/?$ && "$INSTALL_ROOT" != "$HOME" ]] || error "Refusing an unsafe installation root"
+[[ ( "$BIN_DIR" == /* || "$BIN_DIR" =~ ^[A-Za-z]:/ ) && "$BIN_DIR" != "/" && ! "$BIN_DIR" =~ ^[A-Za-z]:/?$ && "$BIN_DIR" != "$HOME" ]] || error "Refusing an unsafe executable directory"
 [[ "$INSTALL_ROOT" != *$'\n'* && "$INSTALL_ROOT" != *$'\r'* && "$INSTALL_ROOT" != *$'\t'* ]] || error "Installation path contains control characters"
 
 assert_no_symlink_components() {
     local path="$1" current="$1"
-    while [[ -n "$current" && "$current" != "/" ]]; do
+    while [[ -n "$current" && "$current" != "/" && ! "$current" =~ ^[A-Za-z]:/?$ && "$current" != "." ]]; do
         [[ ! -L "$current" ]] || error "Refusing a symbolic-link path component: $current"
-        current="$(dirname "$current")"
+        local parent
+        parent="$(dirname "$current")"
+        [[ "$parent" != "$current" ]] || break
+        current="$parent"
     done
 }
 

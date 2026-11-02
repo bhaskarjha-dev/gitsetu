@@ -125,7 +125,7 @@ load_release_config() {
 
 load_release_config
 
-[[ -n "${HOME:-}" && "$HOME" == /* ]] || error "HOME must be set to an absolute path"
+[[ -n "${HOME:-}" && ( "$HOME" == /* || "$HOME" =~ ^[A-Za-z]:/ ) ]] || error "HOME must be set to an absolute path"
 [[ "$HOME" != *$'\n'* && "$HOME" != *$'\r'* && "$HOME" != *$'\t'* ]] || error "HOME contains control characters"
 
 if is_test_mode; then
@@ -135,7 +135,7 @@ if is_test_mode; then
     EXPECTED_SHA256="${GITSETU_TEST_ARTIFACT_SHA256:-}"
 else
     DATA_BASE="${XDG_DATA_HOME:-$HOME/.local/share}"
-    [[ "$DATA_BASE" == /* ]] || error "XDG_DATA_HOME must be an absolute path"
+    [[ "$DATA_BASE" == /* || "$DATA_BASE" =~ ^[A-Za-z]:/ ]] || error "XDG_DATA_HOME must be an absolute path"
     INSTALL_ROOT="$DATA_BASE/gitsetu"
     BIN_DIR="$HOME/.local/bin"
     ARTIFACT_FILE=""
@@ -164,8 +164,8 @@ else
     fi
 fi
 
-[[ "$INSTALL_ROOT" == /* && "$BIN_DIR" == /* ]] || error "Installation paths must be absolute"
-[[ "$INSTALL_ROOT" != "/" && "$BIN_DIR" != "/" && "$INSTALL_ROOT" != "$HOME" && "$BIN_DIR" != "$HOME" ]] || error "Refusing a root or home-directory installation target"
+[[ ( "$INSTALL_ROOT" == /* || "$INSTALL_ROOT" =~ ^[A-Za-z]:/ ) && ( "$BIN_DIR" == /* || "$BIN_DIR" =~ ^[A-Za-z]:/ ) ]] || error "Installation paths must be absolute"
+[[ "$INSTALL_ROOT" != "/" && ! "$INSTALL_ROOT" =~ ^[A-Za-z]:/?$ && "$BIN_DIR" != "/" && ! "$BIN_DIR" =~ ^[A-Za-z]:/?$ && "$INSTALL_ROOT" != "$HOME" && "$BIN_DIR" != "$HOME" ]] || error "Refusing a root or home-directory installation target"
 [[ "$INSTALL_ROOT" != *$'\n'* && "$INSTALL_ROOT" != *$'\r'* && "$INSTALL_ROOT" != *$'\t'* ]] || error "Installation path contains control characters"
 [[ "$BIN_DIR" != *$'\n'* && "$BIN_DIR" != *$'\r'* && "$BIN_DIR" != *$'\t'* ]] || error "Binary path contains control characters"
 
@@ -247,9 +247,12 @@ download_file() {
 assert_no_symlink_components() {
     local path="$1" current
     current="$path"
-    while [[ -n "$current" && "$current" != "/" ]]; do
+    while [[ -n "$current" && "$current" != "/" && ! "$current" =~ ^[A-Za-z]:/?$ && "$current" != "." ]]; do
         [[ ! -L "$current" ]] || error "Symbolic-link path component is not allowed: $current"
-        current="$(dirname "$current")"
+        local parent
+        parent="$(dirname "$current")"
+        [[ "$parent" != "$current" ]] || break
+        current="$parent"
     done
 }
 
@@ -283,6 +286,11 @@ if [[ -d "$v1_candidate/.git" && -f "$v1_candidate/gitsetu" && -f "$v1_candidate
                 rm -f "$link_candidate"
                 V1_REMOVED_LINKS+=("$link_candidate")
             fi
+        elif [[ -f "$link_candidate" && -f "$v1_backup/gitsetu" ]] && cmp -s "$link_candidate" "$v1_backup/gitsetu" 2>/dev/null; then
+            # On platforms without symlink support (Windows Git Bash fallback for ln -s),
+            # the legacy v1.0.0 entrypoint in ~/.local/bin was a file copy of the repository script.
+            rm -f "$link_candidate"
+            V1_REMOVED_LINKS+=("$link_candidate")
         fi
     done
     V1_ADOPTED=1

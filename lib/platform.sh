@@ -265,6 +265,11 @@ canonicalize_path() {
         # Real Git Bash can physically resolve explicit drive paths. A forced
         # cross-platform test on Linux/WSL cannot, so retain lexical output.
         [[ -d "$drive_root" ]] || can_resolve=0
+    elif [[ "${GITSETU_OS:-}" != "gitbash" ]] && [[ "$path" =~ ^[a-zA-Z]:/ ]]; then
+        # A forced non-Windows platform (e.g., GITSETU_OS=macos in test suites)
+        # running on a Windows host with drive-letter paths must use lexical
+        # canonicalization to preserve the drive path instead of MSYS /tmp rewriting.
+        can_resolve=0
     fi
 
     if [[ "$can_resolve" -eq 1 ]]; then
@@ -365,11 +370,19 @@ is_canonical_path() {
     if [[ "$normalized" == "$path" ]]; then
         return 0
     fi
-    if [[ "${GITSETU_OS:-}" == "gitbash" && "$path" =~ ^/([a-zA-Z])(/.*)?$ ]]; then
+    if [[ "$path" =~ ^/([a-zA-Z])(/.*)?$ ]]; then
         local drive rest
         drive=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
         rest="${BASH_REMATCH[2]:-/}"
-        if [[ "$normalized" == "${drive}:${rest}" ]]; then
+        if [[ "$normalized" == "${drive}:${rest}" || "$path" == "${drive}:${rest}" ]]; then
+            return 0
+        fi
+    fi
+    if command -v cygpath >/dev/null 2>&1; then
+        local p_msys n_msys
+        p_msys=$(cygpath -u "$path" 2>/dev/null || true)
+        n_msys=$(cygpath -u "$normalized" 2>/dev/null || true)
+        if [[ -n "$p_msys" && "$p_msys" == "$n_msys" ]]; then
             return 0
         fi
     fi
