@@ -132,7 +132,7 @@ _gitsetu() {
                 case "$subcommand" in
                     add|edit)
                         # shellcheck disable=SC2207
-                        COMPREPLY=( $(compgen -W "--name= --email= --dir= --provider= --key= --fido2 --sign --no-sign --remote=" -- "$cur") )
+                        COMPREPLY=( $(compgen -W "--name= --email= --dir= --provider= --key= --fido2 --sign --no-sign --sign= --remote=" -- "$cur") )
                         ;;
                     remove)
                         local labels

@@ -59,7 +59,7 @@ fi #
 _gitsetu_lock_timeout="${GITSETU_LOCK_TIMEOUT:-}" #
 if [[ -n "$_gitsetu_lock_timeout" ]]; then  #
     if [[ ! "$_gitsetu_lock_timeout" =~ ^[1-9][0-9]*$ ]]; then printf '%s\n' "Error: GITSETU_LOCK_TIMEOUT must be a canonical positive decimal integer." >&2; exit 1; fi  #
-    if [[ "$_gitsetu_lock_timeout" == "0" || "${#_gitsetu_lock_timeout}" -gt 4 || ( "${#_gitsetu_lock_timeout}" -eq 4 && "$_gitsetu_lock_timeout" -gt 3600 ) ]]; then printf '%s\n' "Error: GITSETU_LOCK_TIMEOUT is outside the supported range (1-3600 seconds)." >&2; exit 1; fi  #
+    if [[ "${#_gitsetu_lock_timeout}" -gt 4 || ( "${#_gitsetu_lock_timeout}" -eq 4 && "$_gitsetu_lock_timeout" -gt 3600 ) ]]; then printf '%s\n' "Error: GITSETU_LOCK_TIMEOUT is outside the supported range (1-3600 seconds)." >&2; exit 1; fi  #
 fi #
 
 for _gitsetu_flag_name in GITSETU_PORT443_NEEDED GITSETU_VERIFY_NETWORK GITSETU_ALLOW_SSH_HOST_KEY GITSETU_SSH_ACCEPT_NEW_HOST GITSETU_ALLOW_SSH_PORT443 GITSETU_DEFAULT_SIGN; do  #
@@ -965,21 +965,25 @@ cmd_status() {
         fi
         local escaped_cwd="${cwd//\\/\\\\}"
         escaped_cwd="${escaped_cwd//\"/\\\"}"
+        local escaped_exp_email="${exp_email//\\/\\\\}"
+        escaped_exp_email="${escaped_exp_email//\"/\\\"}"
+        local escaped_act_email="${act_email//\\/\\\\}"
+        escaped_act_email="${escaped_act_email//\"/\\\"}"
         printf '{\n'
         printf '  "schema_version": "1.0.0",\n'
         printf '  "managed": %s,\n' "$is_managed"
         printf '  "profile": %s,\n' "$prof_name"
         printf '  "directory": "%s",\n' "$escaped_cwd"
         if [[ -n "$exp_email" ]]; then
-            printf '  "expected_email": "%s",\n' "$exp_email"
-            printf '  "expectedEmail": "%s",\n' "$exp_email"
+            printf '  "expected_email": "%s",\n' "$escaped_exp_email"
+            printf '  "expectedEmail": "%s",\n' "$escaped_exp_email"
         else
             printf '  "expected_email": null,\n'
             printf '  "expectedEmail": null,\n'
         fi
         if [[ -n "$act_email" ]]; then
-            printf '  "actual_email": "%s",\n' "$act_email"
-            printf '  "actualEmail": "%s",\n' "$act_email"
+            printf '  "actual_email": "%s",\n' "$escaped_act_email"
+            printf '  "actualEmail": "%s",\n' "$escaped_act_email"
         else
             printf '  "actual_email": null,\n'
             printf '  "actualEmail": null,\n'
@@ -997,16 +1001,6 @@ cmd_status() {
     fi
 
     print_header
-
-    cwd=$(pwd -P 2>/dev/null || printf '%s' "$PWD")
-    cwd=$(_gitsetu_context_path "$cwd" 2>/dev/null || printf '%s' "$cwd")
-    cmd_prompt >/dev/null
-    prompt_state="${GITSETU_PROMPT_STATE:-unmanaged}"
-    active_context="${GITSETU_PROMPT_PROFILE:-}"
-    if [[ -n "$active_context" ]]; then
-        active_label="$active_context"
-        active_marker="${GREEN}${SYM_CHECK} ${RESET}"
-    fi
 
     print_section "Current Directory"
     printf >&2 '  %s\n' "$(escape_terminal_text "$cwd")"

@@ -238,6 +238,7 @@ test_ssh_reparse_cache_is_bounded_and_fast_on_gitbash() {
         return 1
     }
     GITSETU_OS=gitbash
+    unset GITSETU_REPARSE_CACHE_MAX
     GITSETU_SSH_REPARSE_CACHE_MAX=64
     _ssh_reparse_cache_reset
 

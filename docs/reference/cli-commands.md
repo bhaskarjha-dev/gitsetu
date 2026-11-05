@@ -38,8 +38,8 @@ Manage the strict v2 profile registry programmatically:
 `--email` is required when a new or incomplete profile is processed in
 headless mode. `--key` accepts a canonical path (a relative path is resolved
 from the invoking directory); `--fido2` selects the default
-`~/.ssh/id_ed25519_sk_<label>` path.
-`--sign` and `--no-sign` set the profile's signing flag. The global/default
+`~/.ssh/id_ed25519_sk_<label>` path; `--provider` accepts a hostname (case-insensitive, e.g. `github.com`).
+`--sign` (or `--sign=1`), `--no-sign` (or `--sign=0`), and `--sign=inherit` set the profile's signing flag. The global/default
 profile cannot be removed. The top-level `gitsetu remove <label> --force|-y`
 command is the command that accepts the force flag; `profile remove` has no
 force flag.

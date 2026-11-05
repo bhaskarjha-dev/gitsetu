@@ -483,7 +483,7 @@ validate_profile_blueprint() {
         else
             _discovery_valid_label "$label" || return 1
             _discovery_valid_provider "$provider" || return 1
-            [[ "$sign" == "0" || "$sign" == "1" ]] || return 1
+            [[ "$sign" == "0" || "$sign" == "1" || "$sign" == "inherit" ]] || return 1
             [[ "$key_path" == /* || "$key_path" =~ ^[A-Za-z]:/ ]] || return 1
             [[ -z "$provider_user" || "$provider_user" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || return 1
             if [[ "$label" == "global" ]]; then

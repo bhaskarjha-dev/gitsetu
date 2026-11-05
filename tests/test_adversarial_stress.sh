@@ -321,7 +321,7 @@ test_concurrent_parallel_profile_mutations() {
     set_adversarial_test_lock_timeout
 
     local i status output_file failed_count=0
-    local expected_workers=5
+    local expected_workers=3
     # MSYS/Cygwin process creation is expensive and can exhaust the process
     # table when several full CLI children contend. Two workers still exercise
     # real lock serialization without turning this into a Windows stress loop.

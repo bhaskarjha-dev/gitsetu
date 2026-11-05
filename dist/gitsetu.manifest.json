@@ -3,13 +3,13 @@
   "name": "gitsetu",
   "version": "1.1.0",
   "releaseState": "development",
-  "sourceCommit": "c4670308b781ffb4d4e26389154b204c0fb332dc",
+  "sourceCommit": "64967600fbf61f8aa8967f224abd4cf8a5931743",
   "sourceDirty": "clean",
-  "bundleSha256": "0ce324aefcc4d9b068a23c918ff6fd4cc7332085abdf651f009d2a2a96dd77ef",
+  "bundleSha256": "3b56a7a0ca9bdeb42d878d3063cacaa91e2676c4902542a212adb890dc16e18e",
   "modules": [
     {
       "path": "lib/core.sh",
-      "sha256": "62e5a4f18b0e15b3571008d19a80b8345bc4cc802a5b8f04883e88c112b963ca"
+      "sha256": "da5ac2625568a8529c32600fcdf5842a34c967fc37c281f608d6d37c45029b3c"
     },
     {
       "path": "lib/platform.sh",
@@ -25,15 +25,15 @@
     },
     {
       "path": "lib/backup.sh",
-      "sha256": "b2a57eac857e0f020e97981cf9739e578f0a470e18e2b168d6179e8ee84a5bc0"
+      "sha256": "9269e02ef2b2bf17b3f4e2fd3e74d730186c60650b799e3733c5e09bcbd508b7"
     },
     {
       "path": "lib/ssh.sh",
-      "sha256": "bd7e0bd9f69abd939c644c1f62a4d5e6403266ccd6d2b47603b25f38abd37e76"
+      "sha256": "48076eb8ec36b61a29c75631d34f1b1e5595ca9a0f4e62017a93f7691f4a6288"
     },
     {
       "path": "lib/gitconfig.sh",
-      "sha256": "4010776feaa730ec5a2d9948ba0de138b039c1abd021c2a460211e76d4d83527"
+      "sha256": "367af526d9702b07fd07946400e8db0fa0a0303f5aa27ce56a7c3f5c2b213d7c"
     },
     {
       "path": "lib/guard.sh",
@@ -53,15 +53,15 @@
     },
     {
       "path": "lib/discovery.sh",
-      "sha256": "eb086508bbbb661e008b1431b9f18d0748e642bad0522c6c83cfdbeb87ae35ec"
+      "sha256": "39d6ff2fbef078b70dc0ff63c753c90796ced021a04a6fc830495afa2d2446df"
     },
     {
       "path": "lib/setup.sh",
-      "sha256": "4953f8a791dc0c5f40903a55e1d97906b9eefc58ffa5a8fa5286cdf158dc647d"
+      "sha256": "0fe99e9a8c381e039a2f72d69b18d60799bf86711d8e2fff3e2dc6dfdc8c13b0"
     },
     {
       "path": "lib/completion.sh",
-      "sha256": "9465e2c5e839a5bea6ae760225f3fed7f5cf470462eb1f43c519ad2e8ab0e7a0"
+      "sha256": "827bf8938ba7e6db2c8470494e0997e441f4a137b97cd76c1b7eab8aae361921"
     }
   ]
 }

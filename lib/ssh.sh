@@ -88,107 +88,17 @@ _ssh_is_ntfs() {
     [[ "${GITSETU_OS:-}" == "gitbash" || "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == mingw* || "${OSTYPE:-}" == cygwin* ]]
 }
 
-# Git Bash's fsutil.exe is a Win32 process. Cache only bounded, per-process
-# observations of existing path components. Final mutation targets are checked
-# uncached immediately before replacement, while cheap symlink checks remain
-# active on every cache hit; a cached reparse result always remains fail-closed.
-_SSH_REPARSE_CACHE_PATHS=()
-_SSH_REPARSE_CACHE_RESULTS=()
-_SSH_REPARSE_CACHE_SIZE=0
-
-_ssh_reparse_cache_limit() {
-    local limit="${GITSETU_SSH_REPARSE_CACHE_MAX:-256}"
-    [[ "$limit" =~ ^[0-9]+$ ]] || limit=256
-    (( limit < 1 )) && limit=1
-    (( limit > 1024 )) && limit=1024
-    printf '%s' "$limit"
-}
-
+# Reparse-point checks delegated to canonical implementation in lib/core.sh.
 _ssh_reparse_cache_reset() {
-    _SSH_REPARSE_CACHE_PATHS=()
-    _SSH_REPARSE_CACHE_RESULTS=()
-    _SSH_REPARSE_CACHE_SIZE=0
-}
-
-_ssh_reparse_cache_lookup() {
-    local context="${GITSETU_OS:-unknown}:${OSTYPE:-}"
-    local key="$context|${1//\\//}" i
-    for (( i=0; i<${#_SSH_REPARSE_CACHE_PATHS[@]}; i++ )); do
-        if [[ "${_SSH_REPARSE_CACHE_PATHS[$i]}" == "$key" ]]; then
-            if [[ "${_SSH_REPARSE_CACHE_RESULTS[$i]}" == "0" ]]; then
-                _SSH_REPARSE_CACHE_STATUS=0
-                return 0
-            fi
-            # A POSIX symlink can appear without a filesystem helper call;
-            # honor that cheap check before reusing an ordinary observation.
-            if [[ -L "$1" ]]; then
-                _SSH_REPARSE_CACHE_STATUS=0
-                return 0
-            fi
-            _SSH_REPARSE_CACHE_STATUS=1
-            return 0
-        fi
-    done
-    return 1
-}
-
-_ssh_reparse_cache_store() {
-    local context="${GITSETU_OS:-unknown}:${OSTYPE:-}"
-    local key="$context|${1//\\//}" result="$2" limit
-    local i
-
-    for (( i=0; i<${#_SSH_REPARSE_CACHE_PATHS[@]}; i++ )); do
-        if [[ "${_SSH_REPARSE_CACHE_PATHS[$i]}" == "$key" ]]; then
-            _SSH_REPARSE_CACHE_RESULTS[i]="$result"
-            return 0
-        fi
-    done
-
-    limit=$(_ssh_reparse_cache_limit)
-    if (( ${#_SSH_REPARSE_CACHE_PATHS[@]} >= limit )); then
-        _SSH_REPARSE_CACHE_PATHS=("${_SSH_REPARSE_CACHE_PATHS[@]:1}")
-        _SSH_REPARSE_CACHE_RESULTS=("${_SSH_REPARSE_CACHE_RESULTS[@]:1}")
-    fi
-    _SSH_REPARSE_CACHE_PATHS+=("$key")
-    _SSH_REPARSE_CACHE_RESULTS+=("$result")
-    _SSH_REPARSE_CACHE_SIZE=${#_SSH_REPARSE_CACHE_PATHS[@]}
+    _gitsetu_reparse_cache_reset
 }
 
 _ssh_reparse_probe_cached() {
-    local path="$1" status
-    if ! _ssh_is_ntfs || ! command -v cygpath >/dev/null 2>&1 || ! command -v fsutil.exe >/dev/null 2>&1; then
-        _ssh_is_reparse_point "$path"
-        return $?
-    fi
-    if _ssh_reparse_cache_lookup "$path"; then
-        return "$_SSH_REPARSE_CACHE_STATUS"
-    fi
-    _ssh_is_reparse_point "$path"
-    status=$?
-    if [[ "$status" -eq 0 || "$status" -eq 1 ]]; then
-        _ssh_reparse_cache_store "$path" "$status"
-    fi
-    return "$status"
+    _gitsetu_is_reparse_point "$@"
 }
 
 _ssh_is_reparse_point() {
-    local path="$1" windows_path status
-    [[ -L "$path" ]] && return 0
-    if _ssh_is_ntfs && command -v cygpath >/dev/null 2>&1 && command -v fsutil.exe >/dev/null 2>&1; then
-        # Do not ask fsutil about a path that does not exist yet. For an
-        # existing path, distinguish "ordinary path" (1) from an
-        # indeterminate ACL/device error (2) so callers can fail closed.
-        [[ -e "$path" ]] || return 1
-        windows_path=$(cygpath -w "$path" 2>/dev/null) || return 2
-        if fsutil.exe reparsepoint query "$windows_path" >/dev/null 2>&1; then
-            return 0
-        else
-            status=$?
-        fi
-        [[ "$status" -eq 1 ]] && return 1
-        return 2
-    fi
-    return 1
+    _gitsetu_is_reparse_point_uncached "$@"
 }
 
 _ssh_assert_no_symlink_components() {

@@ -898,19 +898,4 @@ write_profiles_conf() {
 
     write_profiles_registry "$GITSETU_PROFILES_CONF" || return 1
     print_success "Created v2 profile registry: $GITSETU_PROFILES_CONF"
-
-    # Prune only generated profile payloads no longer represented in memory.
-    local pfile plabel j found
-    for pfile in "$GITSETU_PROFILES_DIR"/*.gitconfig; do
-        [[ -f "$pfile" ]] || continue
-        plabel=$(basename "$pfile" .gitconfig)
-        found=0
-        for (( j=0; j<${PROFILE_COUNT:-0}; j++ )); do
-            if [[ "${PROFILE_LABELS[$j]}" == "$plabel" ]]; then
-                found=1
-                break
-            fi
-        done
-        [[ "$found" -eq 1 ]] || rm -f "$pfile"
-    done
 }

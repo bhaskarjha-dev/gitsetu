@@ -200,9 +200,11 @@ test_atomic_headless_add() {
     gitsetu_bin="${gitsetu_bin%$'\r'}"
     local i status output_file failed_count=0
     local -a add_pids=()
+    local -a add_logs=()
     for i in {1..2}; do
         output_file="$TEST_HOME/parallel-add-$i.log"
         rm -f "$output_file"
+        add_logs+=("$output_file")
         bash "$gitsetu_bin" profile add "user${i}" --name="User ${i}" \
             --email="user${i}@test.com" --dir="$HOME/user${i}" \
             >"$output_file" 2>&1 &
@@ -213,8 +215,8 @@ test_atomic_headless_add() {
         wait "${add_pids[$i]}" || status=$?
         if [[ "$status" -ne 0 ]]; then
             printf '    FAIL: parallel profile-add child %s exited %s\n' "$i" "$status"
-            if [[ -f "$TEST_HOME/parallel-add-$i.log" ]]; then
-                cat "$TEST_HOME/parallel-add-$i.log"
+            if [[ -f "${add_logs[$i]}" ]]; then
+                cat "${add_logs[$i]}"
             fi
             failed_count=$((failed_count + 1))
         fi

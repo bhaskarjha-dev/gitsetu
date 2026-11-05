@@ -77,10 +77,12 @@ The following architectural hardening milestones describe the current local rele
 **Goal:** Shrink the codebase to an ultra-lean maintainable core, expand agent/hardware key routing, and automate upstream package submissions.
 
 - **Core Codebase Consolidation (FUT-03):**
-  - Following the v1.1.0 release and feature freeze, shrink the product codebase footprint toward a tight core of under 6,000 lines.
-  - Simplify concurrency locking by replacing the token-and-PID lock with a single atomic `mkdir` directory lock with stale-timeout detection.
-  - Consolidate redundant path-safety helpers across modules into a single, unified canonical normalizer.
-  - Prune CRLF execution trampolines once Git for Windows upstream runtime behavior stabilizes.
+  - Following the v1.1.0 release and feature freeze, execute a disciplined, zero-breakage consolidation across the 13,934 LOC production codebase (ADR 0003).
+  - Target a realistic ~2,300 LOC reduction (~16.6% shrinkage toward ~11,600 LOC) by eliminating defensive shadow helpers and UI boilerplate without compromising security boundaries or feature completeness.
+  - Consolidate redundant path-safety helpers, portable tilde formatting, and ASCII control character sanitizers into a single shared primitives hub in `lib/platform.sh`.
+  - Maintain the 14-module packaging boundaries required by `packaging/release.js`, `scripts/bundle.sh`, and `build_release_zip.ps1`.
+  - Preserve the multi-process atomic locking engine (`profiles.lock` directory markers, PID recycling protection, and signature verification) to prevent race conditions during concurrent execution.
+  - Retain `cmd_prompt`'s low-overhead inline independence in `gitsetu` to guarantee sub-millisecond shell prompt performance.
   - Target ≥80% statement coverage across Linux, macOS, and Windows.
 - **External SSH Agents & Resident Hardware Keys (FUT-05):**
   - Integrate native routing for 1Password (`op-ssh-sign`), Bitwarden, and Secretive SSH agent sockets.

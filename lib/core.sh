@@ -169,7 +169,7 @@ _GITSETU_REPARSE_CACHE_RESULTS=()
 _GITSETU_REPARSE_CACHE_SIZE=0
 
 _gitsetu_reparse_cache_limit() {
-    local limit="${GITSETU_REPARSE_CACHE_MAX:-256}"
+    local limit="${GITSETU_REPARSE_CACHE_MAX:-${GITSETU_SSH_REPARSE_CACHE_MAX:-256}}"
     [[ "$limit" =~ ^[0-9]+$ ]] || limit=256
     (( limit < 1 )) && limit=1
     (( limit > 1024 )) && limit=1024
@@ -180,6 +180,7 @@ _gitsetu_reparse_cache_reset() {
     _GITSETU_REPARSE_CACHE_PATHS=()
     _GITSETU_REPARSE_CACHE_RESULTS=()
     _GITSETU_REPARSE_CACHE_SIZE=0
+    _SSH_REPARSE_CACHE_SIZE=0
 }
 
 _gitsetu_reparse_cache_lookup() {
@@ -215,6 +216,7 @@ _gitsetu_reparse_cache_store() {
     _GITSETU_REPARSE_CACHE_PATHS+=("$key")
     _GITSETU_REPARSE_CACHE_RESULTS+=("$result")
     _GITSETU_REPARSE_CACHE_SIZE=${#_GITSETU_REPARSE_CACHE_PATHS[@]}
+    _SSH_REPARSE_CACHE_SIZE="$_GITSETU_REPARSE_CACHE_SIZE"
 }
 
 _gitsetu_is_reparse_point_uncached() {

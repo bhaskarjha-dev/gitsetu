@@ -108,12 +108,13 @@ test_completion_offers_guard_and_remote_flags() {
     assert_contains "$setup_flags" "--guard" "setup completion offers --guard" || return 1
     assert_contains "$setup_flags" "--no-guard" "setup completion offers --no-guard" || return 1
 
-    # Test profile add completions include --remote=
+    # Test profile add completions include --remote= and --sign=
     COMP_WORDS=(gitsetu profile add "")
     COMP_CWORD=3
     _gitsetu
     local add_flags="${COMPREPLY[*]}"
     assert_contains "$add_flags" "--remote=" "profile add completion offers --remote=" || return 1
+    assert_contains "$add_flags" "--sign=" "profile add completion offers --sign=" || return 1
 }
 
 printf '\n%btest_completion.sh%b\n' "$T_BOLD" "$T_RESET"

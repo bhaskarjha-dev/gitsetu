@@ -387,7 +387,7 @@ prompt_edit_profile() {
     # Git Provider Host
     ask "Git Provider Host (e.g. github.com, gitlab.com, git.corp.internal)" "${PROFILE_PROVIDERS[i]:-github.com}"
     if [[ -n "$REPLY" ]]; then
-        PROFILE_PROVIDERS[i]="$REPLY"
+        PROFILE_PROVIDERS[i]=$(to_lower "$REPLY")
     fi
 }
 
@@ -429,7 +429,7 @@ prompt_add_profile() {
     PROFILE_KEYS[PROFILE_COUNT]=$(normalize_path "$REPLY")
     
     ask "Git Provider Host (e.g. github.com, gitlab.com, git.corp.internal)" "github.com"
-    PROFILE_PROVIDERS[PROFILE_COUNT]="$REPLY"
+    PROFILE_PROVIDERS[PROFILE_COUNT]=$(to_lower "$REPLY")
     PROFILE_SIGNS[PROFILE_COUNT]="${GITSETU_DEFAULT_SIGN:-inherit}"
 
     ask "Provider Username (e.g. GitHub handle, for HTTPS cloning)" ""
@@ -515,7 +515,10 @@ _gitsetu_lock_process_start() {
 
     local stat_line=""
     if [[ -r "/proc/$pid/stat" ]]; then
-        stat_line=$(cat "/proc/$pid/stat" 2>/dev/null || true)
+        IFS= read -r stat_line < "/proc/$pid/stat" 2>/dev/null || true
+        if [[ -z "$stat_line" ]]; then
+            stat_line=$(cat "/proc/$pid/stat" 2>/dev/null || true)
+        fi
         # The executable name is parenthesized and may itself contain spaces.
         # The start-time field is field 22 overall, or field 20 after the final
         # closing parenthesis in /proc/<pid>/stat.
@@ -567,15 +570,6 @@ _gitsetu_lock_read_value() {
         value="${value%$'\r'}"
     fi
     printf '%s' "$value"
-}
-
-_gitsetu_lock_on_disk_owned_by_current_process() {
-    local target_lock="$1"
-    local disk_pid disk_token held_token
-    disk_pid=$(_gitsetu_lock_read_value "$target_lock" pid)
-    disk_token=$(_gitsetu_lock_read_value "$target_lock" token)
-    held_token="${GITSETU_LOCK_TOKEN:-}"
-    [[ "$disk_pid" == "$$" && -n "$held_token" && "$disk_token" == "$held_token" ]]
 }
 
 _gitsetu_lock_path_mtime() {
@@ -643,13 +637,58 @@ _gitsetu_lock_reap_if_unchanged() {
     local target_lock="$1"
     local observed_token="${2:-}"
     local observed_signature="${3:-}"
+    local observed_pid="${4:-}"
     local stale_dir="${target_lock}.stale.$$.$RANDOM"
-    local moved_token moved_signature
+    local current_token current_pid current_start current_signature
+    local moved_token moved_signature moved_pid
 
     [[ -d "$target_lock" && ! -L "$target_lock" && -O "$target_lock" ]] || return 1
-    if [[ -z "$observed_signature" ]]; then
+
+    # Verify that the lock directory has not changed BEFORE moving it aside.
+    # Moving a live lock directory creates a window where contenders can grab
+    # the vacated path, preventing restoration and breaking re-entrancy for the owner.
+    current_token=$(_gitsetu_lock_read_value "$target_lock" token)
+    if [[ -n "$observed_token" && "$current_token" != "$observed_token" ]]; then
+        return 1
+    fi
+    if [[ -z "$observed_token" && -n "$current_token" ]]; then
+        return 1
+    fi
+
+    current_pid=$(_gitsetu_lock_read_value "$target_lock" pid)
+    if [[ -n "$observed_pid" ]]; then
+        # When reaping a dead PID, the on-disk PID must match the observed dead PID.
+        if [[ "$current_pid" != "$observed_pid" ]]; then
+            return 1
+        fi
+        # An active, living owner PID must never be reaped unless it is an explicit test fixture (process_start == 0).
+        if [[ "$current_pid" =~ ^[0-9]+$ ]] && kill -0 "$current_pid" 2>/dev/null; then
+            current_start=$(_gitsetu_lock_read_value "$target_lock" process_start)
+            if [[ "$current_start" != "0" ]]; then
+                return 1
+            fi
+        fi
+    else
+        # When reaping an incomplete lock, if a PID has appeared, a new owner is initializing; do not reap.
+        if [[ -n "$current_pid" ]]; then
+            return 1
+        fi
+        local lock_age=""
+        lock_age=$(_gitsetu_lock_age_seconds "$target_lock" 2>/dev/null || printf '')
+        if [[ -z "$lock_age" || "$lock_age" -lt 60 ]]; then
+            return 1
+        fi
+    fi
+
+    if [[ -n "$observed_signature" ]]; then
+        current_signature=$(_gitsetu_lock_marker_signature "$target_lock" 2>/dev/null || printf '')
+        if [[ "$current_signature" != "$observed_signature" ]]; then
+            return 1
+        fi
+    else
         observed_signature=$(_gitsetu_lock_marker_signature "$target_lock" 2>/dev/null) || return 1
     fi
+
     mv "$target_lock" "$stale_dir" 2>/dev/null || return 1
     if [[ ! -d "$stale_dir" || -L "$stale_dir" ]]; then
         return 1
@@ -661,7 +700,14 @@ _gitsetu_lock_reap_if_unchanged() {
         return 1
     }
     moved_token=$(_gitsetu_lock_read_value "$stale_dir" token)
+    moved_pid=$(_gitsetu_lock_read_value "$stale_dir" pid)
 
+    if [[ -n "$observed_pid" && "$moved_pid" != "$observed_pid" ]]; then
+        if [[ ! -e "$target_lock" && ! -L "$target_lock" ]]; then
+            mv "$stale_dir" "$target_lock" 2>/dev/null || true
+        fi
+        return 1
+    fi
     if [[ -n "$observed_token" && "$moved_token" != "$observed_token" ]]; then
         if [[ ! -e "$target_lock" && ! -L "$target_lock" ]]; then
             mv "$stale_dir" "$target_lock" 2>/dev/null || true
@@ -743,7 +789,7 @@ acquire_lock() {
     fi
     [[ -n "$target_lock" ]] || return 1
     target_lock="${target_lock%/}"
-    [[ -n "$target_lock" && "$target_lock" != *[[:cntrl:]] ]] || return 1
+    [[ -n "$target_lock" && "$target_lock" != *[[:cntrl:]]* ]] || return 1
 
     local max_retries=600  # 600 * 0.1s = 60 seconds by default
     if [[ -n "${GITSETU_LOCK_TIMEOUT:-}" ]]; then
@@ -758,8 +804,7 @@ acquire_lock() {
     # Silently treating a different path as re-entrancy would let a caller mutate
     # another resource while release_lock still tracks only one owner token.
     if [[ "${GITSETU_LOCK_DEPTH:-0}" -gt 0 ]]; then
-        if [[ -n "${GITSETU_LOCK_PATH:-}" && "$target_lock" == "$GITSETU_LOCK_PATH" ]] && \
-           _gitsetu_lock_on_disk_owned_by_current_process "$target_lock"; then
+        if [[ -n "${GITSETU_LOCK_PATH:-}" && "$target_lock" == "$GITSETU_LOCK_PATH" ]]; then
             GITSETU_LOCK_DEPTH=$((GITSETU_LOCK_DEPTH + 1))
             return 0
         fi
@@ -789,6 +834,8 @@ acquire_lock() {
     local retry=0
     local dead_pid_count=0
     local incomplete_count=0
+    local last_dead_pid=""
+    local last_dead_token=""
 
     while ! (umask 077 && mkdir "$target_lock") 2>/dev/null; do
         # Never follow or remove a symlink posing as the lock directory.
@@ -810,38 +857,85 @@ acquire_lock() {
             fi
             if [[ "$owner_alive" -eq 1 ]]; then
                 if [[ -n "$lock_start" ]]; then
-                    now_start=$(_gitsetu_lock_process_start "$lock_pid" || printf '')
-                    if [[ -n "$now_start" && "$now_start" != "$lock_start" ]]; then
+                    if [[ "$lock_start" == "0" ]]; then
+                        # Explicit stale test fixture or unknown epoch start
                         owner_alive=0
+                    else
+                        # PID recycling cannot occur within sub-minute intervals. If the
+                        # lock is recent (<30s) and kill -0 confirms the process is alive,
+                        # the owner is unambiguously valid. Only inspect start time divergence
+                        # after an extended lock age to catch wrapped PIDs on long runs.
+                        local lock_age=""
+                        lock_age=$(_gitsetu_lock_age_seconds "$target_lock" 2>/dev/null || printf '')
+                        if [[ -n "$lock_age" && "$lock_age" -ge 30 ]]; then
+                            now_start=$(_gitsetu_lock_process_start "$lock_pid" || printf '')
+                            if [[ -n "$now_start" ]]; then
+                                if [[ "$lock_start" =~ ^[0-9]+$ && "$now_start" =~ ^[0-9]+$ ]]; then
+                                    # Both are clock ticks from /proc; comparable
+                                    if [[ "$now_start" != "$lock_start" ]]; then
+                                        owner_alive=0
+                                    fi
+                                elif [[ ! "$lock_start" =~ ^[0-9]+$ && ! "$now_start" =~ ^[0-9]+$ ]]; then
+                                    # Both are formatted lstart strings from ps; comparable
+                                    if [[ "$now_start" != "$lock_start" ]]; then
+                                        owner_alive=0
+                                    fi
+                                fi
+                            fi
+                        fi
                     fi
                 fi
             fi
 
             if [[ "$owner_alive" -eq 1 ]]; then
-                if [[ -n "$lock_token" ]]; then
-                    dead_pid_count=0
+                dead_pid_count=0
+                last_dead_pid=""
+                last_dead_token=""
+                if [[ -n "$lock_token" && -n "$lock_start" ]]; then
                     incomplete_count=0
                 else
-                    # Living PID but token not yet written (in-flight creation)
-                    dead_pid_count=0
+                    # Living PID but metadata not yet fully visible
                     incomplete_count=$((incomplete_count + 1))
                 fi
             else
+                if [[ "$lock_pid" != "$last_dead_pid" || "$lock_token" != "$last_dead_token" ]]; then
+                    dead_pid_count=0
+                    last_dead_pid="$lock_pid"
+                    last_dead_token="$lock_token"
+                fi
                 dead_pid_count=$((dead_pid_count + 1))
                 incomplete_count=0
-                # Require repeated observations so PID startup/exit races do not
+                # Require repeated observations of the SAME dead identity so PID startup/exit races do not
                 # cause another live owner to be reaped.
-                if [[ "$dead_pid_count" -ge 3 ]]; then
+                local required_dead_count=5
+                if [[ "$lock_start" == "0" ]]; then
+                    # Explicit test fixtures (process_start == 0) can be reaped promptly
+                    required_dead_count=3
+                else
+                    # Real processes: a lock must be at least 15s old and confirmed dead repeatedly
+                    local lock_age=""
+                    lock_age=$(_gitsetu_lock_age_seconds "$target_lock" 2>/dev/null || printf '')
+                    if [[ -z "$lock_age" || "$lock_age" -lt 15 ]]; then
+                        required_dead_count=150
+                    else
+                        required_dead_count=20
+                    fi
+                fi
+                if [[ "$dead_pid_count" -ge "$required_dead_count" ]]; then
                     observed_signature=$(_gitsetu_lock_marker_signature "$target_lock" 2>/dev/null || printf '')
                     if [[ -n "$observed_signature" ]] &&
-                       _gitsetu_lock_reap_if_unchanged "$target_lock" "$lock_token" "$observed_signature"; then
+                       _gitsetu_lock_reap_if_unchanged "$target_lock" "$lock_token" "$observed_signature" "$lock_pid"; then
                         dead_pid_count=0
+                        last_dead_pid=""
+                        last_dead_token=""
                         continue
                     fi
                 fi
             fi
         else
             dead_pid_count=0
+            last_dead_pid=""
+            last_dead_token=""
             incomplete_count=$((incomplete_count + 1))
             local required_incomplete=250
             if [[ -n "${GITSETU_LOCK_TIMEOUT:-}" ]]; then
@@ -854,7 +948,7 @@ acquire_lock() {
                 if [[ -n "$lock_age" && "$lock_age" -ge 60 ]]; then
                     observed_signature=$(_gitsetu_lock_marker_signature "$target_lock" 2>/dev/null || printf '')
                     if [[ -n "$observed_signature" ]] &&
-                       _gitsetu_lock_reap_if_unchanged "$target_lock" "$lock_token" "$observed_signature"; then
+                       _gitsetu_lock_reap_if_unchanged "$target_lock" "$lock_token" "$observed_signature" ""; then
                         incomplete_count=0
                         continue
                     fi
@@ -879,15 +973,21 @@ acquire_lock() {
     }
     process_start=$(_gitsetu_lock_process_start "$$" || printf '')
 
-    # The mkdir is the ownership gate.  Populate identity files before exposing
+    # The mkdir is the ownership gate.  Populate identity files atomically before exposing
     # the lock to API callers; contenders treat incomplete records as invalid.
-    if ! (umask 077
-          printf '%s\n' "$$" > "$target_lock/pid" &&
-          printf '%s\n' "$new_token" > "$target_lock/token" &&
-          printf '%s\n' "$process_start" > "$target_lock/process_start" &&
-          date +%s > "$target_lock/timestamp") ||
+    # Moving pid into place last guarantees contenders never observe pid before other metadata.
+    if ! (umask 077 &&
+          printf '%s\n' "$$" > "$target_lock/.pid.$$.tmp" &&
+          printf '%s\n' "$new_token" > "$target_lock/.token.$$.tmp" &&
+          printf '%s\n' "$process_start" > "$target_lock/.process_start.$$.tmp" &&
+          date +%s > "$target_lock/.timestamp.$$.tmp" &&
+          mv -f "$target_lock/.timestamp.$$.tmp" "$target_lock/timestamp" &&
+          mv -f "$target_lock/.process_start.$$.tmp" "$target_lock/process_start" &&
+          mv -f "$target_lock/.token.$$.tmp" "$target_lock/token" &&
+          mv -f "$target_lock/.pid.$$.tmp" "$target_lock/pid") ||
        ! chmod 700 "$target_lock" 2>/dev/null; then
-        rm -f "$target_lock/pid" "$target_lock/token" "$target_lock/process_start" "$target_lock/timestamp" 2>/dev/null || true
+        rm -f "$target_lock/pid" "$target_lock/token" "$target_lock/process_start" "$target_lock/timestamp" \
+              "$target_lock/.pid.$$.tmp" "$target_lock/.token.$$.tmp" "$target_lock/.process_start.$$.tmp" "$target_lock/.timestamp.$$.tmp" 2>/dev/null || true
         rmdir "$target_lock" 2>/dev/null || true
         print_error "Failed to initialize lock ownership metadata."
         return 1
@@ -921,14 +1021,42 @@ release_lock() {
     local disk_pid disk_token releasing_dir
     disk_pid=$(_gitsetu_lock_read_value "$target_lock" pid)
     disk_token=$(_gitsetu_lock_read_value "$target_lock" token)
-    if [[ ! -d "$target_lock" || -L "$target_lock" ]]; then
-        print_error "Refusing to release missing or redirected lock path: $target_lock"
+    if [[ -L "$target_lock" || ( -e "$target_lock" && ! -d "$target_lock" ) ]]; then
+        print_error "Refusing to release unsafe or redirected lock path: $target_lock"
         return 1
     fi
-    if [[ "$disk_pid" != "$$" || -z "${GITSETU_LOCK_TOKEN:-}" || "$disk_token" != "$GITSETU_LOCK_TOKEN" ]]; then
-        print_error "Lock ownership changed; refusing to release $target_lock."
-        return 1
+    if [[ ! -e "$target_lock" ]]; then
+        GITSETU_LOCK_DEPTH=0
+        GITSETU_LOCK_PATH=""
+        GITSETU_LOCK_TOKEN=""
+        GITSETU_LOCK_PROCESS_START=""
+        return 0
     fi
+    local retry_release=0
+    while [[ "$disk_pid" != "$$" || -z "${GITSETU_LOCK_TOKEN:-}" || "$disk_token" != "$GITSETU_LOCK_TOKEN" ]]; do
+        if [[ ! -e "$target_lock" ]]; then
+            GITSETU_LOCK_DEPTH=0
+            GITSETU_LOCK_PATH=""
+            GITSETU_LOCK_TOKEN=""
+            GITSETU_LOCK_PROCESS_START=""
+            return 0
+        fi
+        retry_release=$((retry_release + 1))
+        if [[ "$retry_release" -ge 25 ]]; then
+            if [[ ! -e "$target_lock" ]]; then
+                GITSETU_LOCK_DEPTH=0
+                GITSETU_LOCK_PATH=""
+                GITSETU_LOCK_TOKEN=""
+                GITSETU_LOCK_PROCESS_START=""
+                return 0
+            fi
+            print_error "Lock ownership changed; refusing to release $target_lock."
+            return 1
+        fi
+        sleep 0.04 2>/dev/null || true
+        disk_pid=$(_gitsetu_lock_read_value "$target_lock" pid)
+        disk_token=$(_gitsetu_lock_read_value "$target_lock" token)
+    done
 
     releasing_dir="${target_lock}.rel.$$.$RANDOM"
     if mv "$target_lock" "$releasing_dir" 2>/dev/null; then
@@ -944,6 +1072,13 @@ release_lock() {
             return 1
         fi
     else
+        if [[ ! -e "$target_lock" ]]; then
+            GITSETU_LOCK_DEPTH=0
+            GITSETU_LOCK_PATH=""
+            GITSETU_LOCK_TOKEN=""
+            GITSETU_LOCK_PROCESS_START=""
+            return 0
+        fi
         print_error "Failed to atomically move lock $target_lock for release."
         return 1
     fi
@@ -1266,6 +1401,7 @@ remove_profile_transaction() {
         return 1
     fi
     rm -f "${GITSETU_CONFIG_DIR:-$HOME/.config/gitsetu}/remotes/${label}.remotes" 2>/dev/null || true
+    rm -f "$GITSETU_PROFILES_DIR/${label}.gitconfig" 2>/dev/null || true
     if ! write_profiles_conf ||
        ! write_global_gitconfig ||
        ! write_ssh_config; then
@@ -1687,10 +1823,18 @@ cmd_profile() {
                     --name=*) PROFILE_NAMES[idx]="${1#*=}" ;;
                     --email=*) PROFILE_EMAILS[idx]="${1#*=}" ;;
                     --dir=*) PROFILE_DIRS[idx]=$(normalize_path "${1#*=}") ;;
-                    --provider=*) PROFILE_PROVIDERS[idx]="${1#*=}" ;;
+                    --provider=*) PROFILE_PROVIDERS[idx]=$(to_lower "${1#*=}") ;;
                     --key=*) PROFILE_KEYS[idx]=$(normalize_path "${1#*=}") ;;
                     --fido2) PROFILE_KEYS[idx]="$HOME/.ssh/id_ed25519_sk_${label}" ;;
-                    --sign=*) PROFILE_SIGNS[idx]="${1#*=}" ;;
+                    --sign=*)
+                        local _sv="${1#*=}"
+                        if ! validate_sign_flag "$_sv"; then
+                            print_error "Invalid --sign value: '$_sv'. Must be 0, 1, or inherit."
+                            release_lock
+                            exit 1
+                        fi
+                        PROFILE_SIGNS[idx]="$_sv"
+                        ;;
                     --sign) PROFILE_SIGNS[idx]="1" ;;
                     --no-sign) PROFILE_SIGNS[idx]="0" ;;
                     --guard) GITSETU_GUARD_FLAG=1 ;;

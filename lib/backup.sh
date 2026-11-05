@@ -278,7 +278,7 @@ _vault_copy_regular() {
     local mode="${3:-600}"
 
     [[ -f "$source_path" && ! -L "$source_path" && -r "$source_path" ]] || return 1
-    [[ "$destination_path" != *[[:cntrl:]] ]] || return 1
+    [[ "$destination_path" != *[[:cntrl:]]* ]] || return 1
     (umask 077 && cp -p "$source_path" "$destination_path") 2>/dev/null || return 1
     chmod "$mode" "$destination_path" 2>/dev/null || {
         rm -f "$destination_path" 2>/dev/null || true

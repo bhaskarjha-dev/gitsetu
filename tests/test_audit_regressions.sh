@@ -362,6 +362,156 @@ test_w07_live_git_resolution() {
 }
 
 # ==============================================================================
+# F10: cmd_status --json escapes quotes in email
+# ==============================================================================
+test_f10_status_json_escapes_email() {
+    setup_test_home
+    source_gitsetu_libs
+
+    test_v2_profile_config global "Global User" "global@example.com"
+    {
+        test_v2_registry_header
+        test_v2_registry_line global "" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_global" ""
+    } > "$GITSETU_PROFILES_CONF"
+
+    # Set an adversarial email with quotes in git config
+    git config --global user.email 'adversarial"user@example.com'
+
+    local json_output
+    json_output=$(bash "$SCRIPT_DIR/../gitsetu" status --json)
+
+    node -e "JSON.parse(process.argv[1])" "$json_output" || {
+        printf '    FAIL: JSON output failed to parse: %s\n' "$json_output"
+        return 1
+    }
+    assert_contains "$json_output" 'adversarial\"user@example.com' "quotes in email are escaped in JSON"
+}
+
+# ==============================================================================
+# F11: --provider normalizes mixed-case hostnames
+# ==============================================================================
+test_f11_provider_case_normalization() {
+    setup_test_home
+    source_gitsetu_libs
+    test_v2_profile_config global "Global User" "global@example.com"
+    {
+        test_v2_registry_header
+        test_v2_registry_line global "" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_global" ""
+    } > "$GITSETU_PROFILES_CONF"
+
+    mkdir -p "$HOME/work"
+    cmd_profile add work --email="work@example.com" --provider="GitHub.COM" --dir="$HOME/work" >/dev/null 2>&1 || {
+        printf '    FAIL: cmd_profile add rejected mixed-case provider\n'
+        return 1
+    }
+    load_profiles
+    assert_equals "github.com" "${PROFILE_PROVIDERS[1]}" "provider is normalized to lowercase"
+}
+
+# ==============================================================================
+# F12: --sign=* fails early on invalid value
+# ==============================================================================
+test_f12_sign_flag_early_validation() {
+    setup_test_home
+    source_gitsetu_libs
+    test_v2_profile_config global "Global User" "global@example.com"
+    {
+        test_v2_registry_header
+        test_v2_registry_line global "" "github.com" "0" \
+            "$HOME/.ssh/id_ed25519_global" ""
+    } > "$GITSETU_PROFILES_CONF"
+
+    local output status=0
+    output=$(cmd_profile add work --email="work@example.com" --sign="invalid_sign_val" 2>&1) || status=$?
+    assert_equals "1" "$status" "invalid --sign flag is rejected with exit 1"
+    assert_contains "$output" "Invalid --sign value" "error message specifies invalid sign flag"
+}
+
+# ==============================================================================
+# F13: discovery fallback validator accepts sign=inherit
+# ==============================================================================
+test_f13_discovery_sign_inherit_fallback() {
+    setup_test_home
+    source_gitsetu_libs
+
+    local had_fn=0
+    if declare -f validate_profile_record >/dev/null 2>&1; then
+        had_fn=1
+        eval "$(declare -f validate_profile_record | sed 's/validate_profile_record/_saved_validate_profile_record/')"
+        unset -f validate_profile_record
+    fi
+
+    PROFILE_COUNT=1
+    PROFILE_LABELS=("global")
+    PROFILE_NAMES=("Global")
+    PROFILE_EMAILS=("global@example.com")
+    PROFILE_DIRS=("")
+    PROFILE_PROVIDERS=("github.com")
+    PROFILE_SIGNS=("inherit")
+    PROFILE_KEYS=("$HOME/.ssh/id_ed25519_global")
+    PROFILE_USERS=("")
+
+    local res=0
+    validate_profile_blueprint || res=$?
+
+    if [[ "$had_fn" -eq 1 ]]; then
+        eval "$(declare -f _saved_validate_profile_record | sed 's/_saved_validate_profile_record/validate_profile_record/')"
+        unset -f _saved_validate_profile_record
+    fi
+
+    assert_equals "0" "$res" "validate_profile_blueprint fallback accepts sign=inherit"
+}
+
+# ==============================================================================
+# F01-B: GITSETU_LOCK_TIMEOUT boundary validation
+# ==============================================================================
+test_f01_b_lock_timeout_boundaries() {
+    local out status
+
+    # 0 must be rejected
+    status=0
+    out=$(GITSETU_LOCK_TIMEOUT=0 bash "$SCRIPT_DIR/../gitsetu" --version 2>&1) || status=$?
+    assert_equals "1" "$status" "GITSETU_LOCK_TIMEOUT=0 is rejected"
+    assert_contains "$out" "positive decimal integer" "diagnoses 0 as non-positive"
+
+    # negative must be rejected
+    status=0
+    out=$(GITSETU_LOCK_TIMEOUT=-5 bash "$SCRIPT_DIR/../gitsetu" --version 2>&1) || status=$?
+    assert_equals "1" "$status" "GITSETU_LOCK_TIMEOUT=-5 is rejected"
+
+    # 3601 must be rejected
+    status=0
+    out=$(GITSETU_LOCK_TIMEOUT=3601 bash "$SCRIPT_DIR/../gitsetu" --version 2>&1) || status=$?
+    assert_equals "1" "$status" "GITSETU_LOCK_TIMEOUT=3601 is rejected"
+    assert_contains "$out" "outside the supported range" "diagnoses > 3600"
+
+    # 3600 must be accepted
+    status=0
+    out=$(GITSETU_LOCK_TIMEOUT=3600 bash "$SCRIPT_DIR/../gitsetu" --version 2>&1) || status=$?
+    assert_equals "0" "$status" "GITSETU_LOCK_TIMEOUT=3600 is accepted"
+}
+
+# ==============================================================================
+# F03-B: lib/ssh.sh delegates reparse cache to lib/core.sh
+# ==============================================================================
+test_f03_b_ssh_reparse_cache_delegation() {
+    setup_test_home
+    source_gitsetu_libs
+
+    # Populate reparse cache in core
+    _gitsetu_reparse_cache_store "/test/path/a" "0"
+    assert_equals "1" "$_GITSETU_REPARSE_CACHE_SIZE" "core cache has 1 item"
+    assert_equals "1" "$_SSH_REPARSE_CACHE_SIZE" "ssh cache size is mirrored"
+
+    # Resetting via _ssh_reparse_cache_reset must reset both
+    _ssh_reparse_cache_reset
+    assert_equals "0" "$_GITSETU_REPARSE_CACHE_SIZE" "core cache size is reset"
+    assert_equals "0" "$_SSH_REPARSE_CACHE_SIZE" "ssh cache size is reset"
+}
+
+# ==============================================================================
 # Run all regression tests
 # ==============================================================================
 run_test "F01: cmd_status loads email from profile gitconfig" test_f01_status_loads_email_from_gitconfig
@@ -378,6 +528,12 @@ run_test "W03: Profile gitconfig uses portable sshCommand" test_w03_profile_port
 run_test "W04: Windows credential policy is native/broker, never plaintext" test_w04_windows_credential_helper
 run_test "W06: NTFS 644 permissions accepted under gitbash" test_w06_ntfs_permissions_handling
 run_test "W07: Live Git resolves includeIf in real repo" test_w07_live_git_resolution
+run_test "F10: cmd_status --json escapes quotes in email" test_f10_status_json_escapes_email
+run_test "F11: --provider normalizes mixed-case hostnames" test_f11_provider_case_normalization
+run_test "F12: --sign=* fails early on invalid value" test_f12_sign_flag_early_validation
+run_test "F13: discovery fallback validator accepts sign=inherit" test_f13_discovery_sign_inherit_fallback
+run_test "F01-B: GITSETU_LOCK_TIMEOUT boundary validation" test_f01_b_lock_timeout_boundaries
+run_test "F03-B: lib/ssh.sh delegates reparse cache to lib/core.sh" test_f03_b_ssh_reparse_cache_delegation
 
 print_results "Audit Regression tests"
 
