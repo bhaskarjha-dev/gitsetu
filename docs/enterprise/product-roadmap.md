@@ -16,13 +16,13 @@ Potential threat vectors include credential leakage, stale keys, unmanaged autom
 
 ---
 
-## Foundation: Completed in the v1.1.0 Release-Candidate Baseline
+## Foundation: Completed in v1.1.0
 
-The following architectural hardening milestones describe the current local release-candidate baseline. They are not timeless claims: verification is tied to a named source commit and test run, and an isolated Windows Sandbox run is environment-dependent; a run without a terminal status is inconclusive rather than a product pass:
+The following architectural hardening milestones describe the v1.1.0 release. They are not timeless claims: verification is tied to a named source commit and test run, and an isolated Windows Sandbox run is environment-dependent; a run without a terminal status is inconclusive rather than a product pass:
 - **Zero-Trust Identity Guard**: Hard pre-commit intercepts preventing dual-state leaks with longest-prefix directory matching, Windows/macOS case-insensitivity, and dynamic email re-reading.
 - **Single Source of Truth (SSOT)**: Dynamic resolution via isolated `.gitconfig` files without registry polling.
-- **Native Windows PowerShell Distribution**: Provides local-candidate `install.ps1` & `uninstall.ps1` installers, ExecutionPolicy-safe Command Prompt (`gitsetu.cmd`) shims in `%LOCALAPPDATA%\gitsetu\bin`, native compiled C# launcher (`gitsetu.exe`), and User `PATH` environment management.
-- **Package Formula Definitions**: Maintains withheld Homebrew and Scoop templates for a future intentional publication; neither is a current public package.
+- **Native Windows PowerShell Distribution**: Provides `install.ps1` & `uninstall.ps1` installers (run from a checkout), ExecutionPolicy-safe Command Prompt (`gitsetu.cmd`) shims in `%LOCALAPPDATA%\gitsetu\bin`, native compiled C# launcher (`gitsetu.exe`), and User `PATH` environment management.
+- **Package Formula Definitions**: Keeps an unpublished Homebrew template for a future intentional publication; no package-manager formula or manifest is public.
 - **Headless & Dotfiles Automation**: Scriptable, non-interactive profile provisioning via `gitsetu add` and `gitsetu profile add` backed by POSIX directory concurrency locking (`profiles.lock`).
 - **Automated Workspace Provisioning**: Auto-creates missing workspace directories (`mkdir -p`) upon profile registration, with clean unmounting and pruning on profile deletion.
 - **Multi-Profile Persistence & Re-hydration**: Preserves and re-hydrates existing profiles across multiple `gitsetu setup` runs.

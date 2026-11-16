@@ -54,20 +54,18 @@ The only prerequisite on Windows is **Git for Windows** (which provides standard
 winget install Git.Git
 # Or download directly from: https://git-scm.com/download/win
 ```
-Once Git for Windows is installed, GitSetu requires zero external runtimes (no Node.js, Python, or Go). GitSetu provides native Windows command shims (`gitsetu.cmd`, `gitsetu.ps1`, `gitsetu.exe`) so you can run all commands directly from **PowerShell**, **Command Prompt (CMD)**, **Windows Terminal**, and **VS Code**.
+Once Git for Windows is installed, the installed program needs no other runtime (no Node.js, Python, or Go). Installed with `install.ps1`, GitSetu provides `gitsetu.cmd`, backed by the native `gitsetu.exe` launcher, so you can run all commands directly from **PowerShell**, **Command Prompt (CMD)**, **Windows Terminal**, and **VS Code**.
 
-**Why is there no WinGet installation command for the release candidate?**
-The v1.1.0 WinGet manifest is deliberately withheld until an intentional
-release. `BhaskarJha.GitSetu` is reserved for that future, pinned manifest; do
-not install an unreleased or mutable package. Use `install.ps1` from a reviewed
-checkout for local testing.
+**Which package managers can install GitSetu?**
+npm (`npm install -g gitsetu`). No other package manager ships v1.1.0. Use the
+release installer in Git Bash, or `install.ps1` from a checkout of the release
+tag for PowerShell and CMD.
 
 **Does GitSetu operate properly on native Windows environments?**
-Yes! GitSetu provides first-class support for Windows. The development
-`install.ps1` path creates native command shims (`gitsetu.cmd`, `gitsetu.ps1`,
-and `gitsetu.exe`) so you can run `gitsetu` directly from **PowerShell**,
-**Command Prompt**, **Windows Terminal**, or **VS Code** — no need to open
-Git Bash. Public package-manager shims remain withheld until release.
+Yes. `install.ps1` creates the native `gitsetu.cmd` command shim, backed by
+the `gitsetu.exe` launcher, so you can run `gitsetu` directly from
+**PowerShell**, **Command Prompt**, **Windows Terminal**, or **VS Code**, with
+no need to open Git Bash.
 1. **CLI Execution**: Run `gitsetu` commands from any Windows shell — PowerShell, CMD, Git Bash, or WSL.
 2. **Native Windows Experience**: Because GitSetu compiles canonical Windows paths (`C:/path`) and case-insensitive `gitdir/i:` rules into `~/.gitconfig` and OpenSSH `~/.ssh/config`, the automatic identity switching and SSH key routing work natively everywhere across Windows—including **PowerShell**, **Command Prompt (CMD)**, **Windows Terminal**, **VS Code**, and GUI Git clients.
 3. **Git Credential Manager (GCM)**: On Windows, Git seamlessly routes HTTPS credentials to GCM, partitioned by each profile's configured username.

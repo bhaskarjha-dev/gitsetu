@@ -125,7 +125,7 @@ atomically. With no output argument, the name is
 only; older CBC/unauthenticated vaults are rejected and there is no migration
 flag.
 
-### `gitsetu restore <in_file>`
+### `gitsetu restore <in_file> [--force]`
 
 Authenticates and validates a v2 vault in private staging before changing live
 state, then performs a transactional restore. Wrong passwords, tampering,
@@ -134,6 +134,12 @@ installation. A failed transaction is rolled back when possible. If rollback
 is incomplete, the command leaves a private transaction snapshot with a
 `RECOVERY_REQUIRED` marker and reports its path; it does not create a
 plaintext recovery-password sidecar.
+
+If keys, profiles or `--remote` routes on the machine differ from the vault,
+`restore` asks before replacing them; the default answer is no, and without a
+terminal it cancels with exit status 3. `--force` replaces them without asking.
+Replaced files are kept in `~/.config/gitsetu/backups/restore-<timestamp>/`,
+and `--force` prints that path.
 
 ## System operations
 
@@ -186,7 +192,9 @@ Prints exactly the current CLI version line, `gitsetu v1.1.0`.
 |---|---|
 | `HOME` | User home directory (standard POSIX root for `.gitconfig` and `.ssh/config`). |
 | `XDG_CONFIG_HOME` | Configuration root directory (defaults to `$HOME/.config`). Profiles reside in `$XDG_CONFIG_HOME/gitsetu/`. |
-| `GITSETU_CONFIG_DIR` | Direct override for the GitSetu configuration directory (defaults to `$XDG_CONFIG_HOME/gitsetu`). |
 | `GIT_CONFIG_GLOBAL` | Overrides the target global `.gitconfig` path (useful for testing and containerized isolation). |
 | `GITSETU_VERIFY_NETWORK` | Set to `1` to allow active network probes during `gitsetu verify`. |
 | `GITSETU_ALLOW_SSH_HOST_KEY` | Set to `1` to accept new SSH host keys during network verification. |
+| `GITSETU_OS` | Overrides platform detection when it guesses wrong: `linux`, `macos`, `wsl` or `gitbash`. Any other value is treated as `unknown`. |
+| `GITSETU_VAULT_PASSWORD` | Supplies the vault password to `backup` and `restore` without a prompt; `backup` still requires at least 12 characters. It is visible to other processes of the same user, and GitSetu unsets it after reading it, so prefer the prompt. |
+| `GITSETU_LOCK_TIMEOUT` | Seconds a command waits for another GitSetu command to release the state lock: 1 to 3600, default 60. |

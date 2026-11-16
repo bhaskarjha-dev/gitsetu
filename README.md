@@ -11,7 +11,6 @@
 [![CI](https://github.com/bhaskarjha-dev/gitsetu/actions/workflows/ci.yml/badge.svg)](https://github.com/bhaskarjha-dev/gitsetu/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/github/license/bhaskarjha-dev/gitsetu?color=blue)](LICENSE)
 [![Bash 3.2+](https://img.shields.io/badge/bash-3.2%2B-orange?logo=gnubash&logoColor=white)](https://www.gnu.org/software/bash/)
-[![Tests](https://img.shields.io/badge/tests-passing-brightgreen)](#testing)
 [![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey)](#cross-platform)
 [![Website](https://img.shields.io/badge/docs-gitsetu.bhaskarjha.dev-00c4cc)](https://gitsetu.bhaskarjha.dev)
 
@@ -127,7 +126,7 @@ GitSetu is a **configuration compiler**, not a daemon. It generates rules once; 
 | **Shell Prompt** | `gitsetu prompt` returns the active profile label for `$PS1` / Starship integration |
 | **Doctor** | `gitsetu doctor` runs diagnostic checks on your entire identity infrastructure |
 | **Verify** | `gitsetu verify` checks key files, managed configuration, and effective identities; network checks are opt-in with `GITSETU_VERIFY_NETWORK=1` |
-| **Completions** | Tab completions for Bash and Zsh with dynamic profile suggestions |
+| **Completions** | Bash and Zsh tab completion with profile suggestions: `source lib/completion.sh` from a checkout or the npm package (the release installer doesn't install it) |
 
 ### Cross-Platform
 
@@ -137,44 +136,47 @@ GitSetu is a **configuration compiler**, not a daemon. It generates rules once; 
 | **SSH Keys** | ✓ | ✓ | ✓ (NTFS-aware permissions) |
 | **Credential Delegation** | libsecret | Keychain (`osxkeychain`) | Git Credential Manager |
 | **CRLF Handling** | — | — | 4-tier self-healing cascade |
-| **Installer** | `install.sh` (local release-candidate checkout) | `install.sh` (local release-candidate checkout) | `install.ps1` (local release-candidate checkout) |
+| **Installer** | Release installer or npm | Release installer or npm | Release installer in Git Bash; `install.ps1` from a checkout for PowerShell and CMD |
 
 ---
 
 ## Installation
 
-### npm (All Platforms)
-
-The npm package is a private release candidate; there is no public registry
-installation yet. Use the reviewed checkout installer instead:
+### Linux, macOS, WSL and Git Bash
 
 ```bash
-bash install.sh
+curl -fsSL https://github.com/bhaskarjha-dev/gitsetu/releases/latest/download/install.sh | bash
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
-### Linux & macOS
+The installer downloads the release's single-file `gitsetu`, checks its SHA-256 and size against the values pinned in the installer, and installs it under `~/.local/share/gitsetu`, with the `gitsetu` and `git-setu` commands in `~/.local/bin`. It needs Bash, `curl` or `wget`, and `sha256sum` or `shasum`. When the GitHub CLI is installed and logged in, it also verifies the release's build attestation.
 
-For a local release-candidate checkout, run the reviewed installer from the checkout:
+### npm (all platforms)
+
+Requires Node.js 18 or later:
 
 ```bash
-bash install.sh
+npm install -g gitsetu
 ```
 
-For a public release, use the release documentation and package manager for your platform. Do not pipe a mutable `main` URL into a shell; verify the release tag and checksum/signature first.
-
-**Package managers:**
-
-Package manager formulas (Homebrew, AUR, Nix) will be available upon official package repository publication. Use `install.sh` for current installation.
-
-### Windows
+### Windows (PowerShell and CMD)
 
 > **Prerequisite:** [Git for Windows](https://git-scm.com/download/win) (`winget install Git.Git`).
 
-Run `install.ps1` from a reviewed, pinned checkout. For a public release, prefer the published package-manager manifest and verify its hash/signature before installation.
+In Git Bash, the installer above works as on Linux. To use `gitsetu` from PowerShell and CMD, install from a checkout of the release tag:
 
-**Package managers:**
+```powershell
+git clone https://github.com/bhaskarjha-dev/gitsetu
+cd gitsetu
+git checkout v1.1.0
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
 
-Package manager manifests (WinGet, Scoop) will be available upon official package repository publication. Use `install.ps1` from a reviewed checkout for now.
+`install.ps1` builds the native launcher, creates `gitsetu.cmd` in `%LOCALAPPDATA%\gitsetu\bin`, and can add that folder to your user PATH.
+
+### From source
+
+From a clean checkout on Linux, macOS or Git Bash, `bash install.sh` builds the single-file bundle and installs it. Building the bundle needs Node.js 18 or later.
 
 > [!NOTE]
 > On Windows, once configured, automatic identity switching works natively everywhere — PowerShell, CMD, Windows Terminal, VS Code, and JetBrains IDEs. No shell hook required.
@@ -237,18 +239,13 @@ gitsetu teardown
 
 ## Why GitSetu?
 
-| | GitSetu | git-ego | karn | gitch | Manual DIY |
-|---|:---:|:---:|:---:|:---:|:---:|
-| Zero runtime dependencies | ✓ | | | | ✓ |
-| Auto-discovery setup | ✓ | | | | |
-| SSH key generation | ✓ | ~ | | ✓ | |
-| Pre-commit guard | ✓ | ~ | | ✓ | |
-| Authenticated v2 backup | ✓ | | | | |
-| Windows native support | ✓ | ~ | | | ~ |
-| Built-in doctor/verify | ✓ | | | | |
-| Shell prompt | ✓ | ✓ | | ✓ | |
+- **Native, then gone.** It writes plain Git `includeIf` rules and an OpenSSH `Include`, then exits: no daemon, no shell hook, no wrapper around `git`.
+- **Your setup keeps working.** It writes only its own files and marked blocks, so your `includeIf` rules, `Host` aliases, hooks and signing settings stay in effect.
+- **One key per identity.** An Ed25519 or FIDO2 key per profile, pinned with `IdentitiesOnly` and kept out of the SSH agent.
+- **Guard rails when you want them.** An opt-in pre-commit guard blocks commits with the wrong identity in managed repositories, and `gitsetu audit` checks existing history.
+- **Portable.** Linux, macOS (Bash 3.2), WSL and Windows (Git Bash, PowerShell, CMD), with an authenticated backup vault to move a setup between machines.
 
-See [full comparison →](docs/overview/comparisons.md)
+See [how it compares →](docs/overview/comparisons.md)
 
 ---
 

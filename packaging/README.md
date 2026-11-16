@@ -5,7 +5,7 @@
 `v1.1.0` release distribution is managed via GitHub Releases and npm.
 `packaging/release.json` is the canonical metadata specification:
 
-- GitHub Releases provides standalone binaries (`gitsetu`, `gitsetu-windows.zip`) and install scripts (`install.sh`, `install.ps1`).
+- GitHub Releases provides the standalone bundle (`gitsetu`, with `gitsetu.manifest.json`), the rendered `install.sh` and `uninstall.sh`, and `SHA256SUMS`. No PowerShell installer is published for v1.1.0: PowerShell and CMD users run `install.ps1` from a checkout of the release tag.
 - npm provides the Node.js package (`gitsetu` and `git-setu`).
 - Package manager manifests (AUR, Homebrew, Scoop, WinGet) are withheld for v1.1.0.
 
@@ -36,8 +36,8 @@ an artifact digest back into a file that is included in that artifact's hash.
 | Channel | Development checkout policy | Release source |
 |---|---|---|
 | Standalone bundle | `bash scripts/bundle.sh` | Exact artifact and digest in the detached release manifest |
-| POSIX installer | `bash install.sh --local-development` from a clean checkout | Installer, generated `release.env`, and detached manifest |
-| Windows installer | `install.ps1` from a clean checkout or release archive | Windows ZIP/launcher, generated `release.env`, and detached manifest |
+| POSIX installer | `bash install.sh --local-development` from a clean checkout | Rendered `install.sh` with the artifact URL, SHA-256 and size embedded |
+| Windows installer | `install.ps1` from a clean checkout of the release tag | Not published for v1.1.0 |
 | npm | `npm pack` / `npx` from this checkout | npm package published to npm registry |
 
 The npm command aliases are `gitsetu` and `git-setu` (the latter provides `git setu`).

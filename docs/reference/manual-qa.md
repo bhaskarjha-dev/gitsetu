@@ -41,7 +41,7 @@ bash install.sh
       `git setu --help`
 
 ### Windows (PowerShell)
-From a reviewed checkout or verified release artifact:
+From a checkout of the release tag:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
@@ -49,8 +49,8 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 - [ ] Installer completes without errors
 - [ ] `%LOCALAPPDATA%\gitsetu\` is the installation root, with `bin\` and
       `releases\`
-- [ ] `%LOCALAPPDATA%\gitsetu\bin\gitsetu.cmd` and `gitsetu.ps1` exist
-- [ ] `%LOCALAPPDATA%\gitsetu\bin\git-setu.cmd` and `git-setu.ps1` exist
+- [ ] `%LOCALAPPDATA%\gitsetu\bin` holds only `gitsetu.cmd` and `git-setu.cmd`
+      (no `.ps1` shims)
 - [ ] `%LOCALAPPDATA%\gitsetu\current.txt` points to the current versioned
       release directory
 - [ ] `gitsetu --version` prints exactly `gitsetu v1.1.0` (it does not print
@@ -241,11 +241,14 @@ printf 'protocol=https\nhost=github.com\n\n' | gitsetu credential erase
 
 ## 9. Shell Autocompletion
 
-> Verifies: TAB completion
+> Verifies: TAB completion for checkout and npm installs. The release installer installs only the single-file program, without the completion script.
 
 ```bash
-# Sourced from source checkout
+# From a source checkout:
 source lib/completion.sh
+# From the npm package:
+source "$(npm root -g)/gitsetu/lib/completion.sh"
+
 gitsetu <TAB><TAB>
 ```
 

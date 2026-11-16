@@ -18,7 +18,7 @@ jobs:
   test:
     name: Test Gate (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -39,6 +39,21 @@ jobs:
           node-version: '20.19.4'
           cache: npm
           package-manager-cache: false
+
+      - name: Put macOS's own bash, ssh and LibreSSL first on PATH
+        if: runner.os == 'macOS'
+        run: |
+          echo /bin >> "$GITHUB_PATH"
+          echo /usr/bin >> "$GITHUB_PATH"
+
+      - name: Check the macOS tools under test
+        if: runner.os == 'macOS'
+        run: |
+          test "$(command -v bash)" = /bin/bash
+          bash -c 'test "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}" = 3.2'
+          test "$(command -v ssh)" = /usr/bin/ssh
+          openssl version | grep '^LibreSSL'
+          brew list openssl@3 > /dev/null 2>&1 || brew install openssl@3
 
       - name: Install locked dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
@@ -115,7 +130,7 @@ jobs:
         run: |
           set -euo pipefail
           tag="${{ steps.vars.outputs.tag }}"
-          base_url="https://github.com/bhaskarjha-dev/gitsetu/releases/download/$tag"
+          base_url="https://github.com/${{ github.repository }}/releases/download/$tag"
           bash scripts/render_release.sh "$tag" "$base_url" dist-release
 
       - name: Attest POSIX build provenance
@@ -134,58 +149,9 @@ jobs:
           name: posix-artifacts
           path: dist-release
 
-  build-windows:
-    name: Build & Attest Windows Artifacts
-    needs: test
-    runs-on: windows-latest
-    timeout-minutes: 30
-    environment: release
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Build Windows release ZIP
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          New-Item -ItemType Directory -Force -Path dist-windows | Out-Null
-          $sourceRoot = Join-Path $env:TEMP "gitsetu-release-src"
-          if (Test-Path -LiteralPath $sourceRoot) { Remove-Item -LiteralPath $sourceRoot -Recurse -Force }
-          New-Item -ItemType Directory -Path $sourceRoot -Force | Out-Null
-          Copy-Item -LiteralPath "gitsetu" -Destination (Join-Path $sourceRoot "gitsetu")
-          Copy-Item -LiteralPath "lib" -Destination (Join-Path $sourceRoot "lib") -Recurse
-          
-          # Compile native Windows launcher
-          $launcherOut = Join-Path $env:TEMP "gitsetu-launcher-out"
-          if (Test-Path -LiteralPath $launcherOut) { Remove-Item -LiteralPath $launcherOut -Recurse -Force }
-          & .\packaging\windows\build_launcher.ps1 -OutDir $launcherOut
-          Copy-Item -LiteralPath (Join-Path $launcherOut "gitsetu.exe") -Destination (Join-Path $sourceRoot "gitsetu.exe")
-          
-          # Create zip archive
-          & .\packaging\windows\build_release_zip.ps1 -SourceDir $sourceRoot -OutFile "dist-windows\gitsetu-windows.zip"
-          Copy-Item -LiteralPath "install.ps1" -Destination "dist-windows\install.ps1"
-          Copy-Item -LiteralPath "uninstall.ps1" -Destination "dist-windows\uninstall.ps1"
-
-      - name: Attest Windows build provenance
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
-        with:
-          subject-path: |
-            dist-windows/gitsetu-windows.zip
-            dist-windows/install.ps1
-            dist-windows/uninstall.ps1
-
-      - name: Upload Windows artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: windows-artifacts
-          path: dist-windows
-
   publish-release:
     name: Publish GitHub Release
-    needs: [build-posix, build-windows]
+    needs: build-posix
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: release
@@ -196,19 +162,13 @@ jobs:
           name: posix-artifacts
           path: dist-release
 
-      - name: Download Windows artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: windows-artifacts
-          path: dist-release
-
       - name: Regenerate Unified SHA256SUMS
         shell: bash
         run: |
           set -euo pipefail
           cd dist-release
           assets=()
-          for f in gitsetu gitsetu.manifest.json gitsetu-windows.zip install.sh uninstall.sh install.ps1 uninstall.ps1; do
+          for f in gitsetu gitsetu.manifest.json install.sh uninstall.sh; do
             [[ -f "$f" ]] && assets+=("$f")
           done
           sha256sum "${assets[@]}" > SHA256SUMS
@@ -230,19 +190,39 @@ jobs:
           gh release create "$TAG" \
             gitsetu \
             gitsetu.manifest.json \
-            gitsetu-windows.zip \
             install.sh \
             uninstall.sh \
-            install.ps1 \
-            uninstall.ps1 \
             SHA256SUMS \
             --title "GitSetu $TAG" \
             --generate-notes \
             "${extra_flags[@]+"${extra_flags[@]}"}"
 
+  smoke-install:
+    name: Install the published release (${{ matrix.os }})
+    needs: [build-posix, publish-release]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: README one-line install, then the installed version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.build-posix.outputs.tag }}
+          VERSION: ${{ needs.build-posix.outputs.version }}
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/${{ github.repository }}/releases/download/$TAG/install.sh" | bash
+          "$HOME/.local/bin/gitsetu" --version | grep -Fx "gitsetu v$VERSION"
+
   publish-npm:
     name: Publish npm Package
-    needs: [publish-release, build-posix]
+    needs: [publish-release, build-posix, smoke-install]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: release
@@ -268,7 +248,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -n "${NPM_TOKEN:-}" ]]; then
-            node -e 'const fs=require("fs"); const pkg=JSON.parse(fs.readFileSync("package.json","utf8")); pkg.private=false; pkg.version=process.env.TAG_VER; fs.writeFileSync("package.json", JSON.stringify(pkg,null,2)+"\n");'
+            node -e 'const fs=require("fs"); const pkg=JSON.parse(fs.readFileSync("package.json","utf8")); pkg.private=false; pkg.version=process.env.TAG_VER; pkg.description="Run several Git identities on one machine, safely."; pkg.gitsetuRelease.state="released"; fs.writeFileSync("package.json", JSON.stringify(pkg,null,2)+"\n");'
             npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
             if [[ "$TAG_VER" == *"-"* ]]; then
               npm publish --access public --provenance --tag next

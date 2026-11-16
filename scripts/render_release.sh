@@ -69,23 +69,12 @@ echo "==> Copying uninstall.sh..."
 cp -f "$ROOT_DIR/uninstall.sh" "$OUTDIR/uninstall.sh"
 chmod 755 "$OUTDIR/uninstall.sh"
 
-# 5. Copy Windows assets if present in dist
-if [[ -f "$ROOT_DIR/dist/gitsetu-windows.zip" ]]; then
-    cp -f "$ROOT_DIR/dist/gitsetu-windows.zip" "$OUTDIR/gitsetu-windows.zip"
-fi
-if [[ -f "$ROOT_DIR/install.ps1" ]]; then
-    cp -f "$ROOT_DIR/install.ps1" "$OUTDIR/install.ps1"
-fi
-if [[ -f "$ROOT_DIR/uninstall.ps1" ]]; then
-    cp -f "$ROOT_DIR/uninstall.ps1" "$OUTDIR/uninstall.ps1"
-fi
-
-# 6. Generate bare-name SHA256SUMS
+# 5. Generate bare-name SHA256SUMS
 echo "==> Generating SHA256SUMS..."
 (
     cd "$OUTDIR"
     assets=()
-    for f in gitsetu gitsetu.manifest.json install.sh uninstall.sh gitsetu-windows.zip install.ps1 uninstall.ps1; do
+    for f in gitsetu gitsetu.manifest.json install.sh uninstall.sh; do
         [[ -f "$f" ]] && assets+=("$f")
     done
     sha256sum "${assets[@]}" > SHA256SUMS

@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016,SC2030,SC2031  # Subshell environment modifications and mock scripts are intentional.
 # tests/e2e_installed.sh — end-to-end checks of GitSetu as users run it.
 # Every case runs in its own throwaway HOME; your real ~/.gitconfig and ~/.ssh are never touched.
 # Usage: bash tests/e2e_installed.sh [--source] [case-name ...]
-#   default   install with `bash install.sh` (the README path) and run ~/.local/bin/gitsetu
+#   default   install with `bash install.sh` from a committed checkout and run ~/.local/bin/gitsetu
 #   --source  run a copy of the checkout's ./gitsetu directly (shows each defect in isolation)
 # Needs: bash, git, ssh, ssh-keygen, openssl, perl (no-TTY runs), node (scripts/bundle.sh). Tag v1.0.0 must exist
-#        (CI: actions/checkout with fetch-depth: 0). Nothing here uses the network.
+#        (CI: actions/checkout with fetch-depth: 0). Nothing here uses the network; crit15-render-install serves the
+#        rendered release assets on 127.0.0.1 only.
 set -u
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 MODE=installed
@@ -17,7 +19,9 @@ REAL_OPENSSL=$(command -v openssl) || REAL_OPENSSL=""
 command -v perl >/dev/null 2>&1 || { echo "perl is required (it ships with Git for Windows and macOS)"; exit 1; }
 git -C "$REPO" rev-parse -q --verify 'v1.0.0^{commit}' >/dev/null 2>&1 || { echo "tag v1.0.0 missing: check out with fetch-depth: 0"; exit 1; }
 ROOT=$(mktemp -d "${TMPDIR:-/tmp}/gs-e2e.XXXXXX") || exit 1   # no "gitsetu" in test paths: checks grep for it
-ROOT=$(cd "$ROOT" && (pwd -W 2>/dev/null || pwd -P))   # Windows/Git Bash: real drive path for git.exe; macOS: /private/tmp symlinks
+ROOT=$(cd "$ROOT" && pwd -P)   # macOS: /tmp and $TMPDIR sit behind symlinks, which install.sh refuses
+# Git Bash: use the /c/... form that a Git Bash user's HOME has (not the /tmp mount that cygpath -u would give, nor C:/...).
+if command -v cygpath >/dev/null 2>&1; then w=$(cd "$ROOT" && pwd -W); ROOT="/$(printf '%s' "${w%%:*}" | tr '[:upper:]' '[:lower:]')${w#?:}"; fi
 trap 'rm -rf "$ROOT"' EXIT
 PASS=0; FAIL=0; FAILED=""
 
@@ -279,7 +283,7 @@ case_crit11_interrupt() {
   export GITSETU_VAULT_PASSWORD="example-vault-password-12345"
   local vault="$T/backup.vault" why="" tool window
   must "$GS" backup "$vault" || { unset GITSETU_VAULT_PASSWORD; return; }
-  for window in "chmod:old-global" "mv:.gitsetu-restore."; do
+  for window in "chmod:old-global/" "mv:.gitsetu-restore."; do
     tool=${window%%:*}
     rm -f "$HOME/.ssh/id_ed25519_work" "$HOME/.ssh/id_ed25519_work.pub"          # newer state than the vault
     ssh-keygen -q -t ed25519 -N '' -C "rotated-$tool@example.com" -f "$HOME/.ssh/id_ed25519_work"
@@ -304,21 +308,49 @@ case_crit11_interrupt() {
   unset GITSETU_VAULT_PASSWORD
   [[ -z "$why" ]] && ok || bad "$why"
 }
-# CRIT-11 (D1 = B): vaults move between OpenSSL families, and v1.0.0 vaults import (D8 = A).
-# Fixtures in tests/fixtures/vault/: openssl3.vault (made on Linux), libressl.vault (made on a Mac with
-# /usr/bin/openssl) and, when D8 = A, v1.0.0.vault; the password in PASSWORD; each vault holds profile "work".
+# CRIT-11 (D1 = B): vaults move between OpenSSL families. Every committed fixture in tests/fixtures/vault/ (openssl3.vault,
+# made on Linux; password in PASSWORD; profile "work") restores with the local openssl, and no fixture may be a byte copy of
+# another. On macOS the case also makes a vault with /usr/bin/openssl (LibreSSL) and restores it with OpenSSL 3, and the
+# reverse; it finds OpenSSL 3 in Homebrew's openssl@3 prefix or in $GITSETU_E2E_OPENSSL3.
 case_crit11_compat() {
   bare_home crit11-compat
-  local fx="$REPO/tests/fixtures/vault" v n=0 failed=""
-  [[ -f "$fx/openssl3.vault" && -f "$fx/libressl.vault" && -f "$fx/PASSWORD" ]] || { bad "missing fixtures: tests/fixtures/vault/ needs openssl3.vault, libressl.vault and PASSWORD"; return; }
+  local fx="$REPO/tests/fixtures/vault" v w n=0 failed="" pw="example-vault-password-12345"
+  [[ -f "$fx/openssl3.vault" && -f "$fx/PASSWORD" ]] || { bad "missing fixtures: tests/fixtures/vault/ needs openssl3.vault and PASSWORD"; return; }
+  for v in "$fx"/*.vault; do for w in "$fx"/*.vault; do
+    [[ "$v" < "$w" ]] && cmp -s "$v" "$w" && { bad "$(basename "$v") and $(basename "$w") are byte-identical, so the copy proves nothing"; return; }
+  done; done
   copy_repo "$T/src"; GS="$T/src/gitsetu"
   for v in "$fx"/*.vault; do
     n=$((n+1)); export HOME="$T/h$n" XDG_CONFIG_HOME="$T/h$n/.config"; mkdir -p "$HOME"
     git config --global user.name "Pat Example"; git config --global user.email pat.personal@example.com
-    GITSETU_VAULT_PASSWORD="$(cat "$fx/PASSWORD")" notty "$GS" restore "$v" >> "$T/out" 2>&1 || failed="$failed $(basename "$v")"
+    GITSETU_VAULT_PASSWORD="$(tr -d '\r\n' < "$fx/PASSWORD")" notty "$GS" restore "$v" >> "$T/out" 2>&1 || failed="$failed $(basename "$v")"
     grep -qE 'work|%77%6F%72%6B' "$XDG_CONFIG_HOME/gitsetu/profiles.conf" 2>/dev/null || failed="$failed $(basename "$v")(no-profile)"
   done
-  [[ -z "$failed" ]] && ok || bad "fixtures that did not restore:$failed"
+  if [[ "$(uname -s)" == Darwin ]]; then
+    local o3="${GITSETU_E2E_OPENSSL3:-}" d pair a b key
+    for d in "$(brew --prefix openssl@3 2>/dev/null)/bin/openssl" /opt/homebrew/opt/openssl@3/bin/openssl /usr/local/opt/openssl@3/bin/openssl; do
+      [[ -z "$o3" && -x "$d" ]] && o3="$d"
+    done
+    /usr/bin/openssl version 2>/dev/null | grep -q '^LibreSSL' || { bad "/usr/bin/openssl is not LibreSSL: $(/usr/bin/openssl version 2>&1)"; return; }
+    [[ -n "$o3" ]] && "$o3" version 2>/dev/null | grep -q '^OpenSSL 3' || { bad "no OpenSSL 3 found (brew install openssl@3, or set GITSETU_E2E_OPENSSL3)"; return; }
+    for pair in "/usr/bin/openssl $o3" "$o3 /usr/bin/openssl"; do
+      read -r a b <<< "$pair"; n=$((n+1))
+      mkdir -p "$T/x$n/a" "$T/x$n/b"; ln -s "$a" "$T/x$n/a/openssl"; ln -s "$b" "$T/x$n/b/openssl"
+      export HOME="$T/h$n" XDG_CONFIG_HOME="$T/h$n/.config"; mkdir -p "$HOME"
+      git config --global user.name "Pat Example"; git config --global user.email pat.personal@example.com
+      if ! notty env PATH="$T/x$n/a:$PATH" "$GS" add work "Pat Example" pat.work@example.com "$HOME/work" >> "$T/out" 2>&1 ||
+         ! notty env PATH="$T/x$n/a:$PATH" GITSETU_VAULT_PASSWORD="$pw" "$GS" backup "$T/x$n.vault" >> "$T/out" 2>&1; then
+        failed="$failed backup-with-$("$a" version | cut -d' ' -f1-2 | tr ' ' '-')"; continue
+      fi
+      key=$(git hash-object "$HOME/.ssh/id_ed25519_work")
+      export HOME="$T/h$n.b" XDG_CONFIG_HOME="$T/h$n.b/.config"; mkdir -p "$HOME"
+      git config --global user.name "Pat Example"; git config --global user.email pat.personal@example.com
+      notty env PATH="$T/x$n/b:$PATH" GITSETU_VAULT_PASSWORD="$pw" "$GS" restore "$T/x$n.vault" >> "$T/out" 2>&1 &&
+        [[ "$(git hash-object "$HOME/.ssh/id_ed25519_work" 2>/dev/null)" == "$key" ]] ||
+        failed="$failed $("$a" version | cut -d' ' -f1-2 | tr ' ' '-')-vault-with-$("$b" version | cut -d' ' -f1-2 | tr ' ' '-')"
+    done
+  fi
+  [[ -z "$failed" ]] && ok || bad "vaults that did not restore:$failed"
 }
 
 # CRIT-12: v1.0.0 state keeps working after upgrading.
@@ -516,25 +548,71 @@ case_crit11_external_dir() {
   [[ $rc -eq 0 && "$(author_in "$ext/r")" == "pat.work@example.com" ]] && ok || \
     bad "restore rc=$rc ($(grep -m1 '✗' "$T/r.out" | sed 's/^ *//')); author in the external folder afterwards: $(author_in "$ext/r")"
 }
-# CRIT-15: the release assets install. Offline, the rendered installer must accept its own embedded metadata and stop
-# only at the download, both piped and run beside the assets, and the bundle must report the tag's version.
+# CRIT-15: the release assets install. The rendered assets are served over HTTPS on 127.0.0.1 with a throwaway certificate
+# (node, already required); the rendered installer must install completely, piped, run beside the assets, and beside the
+# assets with a gh that is installed but not logged in (a fake that fails `gh auth status` and logs any other call), each
+# into a fresh HOME, and the installed gitsetu must report the tag's version. Linux only (installed mode): elsewhere it
+# prints nothing, and release.yml's smoke-install job installs the published release on all three operating systems.
 case_crit15_render_install() {
-  [[ "$MODE" == "installed" ]] || return
+  [[ "$MODE" == "installed" && "$(uname -s)" == Linux ]] || return
   bare_home crit15-render-install
-  copy_repo "$T/src"
-  (cd "$T/src" && bash scripts/render_release.sh v1.1.0-rc.1 https://example.invalid/dl "$T/rel") > "$T/render.out" 2>&1 || \
-    { bad "render_release.sh failed: $(tail -n1 "$T/render.out")"; return; }
-  local piped beside ver
-  piped=$(cd "$T" && bash < "$T/rel/install.sh" 2>&1 | grep -m1 -E 'Error|error')
-  beside=$(cd "$T/rel" && bash ./install.sh 2>&1 | grep -m1 -E 'Error|error')
-  ver=$(bash "$T/rel/gitsetu" --version 2>&1 | head -n1)
-  [[ "$piped" == *"artifact download failed"* && "$beside" == *"artifact download failed"* && "$ver" == "gitsetu v1.1.0-rc.1" ]] && ok || \
-    bad "piped: '$piped'; beside the assets: '$beside'; bundle --version: '$ver' (only the download may fail offline; the version must be v1.1.0-rc.1)"
+  copy_repo "$T/src"; mkdir -p "$T/rel"
+  printf '[req]\ndistinguished_name=dn\nx509_extensions=v3\nprompt=no\n[dn]\nCN=localhost\n[v3]\nsubjectAltName=DNS:localhost,IP:127.0.0.1\nbasicConstraints=critical,CA:TRUE\n' > "$T/tls.cnf"
+  openssl req -x509 -newkey rsa:2048 -nodes -days 2 -keyout "$T/key.pem" -out "$T/cert.pem" -config "$T/tls.cnf" > /dev/null 2>&1 || \
+    { bad "could not make a test certificate with openssl req"; return; }
+  node -e 'const https=require("https"),fs=require("fs"),path=require("path");const [dir,key,cert,port]=process.argv.slice(1);
+    const s=https.createServer({key:fs.readFileSync(key),cert:fs.readFileSync(cert)},(q,r)=>{
+      const f=path.join(dir,path.basename(decodeURIComponent((q.url||"").split("?")[0])));
+      fs.readFile(f,(e,b)=>{if(e){r.writeHead(404);r.end();return;}r.writeHead(200,{"Content-Length":b.length});r.end(b);});});
+    s.listen(0,"127.0.0.1",()=>fs.writeFileSync(port,String(s.address().port)));' "$T/rel" "$T/key.pem" "$T/cert.pem" "$T/port" > "$T/server.out" 2>&1 &
+  local spid=$! i=0 port
+  while [[ ! -s "$T/port" && $i -lt 100 ]]; do sleep 0.1; i=$((i+1)); done
+  port=$(cat "$T/port" 2>/dev/null)
+  [[ -n "$port" ]] || { kill "$spid" 2>/dev/null; bad "the local HTTPS server did not start: $(head -n1 "$T/server.out")"; return; }
+  (cd "$T/src" && bash scripts/render_release.sh v1.1.0-rc.1 "https://localhost:$port/dl" "$T/rel") > "$T/render.out" 2>&1 || \
+    { kill "$spid" 2>/dev/null; bad "render_release.sh failed: $(tail -n1 "$T/render.out")"; return; }
+  mkdir -p "$T/gh"
+  printf '#!/bin/sh\ncase "$1 $2" in "auth status") exit 1;; esac\nprintf "%%s\\n" "$*" >> "%s/gh.log"\nexit 1\n' "$T" > "$T/gh/gh"; chmod +x "$T/gh/gh"
+  local how rc why=""
+  for how in piped beside gh-logged-out; do
+    ( export HOME="$T/h-$how" CURL_CA_BUNDLE="$T/cert.pem" SSL_CERT_FILE="$T/cert.pem"; unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME
+      [[ "$how" == gh-logged-out ]] && export PATH="$T/gh:$PATH"
+      mkdir -p "$HOME"
+      if [[ "$how" == piped ]]; then cd "$T" && bash < "$T/rel/install.sh"; else cd "$T/rel" && bash ./install.sh; fi ) > "$T/$how.out" 2>&1; rc=$?
+    [[ $rc -eq 0 && "$("$T/h-$how/.local/bin/gitsetu" --version 2>&1 | head -n1)" == "gitsetu v1.1.0-rc.1" ]] || \
+      why="$why $how: rc=$rc ($(grep -m1 -E 'Error|error' "$T/$how.out" | sed 's/^[[:space:]]*//'));"
+  done
+  [[ -s "$T/gh.log" ]] && why="$why the installer called gh without a login: $(head -n1 "$T/gh.log");"
+  kill "$spid" 2>/dev/null; wait "$spid" 2>/dev/null
+  [[ -z "$why" ]] && ok || bad "the rendered installer did not install v1.1.0-rc.1 from the served assets:$why"
+}
+# CRIT-17: a lock left behind by a crashed GitSetu is recovered, also when its PID now belongs to another live process
+# of the same user (PID reuse after a crash or a reboot). The case crashes an add while it holds the lock (kill -9),
+# points the stale lock at a live process and backdates it by two hours, as a reboot would leave it; the next add must
+# recover the lock and succeed. Passes at dad9ff2.
+case_crit17_stale_lock() {
+  new_home crit17-stale-lock || return
+  local lock="$XDG_STATE_HOME/gitsetu/profiles.lock" i=0 holder live rc bg
+  mkdir -p "$T/slow"; printf '#!/bin/sh\nsleep 5\nexec "%s" "$@"\n' "$(command -v ssh-keygen)" > "$T/slow/ssh-keygen"; chmod +x "$T/slow/ssh-keygen"
+  PATH="$T/slow:$PATH" perl -e 'exec @ARGV or die "exec: $!"' -- "$GS" add slow "Pat Example" pat.slow@example.com "$HOME/slow" < /dev/null >> "$T/out" 2>&1 &
+  bg=$!
+  while [[ ! -s "$lock/pid" && $i -lt 200 ]]; do sleep 0.05; i=$((i+1)); done
+  sleep 1; holder=$(cat "$lock/pid" 2>/dev/null)
+  [[ -n "$holder" ]] || { kill "$bg" 2>/dev/null; bad "add never took the lock at $lock"; return; }
+  kill -9 "$holder" 2>/dev/null; wait "$bg" 2>/dev/null
+  [[ -d "$lock" ]] || { bad "the crashed add left no lock behind, so there is nothing to recover"; return; }
+  sleep 300 & live=$!
+  printf '%s\n' "$live" > "$lock/pid"; printf '%s\n' "$(( $(date +%s) - 7200 ))" > "$lock/timestamp"
+  GITSETU_LOCK_TIMEOUT=20 notty "$GS" add next "Pat Example" pat.next@example.com "$HOME/next" >> "$T/out" 2>&1; rc=$?
+  kill "$live" 2>/dev/null; wait "$live" 2>/dev/null
+  repo "$HOME/next/r"
+  [[ $rc -eq 0 && "$(git -C "$HOME/next/r" config user.email)" == "pat.next@example.com" ]] && ok || \
+    bad "a 2-hour-old lock whose PID now belongs to a live process was not recovered: add rc=$rc ($(grep '✗' "$T/out" | tail -n1 | sed 's/^[[:space:]]*//'))"
 }
 
 CASES="crit03-quickstart crit03-add crit04-hooks crit04-prior-hookspath crit04-moved crit04-crash crit05-includeif
   crit06-run crit07-existing-key crit07-agent crit08-alias crit09-usekeychain crit10-credential crit11-vault crit11-interrupt crit11-compat
-  crit11-external-dir crit12-v1-registry crit13-installer crit13-uninstall-decline crit13-update-no-downgrade crit15-render-install
+  crit11-external-dir crit12-v1-registry crit13-installer crit13-uninstall-decline crit13-update-no-downgrade crit15-render-install crit17-stale-lock
   high01-globals high02-verify-guard high10-keyscan high11-signing high12-verify-login high13-import
   fut01-remote fut02-greeting fut04-explain"
 for c in $CASES; do

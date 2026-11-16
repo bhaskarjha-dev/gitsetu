@@ -1,51 +1,35 @@
 # Installation
 
-GitSetu is a Bash 3.2-compatible CLI with native Git and OpenSSH integration. It does not require Node.js, Python, or Go for the shell implementation. Optional credential stores and OpenSSL are detected explicitly; a feature that needs one fails clearly when it is unavailable.
+GitSetu is a Bash 3.2-compatible CLI with native Git and OpenSSH integration. The installed program needs no Node.js, Python or Go; Node.js is needed only for the npm package and for building from a checkout. Optional credential stores and OpenSSL are detected explicitly; a feature that needs one fails clearly when it is unavailable.
 
 > [!IMPORTANT]
-> GitSetu v1.1.0 is officially distributed via GitHub Releases and npm. For air-gapped or developer environments, install directly from a reviewed source checkout.
+> GitSetu v1.1.0 is distributed through GitHub Releases and npm.
 
 ---
 
-## 1. Quick Onboarding (Reviewed Checkout)
+## 1. Release Installer (Linux, macOS, WSL, Git Bash)
 
-### macOS & Linux (POSIX Bash)
-From a reviewed checkout, run:
 ```bash
-bash install.sh
+curl -fsSL https://github.com/bhaskarjha-dev/gitsetu/releases/latest/download/install.sh | bash
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
-### Windows (Native PowerShell)
-From a reviewed checkout, run:
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install.ps1
-```
+The installer downloads the release's single-file `gitsetu`, checks its SHA-256 and size against the values pinned in the installer, and installs it under `~/.local/share/gitsetu`, with the `gitsetu` and `git-setu` commands in `~/.local/bin`. It needs Bash, `curl` or `wget`, and `sha256sum` or `shasum`. When the GitHub CLI is installed and logged in, it also verifies the release's build attestation. To read the installer first, download `install.sh` from the release, review it, and run `bash install.sh`.
 
 > [!IMPORTANT]
 > **Windows prerequisite:** GitSetu requires [Git for Windows](https://git-scm.com/download/win), which provides `git.exe` and `bash.exe`.
 
-> [!TIP]
-> The PowerShell installer creates native `gitsetu.cmd` shims and can add `%LOCALAPPDATA%\gitsetu\bin` to the user `PATH`. It does not execute an unreviewed remote script through `irm | iex`.
-
-### Windows (via Git Bash)
-From the same reviewed checkout:
-```bash
-bash install.sh
-```
-
 ---
 
-## 2. Package Managers & Ecosystem Wrappers
+## 2. npm (All Platforms)
 
-### Node.js — npm & npx
-
-Install GitSetu globally via npm:
+Requires Node.js 18 or later:
 
 ```bash
 npm install -g gitsetu
 ```
 
-Or execute commands directly via npx without manual installation:
+Or run a command without installing:
 
 ```bash
 npx gitsetu status
@@ -53,7 +37,36 @@ npx gitsetu status
 
 ---
 
-## 3. Standalone Monolith Bundle
+## 3. Windows: PowerShell and CMD
+
+To use `gitsetu` from PowerShell and CMD, install from a checkout of the release tag:
+
+```powershell
+git clone https://github.com/bhaskarjha-dev/gitsetu
+cd gitsetu
+git checkout v1.1.0
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+> [!TIP]
+> The PowerShell installer builds the native launcher, creates `gitsetu.cmd` shims and can add `%LOCALAPPDATA%\gitsetu\bin` to the user `PATH`. It does not execute an unreviewed remote script through `irm | iex`.
+
+---
+
+## 4. From Source
+
+From a clean checkout on Linux, macOS or Git Bash:
+
+```bash
+bash install.sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+This builds the single-file bundle with `scripts/bundle.sh` and installs it, so it needs Node.js 18 or later. The installer refuses a checkout with uncommitted changes.
+
+---
+
+## 5. Standalone Bundle
 
 GitSetu can be compiled into a standalone, single-file executable containing all core modules:
 
@@ -62,18 +75,7 @@ make dist
 ./dist/gitsetu --version
 ```
 
-Official standalone binaries are published on [GitHub Releases](https://github.com/bhaskarjha-dev/gitsetu/releases).
-
----
-
-## 4. Manual Installation (From Source Checkout)
-
-From a cloned GitSetu repository:
-
-```bash
-bash install.sh
-export PATH="$HOME/.local/bin:$PATH"
-```
+Each [GitHub Release](https://github.com/bhaskarjha-dev/gitsetu/releases) also publishes this bundle as `gitsetu`, with `SHA256SUMS`.
 
 ---
 
@@ -127,18 +129,16 @@ gitsetu teardown --deep
 
 ### Removing Binaries & Files
 
-Use the reviewed uninstaller from the same installed release or checkout. Do not pipe a mutable remote URL into a shell.
+Use the uninstaller from the same release or checkout you installed from:
 
-- **macOS / Linux:**
+- **Release installer (macOS, Linux, WSL, Git Bash):** download `uninstall.sh` from the release, then run it:
   ```bash
+  curl -fsSLO https://github.com/bhaskarjha-dev/gitsetu/releases/latest/download/uninstall.sh
   bash uninstall.sh
   ```
-- **Windows (PowerShell):**
+- **Checkout install:** run `bash uninstall.sh` from the checkout.
+- **Windows (PowerShell), from the checkout you installed from:**
   ```powershell
   powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
   ```
-- **npm:** no public development package is installed; remove only a local tarball install with `npm uninstall -g gitsetu` if you created one.
-- **WinGet:** no public development manifest is installed.
-- **Homebrew:** no public development formula is installed.
-- **Scoop:** no public development manifest is installed.
-- **GitHub CLI:** remove only an extension you explicitly installed; the development checkout wrappers require no global extension removal.
+- **npm:** `npm uninstall -g gitsetu`.

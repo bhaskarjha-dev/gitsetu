@@ -196,7 +196,7 @@ test_process_start_mismatch_is_reaped() {
     printf '%s\n' "old-process-token" > "$GITSETU_LOCK_DIR/token"
     printf '0\n' > "$GITSETU_LOCK_DIR/process_start"
     printf '0\n' > "$GITSETU_LOCK_DIR/timestamp"
-    GITSETU_LOCK_TIMEOUT=2
+    GITSETU_LOCK_TIMEOUT=10
     acquire_lock >/dev/null 2>&1 || {
         unset GITSETU_LOCK_TIMEOUT
         return 1

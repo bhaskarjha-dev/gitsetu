@@ -344,8 +344,10 @@ elif is_test_mode; then
     EXPECTED_SIZE="$ACTUAL_SIZE"
 else
     download_file "$GITSETU_ARTIFACT_URL" "$DOWNLOAD_DIR/gitsetu" || error "Pinned GitSetu artifact download failed"
-    download_file "$GITSETU_SIGNATURE_URL" "$DOWNLOAD_DIR/gitsetu.sig" || error "Release signature download failed"
-    download_file "$GITSETU_SIGNATURE_BUNDLE_URL" "$DOWNLOAD_DIR/gitsetu.sigstore.json" || error "Release signature bundle download failed"
+    if [[ "${GITSETU_EMBEDDED_RELEASE:-0}" -ne 1 ]]; then
+        download_file "$GITSETU_SIGNATURE_URL" "$DOWNLOAD_DIR/gitsetu.sig" || error "Release signature download failed"
+        download_file "$GITSETU_SIGNATURE_BUNDLE_URL" "$DOWNLOAD_DIR/gitsetu.sigstore.json" || error "Release signature bundle download failed"
+    fi
 fi
 
 verify_file "$DOWNLOAD_DIR/gitsetu" "$EXPECTED_SHA256" || error "GitSetu artifact SHA-256 verification failed"
@@ -353,14 +355,14 @@ ACTUAL_SIZE="$(wc -c < "$DOWNLOAD_DIR/gitsetu" | tr -d '[:space:]')"
 [[ "$ACTUAL_SIZE" == "$EXPECTED_SIZE" ]] || error "GitSetu artifact size does not match release metadata"
 
 if [[ "$LOCAL_DEVELOPMENT" -eq 0 ]] && ! is_test_mode; then
-    if [[ -n "$COSIGN_TOOL" ]]; then
+    if [[ -n "$COSIGN_TOOL" && "${GITSETU_EMBEDDED_RELEASE:-0}" -ne 1 ]]; then
         "$COSIGN_TOOL" verify-blob \
             --certificate-identity "$GITSETU_CERTIFICATE_IDENTITY" \
             --certificate-oidc-issuer "$GITSETU_CERTIFICATE_OIDC_ISSUER" \
             --signature "$DOWNLOAD_DIR/gitsetu.sig" \
             --bundle "$DOWNLOAD_DIR/gitsetu.sigstore.json" \
             "$DOWNLOAD_DIR/gitsetu" >/dev/null 2>&1 || error "GitSetu artifact signature verification failed"
-    elif command -v gh >/dev/null 2>&1; then
+    elif command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
         gh attestation verify "$DOWNLOAD_DIR/gitsetu" -R bhaskarjha-dev/gitsetu >/dev/null 2>&1 || error "GitSetu artifact attestation verification failed"
     else
         printf 'Note: Provenance verification skipped (gh/cosign not installed). Verify manually with:\n'

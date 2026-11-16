@@ -639,7 +639,7 @@ _gitsetu_lock_reap_if_unchanged() {
     local observed_signature="${3:-}"
     local observed_pid="${4:-}"
     local stale_dir="${target_lock}.stale.$$.$RANDOM"
-    local current_token current_pid current_start current_signature
+    local current_token current_pid current_start current_signature live_start
     local moved_token moved_signature moved_pid
 
     [[ -d "$target_lock" && ! -L "$target_lock" && -O "$target_lock" ]] || return 1
@@ -661,10 +661,11 @@ _gitsetu_lock_reap_if_unchanged() {
         if [[ "$current_pid" != "$observed_pid" ]]; then
             return 1
         fi
-        # An active, living owner PID must never be reaped unless it is an explicit test fixture (process_start == 0).
+        # A living PID blocks reaping while it is still the process that took the lock (same start time).
         if [[ "$current_pid" =~ ^[0-9]+$ ]] && kill -0 "$current_pid" 2>/dev/null; then
             current_start=$(_gitsetu_lock_read_value "$target_lock" process_start)
-            if [[ "$current_start" != "0" ]]; then
+            live_start=$(_gitsetu_lock_process_start "$current_pid" || printf '')
+            if [[ -z "$current_start" || -z "$live_start" || "$live_start" == "$current_start" ]]; then
                 return 1
             fi
         fi
@@ -857,31 +858,16 @@ acquire_lock() {
             fi
             if [[ "$owner_alive" -eq 1 ]]; then
                 if [[ -n "$lock_start" ]]; then
-                    if [[ "$lock_start" == "0" ]]; then
-                        # Explicit stale test fixture or unknown epoch start
-                        owner_alive=0
-                    else
-                        # PID recycling cannot occur within sub-minute intervals. If the
-                        # lock is recent (<30s) and kill -0 confirms the process is alive,
-                        # the owner is unambiguously valid. Only inspect start time divergence
-                        # after an extended lock age to catch wrapped PIDs on long runs.
-                        local lock_age=""
-                        lock_age=$(_gitsetu_lock_age_seconds "$target_lock" 2>/dev/null || printf '')
-                        if [[ -n "$lock_age" && "$lock_age" -ge 30 ]]; then
-                            now_start=$(_gitsetu_lock_process_start "$lock_pid" || printf '')
-                            if [[ -n "$now_start" ]]; then
-                                if [[ "$lock_start" =~ ^[0-9]+$ && "$now_start" =~ ^[0-9]+$ ]]; then
-                                    # Both are clock ticks from /proc; comparable
-                                    if [[ "$now_start" != "$lock_start" ]]; then
-                                        owner_alive=0
-                                    fi
-                                elif [[ ! "$lock_start" =~ ^[0-9]+$ && ! "$now_start" =~ ^[0-9]+$ ]]; then
-                                    # Both are formatted lstart strings from ps; comparable
-                                    if [[ "$now_start" != "$lock_start" ]]; then
-                                        owner_alive=0
-                                    fi
-                                fi
-                            fi
+                    # PID recycling cannot occur within sub-minute intervals. If the
+                    # lock is recent (<30s) and kill -0 confirms the process is alive,
+                    # the owner is unambiguously valid. Only inspect start time divergence
+                    # after an extended lock age to catch wrapped PIDs on long runs.
+                    local lock_age=""
+                    lock_age=$(_gitsetu_lock_age_seconds "$target_lock" 2>/dev/null || printf '')
+                    if [[ -n "$lock_age" && "$lock_age" -ge 30 ]]; then
+                        now_start=$(_gitsetu_lock_process_start "$lock_pid" || printf '')
+                        if [[ -n "$now_start" && "$now_start" != "$lock_start" ]]; then
+                            owner_alive=0
                         fi
                     fi
                 fi
@@ -908,18 +894,13 @@ acquire_lock() {
                 # Require repeated observations of the SAME dead identity so PID startup/exit races do not
                 # cause another live owner to be reaped.
                 local required_dead_count=5
-                if [[ "$lock_start" == "0" ]]; then
-                    # Explicit test fixtures (process_start == 0) can be reaped promptly
-                    required_dead_count=3
+                # Real processes: a lock must be at least 15s old and confirmed dead repeatedly
+                local lock_age=""
+                lock_age=$(_gitsetu_lock_age_seconds "$target_lock" 2>/dev/null || printf '')
+                if [[ -z "$lock_age" || "$lock_age" -lt 15 ]]; then
+                    required_dead_count=150
                 else
-                    # Real processes: a lock must be at least 15s old and confirmed dead repeatedly
-                    local lock_age=""
-                    lock_age=$(_gitsetu_lock_age_seconds "$target_lock" 2>/dev/null || printf '')
-                    if [[ -z "$lock_age" || "$lock_age" -lt 15 ]]; then
-                        required_dead_count=150
-                    else
-                        required_dead_count=20
-                    fi
+                    required_dead_count=20
                 fi
                 if [[ "$dead_pid_count" -ge "$required_dead_count" ]]; then
                     observed_signature=$(_gitsetu_lock_marker_signature "$target_lock" 2>/dev/null || printf '')

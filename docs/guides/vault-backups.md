@@ -39,6 +39,12 @@ directory. The command asks for a new password twice and requires at least 12
 characters. Passwords are not written to a sidecar file or passed to OpenSSL in
 command-line arguments. An existing output path is not overwritten.
 
+For scripts, `GITSETU_VAULT_PASSWORD` supplies the password instead of the
+prompt, for both `backup` and `restore`; `backup` still requires at least 12
+characters. Environment variables are visible to other processes of the same
+user, so GitSetu unsets the variable as soon as it has read it. Prefer the
+prompt when you can.
+
 With no `out_file` argument, the output name is:
 
 ```text
@@ -76,6 +82,29 @@ incomplete, GitSetu leaves a private transaction directory containing a
 `RECOVERY_REQUIRED` marker and reports its path for manual review. It does not
 create a pre-restore vault/password sidecar in the caller's working directory.
 
+### When the target already has GitSetu state
+
+If keys, profiles or `--remote` routes on the target differ from the vault,
+`restore` asks before replacing them, and the default answer is no. Without a
+terminal (scripts, CI, agents) it cancels with exit status 3 and changes
+nothing. Pass `--force` to replace them without asking:
+
+```bash
+gitsetu restore /path/to/gitsetu_vault_YYYYMMDD_HHMMSS.gitsetu-v2.vault --force
+```
+
+A restore keeps the files it replaced (the managed Git and SSH configuration,
+the keys and the profile registry) in a private folder,
+`~/.config/gitsetu/backups/restore-<timestamp>/`, or under `$XDG_CONFIG_HOME`
+when it is set. With `--force`, it prints that folder's path.
+
+### Profile folders and keys
+
+Profile folders inside the source machine's home move to the same place under
+the target's home. Folders outside it (a second drive such as `D:\code`,
+`/Volumes/...` or `/data/...`) keep their absolute path. Keys must live under
+`~/.ssh`; `backup` refuses a key outside it.
+
 ## Format and compatibility
 
 The v2 envelope contains a version marker, KDF parameters, random salts/IV
@@ -84,14 +113,13 @@ ciphertext. The implementation uses the OpenSSL primitives available on
 supported systems and separates encryption and authentication keys. Unsupported
 or older vault formats are rejected rather than silently accepted.
 
-The profile registry is also versioned and strictly escaped. Old
-colon-delimited registries are rejected; there is no compatibility reader or
-transitional flag.
+The profile registry inside a vault is also versioned and strictly escaped. A
+vault that carries an old colon-delimited registry is rejected.
 
 On Git for Windows, the npm launcher canonicalizes equivalent MSYS (`/c/...`)
 and Windows (`C:/...`) representations of `HOME`, `XDG_CONFIG_HOME`, and
 managed state paths before creating or restoring a vault. The default managed
 state remains under the user's `.config/gitsetu` (or an explicit
 `XDG_CONFIG_HOME`), not the `%LOCALAPPDATA%` installation directory. The
-manifest records a single canonical source home, and paths outside the managed
-home boundary are rejected rather than silently remapped.
+manifest records a single canonical source home; see "Profile folders and keys"
+for how paths inside and outside it are restored.

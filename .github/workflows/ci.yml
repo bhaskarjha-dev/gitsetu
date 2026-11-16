@@ -81,6 +81,21 @@ jobs:
           cache: npm
           package-manager-cache: false
 
+      - name: Put macOS's own bash, ssh and LibreSSL first on PATH
+        if: runner.os == 'macOS'
+        run: |
+          echo /bin >> "$GITHUB_PATH"
+          echo /usr/bin >> "$GITHUB_PATH"
+
+      - name: Check the macOS tools under test
+        if: runner.os == 'macOS'
+        run: |
+          test "$(command -v bash)" = /bin/bash
+          bash -c 'test "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}" = 3.2'
+          test "$(command -v ssh)" = /usr/bin/ssh
+          openssl version | grep '^LibreSSL'
+          brew list openssl@3 > /dev/null 2>&1 || brew install openssl@3
+
       - name: Install locked npm metadata
         run: npm ci --ignore-scripts --no-audit --no-fund
 
