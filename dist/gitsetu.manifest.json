@@ -3,9 +3,9 @@
   "name": "gitsetu",
   "version": "1.1.0",
   "releaseState": "development",
-  "sourceCommit": "db1e37f229dbb35a4b6b93e6c6b32688dc8c629c",
+  "sourceCommit": "0f8787af0875c9ee29449b2e17c86bd3b22cc582",
   "sourceDirty": "clean",
-  "bundleSha256": "5b9b5ae2119c9b06b62b23628376a72e65e01ccaa5581feefab39edb92c8a1fe",
+  "bundleSha256": "c2494afb4398eb88f6d4f78f3035b80c49ebd90af1818c119080c99451a115a9",
   "modules": [
     {
       "path": "lib/core.sh",

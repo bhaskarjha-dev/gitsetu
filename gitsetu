@@ -806,7 +806,8 @@ trap 'gitsetu_signal_cleanup 143' TERM
 # Usage / Help text
 # ------------------------------------------------------------------------------
 show_help() {
-    cat >&2 <<EOF
+    local help_text
+    help_text=$(cat <<EOF
 ${BOLD}gitsetu${RESET} v${GITSETU_VERSION} — One command. All identities. Every machine.
 
 ${BOLD}USAGE${RESET}
@@ -866,6 +867,8 @@ ${BOLD}SECURITY POLICY${RESET}
 ${BOLD}MORE INFO${RESET}
     https://github.com/bhaskarjha-dev/gitsetu
 EOF
+)
+    printf >&2 '%b\n' "$help_text"
 }
 
 show_version() {
