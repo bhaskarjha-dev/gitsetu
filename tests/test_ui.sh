@@ -113,6 +113,22 @@ test_print_key_box_provider_urls() {
     rm -f "$dummy_key"
 }
 
+test_ui_functions_do_not_leak_literal_ansi_escapes() {
+    local out
+    out=$(
+        setup_colors
+        print_header 2>&1
+        print_section "Test Section" 2>&1
+        print_step "Test Step" 2>&1
+        print_success "Test Success" 2>&1
+        print_warning "Test Warning" 2>&1
+        print_error "Test Error" 2>&1
+        print_info "Test Info" 2>&1
+    )
+    assert_not_contains "$out" '\033[' "UI helper functions do not emit literal backslash escape sequences" || return 1
+    assert_not_contains "$out" '\e[' "UI helper functions do not emit literal \e escape sequences" || return 1
+}
+
 printf '\n%btest_ui.sh%b\n' "$T_BOLD" "$T_RESET"
 run_test "terminal controls are escaped to inert text" test_escape_terminal_text_is_inert
 run_test "UI output functions sanitize hostile messages" test_print_functions_escape_control_bytes
@@ -121,5 +137,6 @@ run_test "choice prompt handles EOF without spinning" test_choice_prompt_eof_ret
 run_test "password entry preserves whitespace and restores termios" test_password_preserves_whitespace_and_restores_termios
 run_test "confirmation defaults are deterministic" test_confirmation_defaults_are_explicit
 run_test "print_key_box adapts URL by provider" test_print_key_box_provider_urls
+run_test "UI helper functions do not leak uninterpreted ANSI escapes" test_ui_functions_do_not_leak_literal_ansi_escapes
 print_results "UI tests"
 

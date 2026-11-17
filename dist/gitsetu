@@ -8481,7 +8481,10 @@ _guard_validate_effective_identity() {
 
 _guard_block_identity() {
     local label="$1"
-    local red='\033[0;31m' green='\033[0;32m' bold='\033[1m' reset='\033[0m'
+    local red="${RED:-}" green="${GREEN:-}" bold="${BOLD:-}" reset="${RESET:-}"
+    if [[ -z "$red" && -z "${NO_COLOR:-}" && -z "${GITSETU_NO_COLOR:-}" && "${TERM:-dumb}" != "dumb" && -t 2 ]]; then
+        red='\033[0;31m'; green='\033[0;32m'; bold='\033[1m'; reset='\033[0m'
+    fi
     local exp_origin="${GUARD_EXPECTED_ORIGIN:+ (from ${GUARD_EXPECTED_ORIGIN})}"
     local act_name_origin="${GUARD_ACTUAL_NAME_ORIGIN:+ (from ${GUARD_ACTUAL_NAME_ORIGIN})}"
     local act_email_origin="${GUARD_ACTUAL_EMAIL_ORIGIN:+ (from ${GUARD_ACTUAL_EMAIL_ORIGIN})}"
@@ -8499,9 +8502,13 @@ _guard_block_identity() {
 }
 
 _guard_block_unknown_managed_state() {
-    printf '\n  %bGitSetu Guard: BLOCKING COMMIT%b\n' '\033[0;31m' '\033[0m' >&2
+    local red="${RED:-}" bold="${BOLD:-}" reset="${RESET:-}"
+    if [[ -z "$red" && -z "${NO_COLOR:-}" && -z "${GITSETU_NO_COLOR:-}" && "${TERM:-dumb}" != "dumb" && -t 2 ]]; then
+        red='\033[0;31m'; bold='\033[1m'; reset='\033[0m'
+    fi
+    printf '\n  %bGitSetu Guard: BLOCKING COMMIT%b\n' "$red" "$reset" >&2
     printf '  Managed identity state is missing or invalid, so this repository cannot be classified safely.\n' >&2
-    printf '  Run %bgitsetu doctor%b; use --no-verify only if you independently verified the identity.\n' '\033[1m' '\033[0m' >&2
+    printf '  Run %bgitsetu doctor%b; use --no-verify only if you independently verified the identity.\n' "$bold" "$reset" >&2
     exit 65
 }
 

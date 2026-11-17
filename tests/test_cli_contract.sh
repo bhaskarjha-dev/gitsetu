@@ -229,6 +229,16 @@ test_profile_global_removal_is_rejected() {
     assert_cli_contains "global" "global-profile rejection identifies the profile"
 }
 
+test_no_command_leaks_uninterpreted_ansi_escapes() {
+    contract_home
+    local cmd
+    for cmd in "--help" "-h" "help" "--version" "-v" "status" "doctor" "prompt" "verify"; do
+        invoke_cli "$cmd"
+        assert_not_contains "$CLI_OUTPUT" '\033[' "$cmd does not leak literal \033[ escape sequences"
+        assert_not_contains "$CLI_OUTPUT" '\e[' "$cmd does not leak literal \e[ escape sequences"
+    done
+}
+
 printf '\n%btest_cli_contract.sh%b\n' "$T_BOLD" "$T_RESET"
 run_test "no arguments non-TTY usage" test_no_args_non_tty_is_usage_success
 run_test "help aliases and arity" test_help_aliases_and_extra_arguments
@@ -242,4 +252,5 @@ run_test "doctor status verify empty state" test_doctor_unknown_option_and_statu
 run_test "remove and prompt empty state" test_remove_and_prompt_empty_state_contracts
 run_test "profile remove force rejected" test_profile_remove_rejects_force_flag
 run_test "global profile removal rejected" test_profile_global_removal_is_rejected
+run_test "CLI commands do not leak uninterpreted ANSI escapes" test_no_command_leaks_uninterpreted_ansi_escapes
 print_results "CLI contract tests"
