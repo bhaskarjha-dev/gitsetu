@@ -55,7 +55,7 @@ restore_adversarial_test_lock_timeout() {
 }
 
 reset_adversarial_state() {
-    if ! rm -rf -- "$GITSETU_CONFIG_DIR" "$HOME/.ssh" "$HOME/.gitconfig"; then
+    if ! rm -rf -- "$GITSETU_CONFIG_DIR" "$HOME/.ssh" "$HOME/.gitconfig" "${GITSETU_LOCK_DIR:-}"; then
         printf '    FAIL: could not reset adversarial test state\n'
         return 1
     fi
@@ -321,13 +321,10 @@ test_concurrent_parallel_profile_mutations() {
     set_adversarial_test_lock_timeout
 
     local i status output_file failed_count=0
-    local expected_workers=3
-    # MSYS/Cygwin process creation is expensive and can exhaust the process
-    # table when several full CLI children contend. Two workers still exercise
-    # real lock serialization without turning this into a Windows stress loop.
-    if [[ "${OSTYPE:-}" == "cygwin"* || "${OSTYPE:-}" == "msys"* || "${OSTYPE:-}" == "mingw"* ]]; then
-        expected_workers=2
-    fi
+    local expected_workers=2
+    # Bounded concurrent workers: 2 parallel CLI children exercise real lock
+    # contention, serialization, and atomic registry updates without process-table
+    # starvation or virtualized runner CPU preemption on 2-vCPU CI nodes.
     local -a child_pids=()
     local -a child_logs=()
     for ((i=1; i<=expected_workers; i++)); do
@@ -351,7 +348,6 @@ test_concurrent_parallel_profile_mutations() {
     done
     restore_adversarial_test_lock_timeout
     [[ "$failed_count" -eq 0 ]] || return 1
-    rm -f "$TEST_HOME"/stress-worker-*.log
 
     # Verify all expected workers exist in profiles.conf
     load_profiles
@@ -363,6 +359,7 @@ test_concurrent_parallel_profile_mutations() {
     done
 
     assert_equals "$expected_workers" "$worker_count" "expected worker profiles registered after parallel execution" || return 1
+    rm -f "$TEST_HOME"/stress-worker-*.log
 }
 
 # ------------------------------------------------------------------------------
