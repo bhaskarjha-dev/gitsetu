@@ -404,7 +404,10 @@ if (child.error) {
   fail(`Failed to execute GitSetu: ${child.error.message}`);
 }
 if (child.signal) {
-  const signalNumbers = { SIGHUP: 1, SIGINT: 2, SIGQUIT: 3, SIGTERM: 15 };
+  if (child.signal === 'SIGPIPE') {
+    process.exit(0);
+  }
+  const signalNumbers = { SIGHUP: 1, SIGINT: 2, SIGQUIT: 3, SIGPIPE: 13, SIGTERM: 15 };
   process.exit(128 + (signalNumbers[child.signal] || 1));
 }
 process.exit(child.status === null ? 1 : child.status);

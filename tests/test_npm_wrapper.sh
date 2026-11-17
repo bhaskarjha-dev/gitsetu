@@ -65,10 +65,11 @@ else
 fi
 
 # 3. Test node bin/gitsetu.js --help
-if GITSETU_NPM_TEST_MODE=1 node "$REPO_DIR/bin/gitsetu.js" --help 2>&1 | grep -q "USAGE"; then
+help_out=$(GITSETU_NPM_TEST_MODE=1 node "$REPO_DIR/bin/gitsetu.js" --help 2>&1 || true)
+if echo "$help_out" | grep -q "USAGE"; then
     pass "node bin/gitsetu.js --help renders help menu"
 else
-    fail "node bin/gitsetu.js --help" "failed to render USAGE header"
+    fail "node bin/gitsetu.js --help" "failed to render USAGE header; output was '$help_out'"
 fi
 
 # 4. Test exit code forwarding for unknown command
