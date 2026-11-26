@@ -97,9 +97,42 @@ test_update_never_downgrades_when_only_older_tags_exist() {
     [[ "$current_rev" != "v1.0.0" ]]
 }
 
+test_update_handles_rc_only_tags_and_prerelease_semver() {
+    source_gitsetu_libs
+    _gitsetu_version_ge "1.1.0" "1.1.0-rc.1" || return 1
+    if _gitsetu_version_ge "1.1.0-rc.1" "1.1.0"; then
+        printf '    FAIL: prerelease 1.1.0-rc.1 must be less than final 1.1.0\n'
+        return 1
+    fi
+    _gitsetu_version_ge "1.10.0" "1.2.0" || return 1
+
+    local remote_repo="$HOME/remote-rc-only"
+    local checkout="$HOME/checkout-rc-only" output rc=0
+    rm -rf "$remote_repo" "$checkout"
+    git init -q --bare "$remote_repo"
+    create_checkout "$checkout"
+    git -C "$checkout" remote add origin "$remote_repo"
+    git -C "$checkout" tag v1.1.0-rc.1
+    git -C "$checkout" push -q origin master:master --tags 2>/dev/null || git -C "$checkout" push -q origin main:main --tags
+
+    output=$(bash "$checkout/gitsetu" update 2>&1) || rc=$?
+    assert_equals "0" "$rc" "update exits 0 cleanly when only prerelease tags exist" || return 1
+    assert_contains "$output" "already up to date (v1.1.0-rc.1)" "reports RC-only repo status without grep failure" || return 1
+
+    # Untagged commit on 1.1.0 dev must treat 1.1.0 >= 1.1.0-rc.1 as current (never downgrade to RC)
+    printf 'ahead\n' >> "$checkout/extra.txt"
+    git -C "$checkout" add extra.txt
+    git -C "$checkout" commit -q -m "ahead of rc"
+    rc=0
+    output=$(bash "$checkout/gitsetu" update 2>&1) || rc=$?
+    assert_equals "0" "$rc" "update exits 0 cleanly when 1.1.0 is ahead of v1.1.0-rc.1" || return 1
+    assert_contains "$output" "is current" "1.1.0 is never downgraded to v1.1.0-rc.1" || return 1
+}
+
 printf '\n%btest_update.sh%b\n' "$T_BOLD" "$T_RESET"
 run_test "update rejects extra arguments" test_update_rejects_extra_arguments
 run_test "dirty checkout refuses update without mutation" test_dirty_git_checkout_is_refused
 run_test "clean checkout updates to highest release tag" test_clean_git_checkout_updates_to_highest_tag
 run_test "update never downgrades when only older tags exist" test_update_never_downgrades_when_only_older_tags_exist
+run_test "update handles RC-only tags and prerelease semver ordering" test_update_handles_rc_only_tags_and_prerelease_semver
 print_results "Updater tests"

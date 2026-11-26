@@ -553,6 +553,25 @@ test_source_staging_ignores_caller_directories() {
         "caller-controlled directories receive no source staging files" || return 1
 }
 
+test_crlf_trampoline_clean_stderr_and_stdin_passthrough() {
+    local repo_dir crlf_exe
+    repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    crlf_exe="$repo_dir/.gitsetu_crlf_stderr_test"
+    sed -e 's/$/\r/' "$repo_dir/gitsetu" > "$crlf_exe"
+    chmod +x "$crlf_exe"
+
+    local err_file="$TEST_HOME/crlf.err" rc=0
+    bash "$crlf_exe" --version >/dev/null 2>"$err_file" || rc=$?
+    assert_equals "0" "$rc" "CRLF entrypoint exits 0" || { rm -f "$crlf_exe" "$err_file"; return 1; }
+    assert_not_contains "$(cat "$err_file")" "command not found" "CRLF trampoline emits zero blank-line CR errors on stderr" || { rm -f "$crlf_exe" "$err_file"; return 1; }
+
+    # Piped stdin reaches child process (not redirected to /dev/null by backgrounded &)
+    rc=0
+    printf 'protocol=https\nhost=github.com\n\n' | bash "$crlf_exe" credential get >/dev/null 2>"$err_file" || rc=$?
+    rm -f "$crlf_exe" "$err_file"
+    assert_equals "0" "$rc" "CRLF trampoline preserves piped stdin into child process" || return 1
+}
+
 # --- Run ---
 
 printf '\n%btest_crlf.sh%b\n' "$T_BOLD" "$T_RESET"
@@ -577,6 +596,7 @@ run_test "update rejects unrecognized flag" test_update_rejects_unrecognized_fla
 run_test "CRLF trampoline preserves exit code" test_crlf_trampoline_preserves_exit_code
 run_test "unsafe inherited numeric values fail closed" test_crlf_rejects_unsafe_inherited_numbers
 run_test "read-only install path uses private CRLF runtime" test_crlf_read_only_install_uses_private_runtime
+run_test "CRLF trampoline has clean stderr and preserves piped stdin" test_crlf_trampoline_clean_stderr_and_stdin_passthrough
 
 teardown_test_home
 print_results "CRLF & Platform Robustness tests"

@@ -172,6 +172,32 @@ test_status_json_output() {
     assert_contains "$output" '"active": false' "json reports inactive outside workspace" || return 1
 }
 
+test_status_porcelain_single_quoted_key_and_json_escape() {
+    local repo_dir="$TEST_HOME/repos/quote\"tab"$'\t'"dir"
+    mkdir -p "$repo_dir"
+    git -C "$repo_dir" init -q
+    git -C "$repo_dir" config user.name "Quote User"
+    git -C "$repo_dir" config user.email 'quote@example.com'
+    git -C "$repo_dir" config core.sshCommand "ssh -o IdentitiesOnly=yes -i '/home/o'\''reilly/my keys/id_ed25519'"
+
+    local porcelain_out rc=0
+    porcelain_out=$(cd "$repo_dir" && bash "$GITSETU_EXE" status --porcelain) || rc=$?
+    assert_equals "0" "$rc" "status --porcelain exits 0" || return 1
+    assert_contains "$porcelain_out" "key=/home/o'reilly/my keys/id_ed25519" "porcelain unquotes single-quoted key with spaces and apostrophe" || return 1
+
+    local json_out=""
+    rc=0
+    json_out=$(cd "$repo_dir" && bash "$GITSETU_EXE" status --json) || rc=$?
+    assert_equals "0" "$rc" "status --json exits 0 on special chars" || return 1
+    if command -v node >/dev/null 2>&1; then
+        printf '%s' "$json_out" | node -e "const d = JSON.parse(require('fs').readFileSync(0,'utf8')); if (!d.directory.includes('\"') || !d.directory.includes('\t')) process.exit(1);" || {
+            printf '    FAIL: status --json did not properly escape quotes and tabs\n'
+            return 1
+        }
+    fi
+    rm -rf "$repo_dir"
+}
+
 # ------------------------------------------------------------------------------
 # Run all tests
 # ------------------------------------------------------------------------------
@@ -182,4 +208,5 @@ run_test "cmd_status reports local core.hooksPath override policy" test_status_r
 run_test "cmd_status displays profiles and active checkmark" test_status_displays_profiles_and_active_check
 run_test "cmd_status displays configured global profile" test_status_global_profile_display
 run_test "cmd_status --json produces structured telemetry" test_status_json_output
+run_test "cmd_status --porcelain unquotes single-quoted keys and --json escapes control chars" test_status_porcelain_single_quoted_key_and_json_escape
 print_results "Status tests"

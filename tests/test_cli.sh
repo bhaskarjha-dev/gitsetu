@@ -243,6 +243,74 @@ test_cli_audit_command() {
     assert_contains "$output" "git commit --amend --reset-author" "audit provides fix command" || return 1
 }
 
+test_cli_run_sign_inherit_isolation_and_bad_config_count() {
+    rm -rf "$GITSETU_CONFIG_DIR" "$HOME/.ssh" "$HOME/.gitconfig" "$HOME/signed_dir" "$HOME/inherit_dir"
+    mkdir -p "$GITSETU_PROFILES_DIR" "$HOME/.ssh" "$HOME/signed_dir/repo" "$HOME/inherit_dir"
+    chmod 700 "$HOME/.ssh"
+    ssh-keygen -q -t ed25519 -N '' -f "$HOME/.ssh/id_ed25519_global"
+    ssh-keygen -q -t ed25519 -N '' -f "$HOME/.ssh/id_ed25519_signed"
+    ssh-keygen -q -t ed25519 -N '' -f "$HOME/.ssh/id_ed25519_inherited"
+    PROFILE_COUNT=3
+    PROFILE_LABELS=(global signed inherited)
+    PROFILE_NAMES=("Global User" "Signed User" "Inherit User")
+    PROFILE_EMAILS=(global@example.com signed@example.com inherit@example.com)
+    PROFILE_DIRS=("" "$HOME/signed_dir" "$HOME/inherit_dir")
+    PROFILE_PROVIDERS=(github.com github.com github.com)
+    PROFILE_SIGNS=(0 1 inherit)
+    PROFILE_KEYS=("$HOME/.ssh/id_ed25519_global" "$HOME/.ssh/id_ed25519_signed" "$HOME/.ssh/id_ed25519_inherited")
+    PROFILE_USERS=("" "" "")
+    PROFILE_PATS=("" "" "")
+    GITSETU_DRY_RUN=0
+    write_profiles_conf >/dev/null
+    write_global_gitconfig >/dev/null
+    git -C "$HOME/signed_dir/repo" init -q
+
+    # Non-numeric GIT_CONFIG_COUNT must be rejected cleanly
+    local out rc=0
+    out=$(GIT_CONFIG_COUNT=abc bash "$GITSETU_EXE" run inherited -- true 2>&1) || rc=$?
+    assert_equals "1" "$rc" "invalid GIT_CONFIG_COUNT fails closed" || return 1
+    assert_contains "$out" "GIT_CONFIG_COUNT must be a canonical non-negative decimal integer" "reports invalid GIT_CONFIG_COUNT" || return 1
+
+    # Running sign=inherit profile inside a sign=1 directory must resolve global signing (false), not leak signed_dir's true
+    rc=0
+    out=$(cd "$HOME/signed_dir/repo" && bash "$GITSETU_EXE" run inherited -- git config --bool commit.gpgsign 2>&1) || rc=$?
+    assert_equals "0" "$rc" "run inherited exits 0 inside signed directory" || return 1
+    assert_equals "false" "$out" "sign=inherit resolves global.gitconfig signing without leaking ambient directory signing" || return 1
+}
+
+test_cli_fresh_add_with_existing_ssh_key_and_transactional_remove() {
+    export GIT_CONFIG_SYSTEM=/dev/null
+    export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
+    rm -rf "$GITSETU_CONFIG_DIR" "$HOME/.gitconfig" "$HOME/.ssh" "$HOME/work" "$HOME/extra"
+    mkdir -p "$HOME/.ssh" "$HOME/work" "$HOME/extra"
+    chmod 700 "$HOME/.ssh"
+    printf '[user]\n\tname = Global User\n\temail = global@example.com\n' > "$HOME/.gitconfig"
+    # Pre-seed an existing work key with email in .pub comment (auto-discovered on fresh machine)
+    ssh-keygen -q -t ed25519 -C "work@corp.com" -N '' -f "$HOME/.ssh/id_ed25519_work"
+
+    # Missing --remote argument must fail cleanly
+    local out rc=0
+    out=$(bash "$GITSETU_EXE" profile add extra --name="Extra" --email="extra@example.com" --dir="$HOME/extra" --remote 2>&1) || rc=$?
+    assert_equals "1" "$rc" "profile add --remote without value fails cleanly" || return 1
+
+    # Fresh machine add with auto-discovered work key (whose name was initially empty) must succeed
+    rc=0
+    out=$(bash "$GITSETU_EXE" profile add extra --name="Extra User" --email="extra@example.com" --dir="$HOME/extra" --remote="git@github.com:extra-org/*" 2>&1) || rc=$?
+    assert_equals "0" "$rc" "profile add succeeds on fresh machine with pre-existing work SSH key" || {
+        printf '%s\n' "$out" >&2
+        return 1
+    }
+    assert_file_exists "$GITSETU_PROFILES_DIR/extra.gitconfig" "extra profile gitconfig created" || return 1
+    assert_file_exists "$GITSETU_CONFIG_DIR/remotes/extra.remotes" "extra profile remotes created" || return 1
+
+    # Removing extra must delete both extra.gitconfig and extra.remotes
+    rc=0
+    out=$(bash "$GITSETU_EXE" remove extra --force 2>&1) || rc=$?
+    assert_equals "0" "$rc" "gitsetu remove extra --force succeeds" || return 1
+    assert_file_not_exists "$GITSETU_PROFILES_DIR/extra.gitconfig" "remove deletes profile gitconfig" || return 1
+    assert_file_not_exists "$GITSETU_CONFIG_DIR/remotes/extra.remotes" "remove deletes profile remotes file" || return 1
+}
+
 printf '\n%btest_cli.sh%b\n' "$T_BOLD" "$T_RESET"
 run_test "no arguments shows help" test_cli_no_args_shows_help
 run_test "invalid command caught" test_cli_invalid_command
@@ -257,4 +325,6 @@ run_test "run uses the strict external v2 key field" test_cli_run_uses_strict_ex
 run_test "run never defaults a missing v2 key path" test_cli_run_missing_key_never_defaults
 run_test "sequential headless add handles the empty global directory" test_cli_sequential_headless_add_with_empty_global_directory
 run_test "gitsetu audit checks retrospective commit history" test_cli_audit_command
+run_test "run isolates sign=inherit from ambient directory and validates GIT_CONFIG_COUNT" test_cli_run_sign_inherit_isolation_and_bad_config_count
+run_test "fresh profile add handles pre-existing SSH keys and remove cleans profile files" test_cli_fresh_add_with_existing_ssh_key_and_transactional_remove
 print_results "CLI tests"
