@@ -173,11 +173,16 @@ test_status_json_output() {
 }
 
 test_status_porcelain_single_quoted_key_and_json_escape() {
+    local is_windows=0
     local repo_dir="$TEST_HOME/repos/quote\"tab"$'\t'"dir"
+    if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* || "${OSTYPE:-}" == mingw* ]]; then
+        is_windows=1
+        repo_dir="$TEST_HOME/repos/quote tab dir"
+    fi
     mkdir -p "$repo_dir"
     git -C "$repo_dir" init -q
     git -C "$repo_dir" config user.name "Quote User"
-    git -C "$repo_dir" config user.email 'quote@example.com'
+    git -C "$repo_dir" config user.email $'quote"tab\tuser@example.com'
     git -C "$repo_dir" config core.sshCommand "ssh -o IdentitiesOnly=yes -i '/home/o'\''reilly/my keys/id_ed25519'"
 
     local porcelain_out rc=0
@@ -190,7 +195,11 @@ test_status_porcelain_single_quoted_key_and_json_escape() {
     json_out=$(cd "$repo_dir" && bash "$GITSETU_EXE" status --json) || rc=$?
     assert_equals "0" "$rc" "status --json exits 0 on special chars" || return 1
     if command -v node >/dev/null 2>&1; then
-        printf '%s' "$json_out" | node -e "const d = JSON.parse(require('fs').readFileSync(0,'utf8')); if (!d.directory.includes('\"') || !d.directory.includes('\t')) process.exit(1);" || {
+        printf '%s' "$json_out" | is_win="$is_windows" node -e "
+const d = JSON.parse(require('fs').readFileSync(0,'utf8'));
+if (!d.actual_email.includes('\"') || !d.actual_email.includes('\t')) process.exit(1);
+if (process.env.is_win !== '1' && (!d.directory.includes('\"') || !d.directory.includes('\t'))) process.exit(1);
+" || {
             printf '    FAIL: status --json did not properly escape quotes and tabs\n'
             return 1
         }

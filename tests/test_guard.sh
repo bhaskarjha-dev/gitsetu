@@ -399,6 +399,7 @@ test_guard_stub_quotes_entrypoint_and_preserves_profiles_named_hooks() {
     # shellcheck disable=SC2016
     assert_contains "$stub" "ENTRYPOINT='/tmp/bad \"path\" \$(touch /tmp/pwn)/gitsetu'" "entrypoint is safely single-quoted in stub" || return 1
     assert_not_contains "$stub" '*gitsetu*|*profiles*' "stub does not drop user hooks paths containing profiles" || return 1
+    assert_contains "$stub" "_gitsetu_stub_canon_dir" "stub canonicalizes Windows and symlink paths" || return 1
 }
 
 printf '\n%btest_guard.sh%b\n' "$T_BOLD" "$T_RESET"

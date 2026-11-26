@@ -347,13 +347,16 @@ if ($usingTestMode) {
         }
         if ($config["GITSETU_WINDOWS_ZIP_SHA256"] -notmatch '^[0-9a-f]{64}$') { Stop-Install "Windows SHA-256 pin is invalid" }
         if ($config["GITSETU_WINDOWS_ZIP_SIZE"] -notmatch '^[1-9][0-9]*$') { Stop-Install "Windows artifact size is invalid" }
-        if (-not $config["GITSETU_WINDOWS_SIGNATURE_URL"] -or -not $config["GITSETU_WINDOWS_SIGNATURE_BUNDLE_URL"] -or -not $config["GITSETU_CERTIFICATE_IDENTITY"]) {
+        if (-not $config["GITSETU_WINDOWS_SIGNATURE_BUNDLE_URL"] -or -not $config["GITSETU_CERTIFICATE_IDENTITY"]) {
             Stop-Install "Windows artifact signature metadata is required"
         }
         $artifactBase = $config["GITSETU_WINDOWS_ZIP_URL"].Substring(0, $config["GITSETU_WINDOWS_ZIP_URL"].LastIndexOf("/") + 1)
-        if (-not $config["GITSETU_WINDOWS_SIGNATURE_URL"].StartsWith($artifactBase, [StringComparison]::Ordinal) -or
-            -not $config["GITSETU_WINDOWS_SIGNATURE_BUNDLE_URL"].StartsWith($artifactBase, [StringComparison]::Ordinal)) {
-            Stop-Install "Windows signature URLs are not pinned beside the artifact"
+        if ($config["GITSETU_WINDOWS_SIGNATURE_URL"] -and
+            -not $config["GITSETU_WINDOWS_SIGNATURE_URL"].StartsWith($artifactBase, [StringComparison]::Ordinal)) {
+            Stop-Install "Windows signature URL is not pinned beside the artifact"
+        }
+        if (-not $config["GITSETU_WINDOWS_SIGNATURE_BUNDLE_URL"].StartsWith($artifactBase, [StringComparison]::Ordinal)) {
+            Stop-Install "Windows signature bundle URL is not pinned beside the artifact"
         }
         if (-not $config["GITSETU_CERTIFICATE_IDENTITY"].StartsWith("https://github.com/bhaskarjha-dev/gitsetu/", [StringComparison]::Ordinal)) {
             Stop-Install "Windows signature identity is outside the GitSetu repository"
@@ -447,8 +450,12 @@ try {
         $expectedSize = (Get-Item -LiteralPath $artifactFile -Force).Length
     } else {
         Invoke-WebRequest -UseBasicParsing -Uri $artifactPath -OutFile $artifactFile -MaximumRedirection 3
-        Invoke-WebRequest -UseBasicParsing -Uri $config["GITSETU_WINDOWS_SIGNATURE_URL"] -OutFile (Join-Path $tempRoot "gitsetu.zip.sig")
-        Invoke-WebRequest -UseBasicParsing -Uri $config["GITSETU_WINDOWS_SIGNATURE_BUNDLE_URL"] -OutFile (Join-Path $tempRoot "gitsetu.zip.sigstore.json")
+        $sigFile = Join-Path $tempRoot "gitsetu.zip.sig"
+        $bundleFile = Join-Path $tempRoot "gitsetu.zip.sigstore.json"
+        if ($config["GITSETU_WINDOWS_SIGNATURE_URL"]) {
+            Invoke-WebRequest -UseBasicParsing -Uri $config["GITSETU_WINDOWS_SIGNATURE_URL"] -OutFile $sigFile
+        }
+        Invoke-WebRequest -UseBasicParsing -Uri $config["GITSETU_WINDOWS_SIGNATURE_BUNDLE_URL"] -OutFile $bundleFile
 
         $programFiles = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
         $cosignCandidates = @(
@@ -467,16 +474,21 @@ try {
         if ($cosign) {
             Assert-NoReparsePath $cosign
             Test-TrustedOwner $cosign
-            & $cosign verify-blob `
-                --certificate-identity $config["GITSETU_CERTIFICATE_IDENTITY"] `
-                --certificate-oidc-issuer $config["GITSETU_CERTIFICATE_OIDC_ISSUER"] `
-                --signature (Join-Path $tempRoot "gitsetu.zip.sig") `
-                --bundle (Join-Path $tempRoot "gitsetu.zip.sigstore.json") `
-                $artifactFile
+            $cosignArgs = @(
+                "verify-blob",
+                "--certificate-identity", $config["GITSETU_CERTIFICATE_IDENTITY"],
+                "--certificate-oidc-issuer", $config["GITSETU_CERTIFICATE_OIDC_ISSUER"],
+                "--bundle", $bundleFile
+            )
+            if ($config["GITSETU_WINDOWS_SIGNATURE_URL"] -and (Test-Path -LiteralPath $sigFile -PathType Leaf)) {
+                $cosignArgs += @("--signature", $sigFile)
+            }
+            $cosignArgs += $artifactFile
+            & $cosign @cosignArgs
             if ($LASTEXITCODE -ne 0) { Stop-Install "Windows artifact signature verification failed" }
         } elseif ((Get-Command gh -ErrorAction SilentlyContinue) -and
-            (& { gh attestation verify --help 2>&1 | Out-Null; $LASTEXITCODE -eq 0 }) -and
-            (& { gh auth status --hostname github.com 2>&1 | Out-Null; $LASTEXITCODE -eq 0 })) {
+            (& { gh auth status --hostname github.com 2>&1 | Out-Null; $LASTEXITCODE -eq 0 }) -and
+            (& { gh attestation verify --help 2>&1 | Out-Null; $LASTEXITCODE -eq 0 })) {
             gh attestation verify $artifactFile -R bhaskarjha-dev/gitsetu
             if ($LASTEXITCODE -ne 0) { Stop-Install "Windows artifact attestation verification failed" }
         } else {

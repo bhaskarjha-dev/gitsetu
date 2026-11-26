@@ -303,23 +303,16 @@ test_repair_rolls_back_partial_config_write() {
     assert_contains "$output" "rolled back" "repair reports rollback" || return 1
 }
 
-test_repair_preserves_symlink_repairs_guard_stubs_and_is_idempotent_with_agent() {
+test_repair_restores_guard_stubs_and_is_idempotent_with_agent() {
     setup_valid_gitsetu_environment
-    mkdir -p "$HOME/dotfiles"
-    mv "$HOME/.gitconfig" "$HOME/dotfiles/.gitconfig"
-    ln -s "$HOME/dotfiles/.gitconfig" "$HOME/.gitconfig"
     install_guard >/dev/null 2>&1 || return 1
     rm -f "$GITSETU_HOOKS_DIR/pre-merge-commit"
     unset SSH_AUTH_SOCK
 
     local output rc=0
     output=$(run_doctor_repair 2>&1) || rc=$?
-    assert_equals "0" "$rc" "repair succeeds with symlinked gitconfig and missing guard stub" || return 1
+    assert_equals "0" "$rc" "repair succeeds with missing guard stub" || return 1
     assert_file_exists "$GITSETU_HOOKS_DIR/pre-merge-commit" "repair restores missing guard hook stub" || return 1
-    if [[ ! -L "$HOME/.gitconfig" ]]; then
-        printf '    FAIL: repair replaced ~/.gitconfig symlink\n'
-        return 1
-    fi
 
     # With SSH_AUTH_SOCK set and only PROFILE_KEYS[0] registered, repair should be idempotent
     local global_fp
@@ -339,6 +332,49 @@ test_repair_preserves_symlink_repairs_guard_stubs_and_is_idempotent_with_agent()
     unset SSH_AUTH_SOCK
     assert_equals "0" "$rc" "idempotent agent repair exits 0" || return 1
     assert_contains "$output" "Nothing to repair" "multi-profile repair is idempotent when global key is loaded" || return 1
+
+    # Guard repair failure rolls back regenerated hooks
+    rm -f "$GITSETU_HOOKS_DIR/pre-merge-commit"
+    export SSH_AUTH_SOCK="/tmp/mock_agent_sock_rollback"
+    rc=0
+    output=$(
+        ssh-add() {
+            if [[ "${1:-}" == "-l" ]]; then
+                return 1
+            fi
+            return 0
+        }
+        auto_register_ssh_keys() { return 1; }
+        printf '%s\n' "# stale" > "$GITSETU_HOOKS_DIR/pre-commit"
+        run_doctor_repair 2>&1
+    ) || rc=$?
+    unset SSH_AUTH_SOCK
+    assert_equals "1" "$rc" "failed post-guard step fails repair" || return 1
+    assert_file_not_exists "$GITSETU_HOOKS_DIR/pre-merge-commit" "guard rollback restores missing stub state" || return 1
+    assert_file_contains "$GITSETU_HOOKS_DIR/pre-commit" "# stale" "guard rollback restores prior stub content" || return 1
+}
+
+test_repair_preserves_symlink() {
+    setup_valid_gitsetu_environment
+    mkdir -p "$HOME/dotfiles"
+    mv "$HOME/.gitconfig" "$HOME/dotfiles/.gitconfig"
+    if ! ln -s "$HOME/dotfiles/.gitconfig" "$HOME/.gitconfig" 2>/dev/null || [[ ! -L "$HOME/.gitconfig" ]]; then
+        rm -rf "$HOME/dotfiles" "$HOME/.gitconfig"
+        skip_test "doctor repair preserves ~/.gitconfig symlink" "symlink creation is unavailable"
+        return 0
+    fi
+    install_guard >/dev/null 2>&1 || return 1
+    rm -f "$GITSETU_HOOKS_DIR/pre-merge-commit"
+    unset SSH_AUTH_SOCK
+
+    local output rc=0
+    output=$(run_doctor_repair 2>&1) || rc=$?
+    assert_equals "0" "$rc" "repair succeeds with symlinked gitconfig and missing guard stub" || return 1
+    assert_file_exists "$GITSETU_HOOKS_DIR/pre-merge-commit" "repair restores missing guard hook stub under symlinked gitconfig" || return 1
+    if [[ ! -L "$HOME/.gitconfig" ]]; then
+        printf '    FAIL: repair replaced ~/.gitconfig symlink\n'
+        return 1
+    fi
     rm -rf "$HOME/dotfiles" "$HOME/.gitconfig"
 }
 
@@ -356,5 +392,6 @@ run_test "CLI gitsetu doctor --repair --dry-run makes 0 mutations" test_cli_doct
 run_test "doctor diagnostics footer conditionally suggests --repair" test_run_doctor_suggests_repair_on_broken
 run_test "doctor repair rolls back partial config writes" test_repair_rolls_back_partial_config_write
 run_test "repair planner invokes SSH writer for corrupt SSH state" test_repair_planner_invokes_ssh_writer_for_corrupt_ssh_state
-run_test "doctor repair preserves symlink, restores guard stubs, and is idempotent with ssh-agent" test_repair_preserves_symlink_repairs_guard_stubs_and_is_idempotent_with_agent
+run_test "doctor repair restores guard stubs, rolls back partial guard writes, and is idempotent with agent" test_repair_restores_guard_stubs_and_is_idempotent_with_agent
+run_test "doctor repair preserves ~/.gitconfig symlink" test_repair_preserves_symlink
 print_results "Doctor Repair tests"

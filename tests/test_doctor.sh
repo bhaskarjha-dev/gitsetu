@@ -341,6 +341,30 @@ test_cmd_explain_tab_origin_and_remote_precedence() {
     assert_contains "$out" "global (file:" "explain formats scope and file cleanly without tab mangling" || return 1
 }
 
+test_cmd_import_deactivates_and_sees_post_managed_blocks() {
+    rm -rf "$GITSETU_CONFIG_DIR" "$HOME/.ssh" "$HOME/.gitconfig" "$HOME/post_client"
+    mkdir -p "$HOME/post_client"
+    cat <<'EOF' > "$HOME/.gitconfig"
+# [gitsetu:managed:start]
+# Managed
+# [gitsetu:managed:end]
+[includeIf "gitdir:~/post_client/"]
+    path = .gitconfig-post
+EOF
+    cat <<'EOF' > "$HOME/.gitconfig-post"
+[user]
+    name = Post Client
+    email = post@client.example
+EOF
+
+    local out rc=0
+    out=$(cmd_import --yes 2>&1) || rc=$?
+    assert_equals "0" "$rc" "cmd_import exits 0 with post-managed block" || return 1
+    assert_contains "$out" "Successfully imported 1 profile(s)." "imports block located after managed:end" || return 1
+    assert_file_contains "$HOME/.gitconfig" "# [imported-by-gitsetu] [includeIf" "adopted unmanaged block is deactivated" || return 1
+    rm -rf "$HOME/post_client" "$HOME/.gitconfig" "$HOME/.gitconfig-post"
+}
+
 test_cmd_import_preserves_symlink_deactivates_and_sees_post_managed_blocks() {
     rm -rf "$GITSETU_CONFIG_DIR" "$HOME/.ssh" "$HOME/.gitconfig" "$HOME/dotfiles" "$HOME/post_client"
     mkdir -p "$HOME/dotfiles" "$HOME/post_client"
@@ -356,7 +380,11 @@ EOF
     name = Post Client
     email = post@client.example
 EOF
-    ln -s "$HOME/dotfiles/.gitconfig" "$HOME/.gitconfig"
+    if ! ln -s "$HOME/dotfiles/.gitconfig" "$HOME/.gitconfig" 2>/dev/null || [[ ! -L "$HOME/.gitconfig" ]]; then
+        rm -rf "$HOME/dotfiles" "$HOME/post_client" "$HOME/.gitconfig"
+        skip_test "import preserves ~/.gitconfig symlink" "symlink creation is unavailable"
+        return 0
+    fi
 
     local out rc=0
     out=$(cmd_import --yes 2>&1) || rc=$?
@@ -385,5 +413,6 @@ run_test "doctor repair cleans legacy global hookspath" test_doctor_repair_clean
 run_test "doctor --json CLI produces parseable JSON on corrupted registry" test_doctor_json_cli_corrupted_registry
 run_test "doctor handles custom XDG_CONFIG_HOME and doctor --json checks ssh_config & keys" test_doctor_custom_xdg_and_json_integrity
 run_test "explain formats tab-split origin and matches non-origin remote overrides" test_cmd_explain_tab_origin_and_remote_precedence
+run_test "import resolves relative paths, deactivates blocks, and sees post-managed blocks" test_cmd_import_deactivates_and_sees_post_managed_blocks
 run_test "import preserves ~/.gitconfig symlink, resolves relative paths, and deactivates adopted blocks" test_cmd_import_preserves_symlink_deactivates_and_sees_post_managed_blocks
 print_results "Doctor tests"

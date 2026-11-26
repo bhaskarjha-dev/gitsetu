@@ -59,7 +59,7 @@ done
 
 load_release_config() {
     if [[ "${GITSETU_EMBEDDED_RELEASE:-0}" -eq 1 ]]; then
-        [[ "$GITSETU_RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]] || error "Invalid GitSetu release version metadata"
+        [[ "$GITSETU_RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || error "Invalid GitSetu release version metadata"
         [[ -n "$GITSETU_ARTIFACT_SHA256" ]] || error "GitSetu artifact sha256 metadata is missing"
         return 0
     fi
@@ -153,7 +153,8 @@ else
         if [[ "${GITSETU_EMBEDDED_RELEASE:-0}" -ne 1 ]]; then
             [[ "$GITSETU_RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || error "Release commit pin is missing or invalid"
             [[ "$GITSETU_ARTIFACT_URL" == "https://github.com/bhaskarjha-dev/gitsetu/releases/download/${GITSETU_RELEASE_TAG}/"* ]] || error "Artifact URL is not pinned to the immutable GitSetu release"
-            [[ "$GITSETU_SIGNATURE_URL" == "${GITSETU_ARTIFACT_URL%/*}/"* && "$GITSETU_SIGNATURE_BUNDLE_URL" == "${GITSETU_ARTIFACT_URL%/*}/"* ]] || error "Signature URLs are not pinned beside the artifact"
+            [[ -z "$GITSETU_SIGNATURE_URL" || "$GITSETU_SIGNATURE_URL" == "${GITSETU_ARTIFACT_URL%/*}/"* ]] || error "Signature URL is not pinned beside the artifact"
+            [[ "$GITSETU_SIGNATURE_BUNDLE_URL" == "${GITSETU_ARTIFACT_URL%/*}/"* ]] || error "Signature bundle URL is not pinned beside the artifact"
             [[ "$GITSETU_CERTIFICATE_IDENTITY" == https://github.com/bhaskarjha-dev/gitsetu/* ]] || error "Signature certificate identity is outside the GitSetu repository"
         fi
         ARTIFACT_FILE="$GITSETU_ARTIFACT_URL"
@@ -257,9 +258,10 @@ assert_no_symlink_components() {
 }
 
 if [[ "$LOCAL_DEVELOPMENT" -eq 1 ]]; then
+    script_root="$(cd -P "$SCRIPT_DIR" && (pwd -W 2>/dev/null || pwd))"
     checkout_root="$(GIT_OPTIONAL_LOCKS=0 GIT_TERMINAL_PROMPT=0 "$GIT_TOOL" -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)" || error "--local-development must be run from a Git checkout"
-    checkout_root="$(cd -P "$checkout_root" && pwd)"
-    [[ "$checkout_root" == "$SCRIPT_DIR" ]] || error "Installer is not at the root of the reviewed Git checkout"
+    checkout_root="$(cd -P "$checkout_root" && (pwd -W 2>/dev/null || pwd))"
+    [[ "$checkout_root" == "$script_root" ]] || error "Installer is not at the root of the reviewed Git checkout"
     checkout_status="$(GIT_OPTIONAL_LOCKS=0 GIT_TERMINAL_PROMPT=0 "$GIT_TOOL" -C "$SCRIPT_DIR" status --porcelain=v1 --untracked-files=all)"
     [[ -z "$checkout_status" ]] || error "Local-development installation refuses a dirty Git checkout"
     [[ -f "$SCRIPT_DIR/scripts/bundle.sh" ]] || error "Local-development bundler is missing"
@@ -345,7 +347,9 @@ elif is_test_mode; then
 else
     download_file "$GITSETU_ARTIFACT_URL" "$DOWNLOAD_DIR/gitsetu" || error "Pinned GitSetu artifact download failed"
     if [[ "${GITSETU_EMBEDDED_RELEASE:-0}" -ne 1 ]]; then
-        download_file "$GITSETU_SIGNATURE_URL" "$DOWNLOAD_DIR/gitsetu.sig" || error "Release signature download failed"
+        if [[ -n "$GITSETU_SIGNATURE_URL" ]]; then
+            download_file "$GITSETU_SIGNATURE_URL" "$DOWNLOAD_DIR/gitsetu.sig" || error "Release signature download failed"
+        fi
         download_file "$GITSETU_SIGNATURE_BUNDLE_URL" "$DOWNLOAD_DIR/gitsetu.sigstore.json" || error "Release signature bundle download failed"
     fi
 fi
@@ -357,15 +361,20 @@ ACTUAL_SIZE="$(wc -c < "$DOWNLOAD_DIR/gitsetu" | tr -d '[:space:]')"
 PROVENANCE_SKIPPED=0
 if [[ "$LOCAL_DEVELOPMENT" -eq 0 ]] && ! is_test_mode; then
     if [[ -n "$COSIGN_TOOL" && "${GITSETU_EMBEDDED_RELEASE:-0}" -ne 1 ]]; then
-        "$COSIGN_TOOL" verify-blob \
-            --certificate-identity "$GITSETU_CERTIFICATE_IDENTITY" \
-            --certificate-oidc-issuer "$GITSETU_CERTIFICATE_OIDC_ISSUER" \
-            --signature "$DOWNLOAD_DIR/gitsetu.sig" \
-            --bundle "$DOWNLOAD_DIR/gitsetu.sigstore.json" \
+        cosign_args=(
+            verify-blob
+            --certificate-identity "$GITSETU_CERTIFICATE_IDENTITY"
+            --certificate-oidc-issuer "$GITSETU_CERTIFICATE_OIDC_ISSUER"
+            --bundle "$DOWNLOAD_DIR/gitsetu.sigstore.json"
+        )
+        if [[ -n "$GITSETU_SIGNATURE_URL" && -f "$DOWNLOAD_DIR/gitsetu.sig" ]]; then
+            cosign_args+=(--signature "$DOWNLOAD_DIR/gitsetu.sig")
+        fi
+        "$COSIGN_TOOL" "${cosign_args[@]}" \
             "$DOWNLOAD_DIR/gitsetu" >/dev/null 2>&1 || error "GitSetu artifact signature verification failed"
     elif command -v gh >/dev/null 2>&1 &&
-         gh attestation verify --help >/dev/null 2>&1 &&
-         gh auth status --hostname github.com >/dev/null 2>&1; then
+         gh auth status --hostname github.com >/dev/null 2>&1 &&
+         gh attestation verify --help >/dev/null 2>&1; then
         gh attestation verify "$DOWNLOAD_DIR/gitsetu" -R bhaskarjha-dev/gitsetu >/dev/null || error "GitSetu artifact attestation verification failed"
     else
         PROVENANCE_SKIPPED=1

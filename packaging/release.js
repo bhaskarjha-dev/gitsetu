@@ -67,7 +67,7 @@ function validateArtifact(name, artifact, manifest) {
   const url = requireString(artifact.url, `artifacts.${name}.url`);
   const digest = requireString(artifact.sha256, `artifacts.${name}.sha256`);
   const size = artifact.size;
-  const signatureUrl = requireString(artifact.signatureUrl, `artifacts.${name}.signatureUrl`);
+  const signatureUrl = artifact.signatureUrl ? requireString(artifact.signatureUrl, `artifacts.${name}.signatureUrl`) : '';
   const signatureBundleUrl = requireString(artifact.signatureBundleUrl, `artifacts.${name}.signatureBundleUrl`);
   const certificateIdentity = requireString(artifact.certificateIdentity, `artifacts.${name}.certificateIdentity`);
 
@@ -77,7 +77,9 @@ function validateArtifact(name, artifact, manifest) {
 
   const tag = manifest.release.tag;
   const expectedPrefix = `${manifest.sourceRepository}/releases/download/${tag}/`;
-  for (const [field, value] of [['url', url], ['signatureUrl', signatureUrl], ['signatureBundleUrl', signatureBundleUrl]]) {
+  const pinnedUrls = [['url', url], ['signatureBundleUrl', signatureBundleUrl]];
+  if (signatureUrl) pinnedUrls.push(['signatureUrl', signatureUrl]);
+  for (const [field, value] of pinnedUrls) {
     if (!value.startsWith(expectedPrefix) || !value.startsWith('https://')) {
       fail(`artifacts.${name}.${field} must use the immutable ${tag} release URL`);
     }
@@ -157,7 +159,7 @@ function envText(manifest) {
     `GITSETU_WINDOWS_ZIP_URL=${released ? manifest.artifacts.windowsZip.url : ''}`,
     `GITSETU_WINDOWS_ZIP_SHA256=${released ? manifest.artifacts.windowsZip.sha256 : ''}`,
     `GITSETU_WINDOWS_ZIP_SIZE=${released ? manifest.artifacts.windowsZip.size : ''}`,
-    `GITSETU_WINDOWS_SIGNATURE_URL=${released ? manifest.artifacts.windowsZip.signatureUrl : ''}`,
+    `GITSETU_WINDOWS_SIGNATURE_URL=${released ? (manifest.artifacts.windowsZip.signatureUrl || '') : ''}`,
     `GITSETU_WINDOWS_SIGNATURE_BUNDLE_URL=${released ? manifest.artifacts.windowsZip.signatureBundleUrl : ''}`
   ];
   return `${lines.join('\n')}\n`;

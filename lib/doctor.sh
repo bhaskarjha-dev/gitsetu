@@ -1014,6 +1014,33 @@ run_doctor_repair() {
             return 1
         fi
     fi
+    if [[ "$guard_stubs_need_repair" -eq 1 ]]; then
+        local snap_guard_ok=1 snap_item
+        if [[ -L "$GITSETU_HOOKS_DIR" || -L "$GITSETU_PROFILES_DIR" ]]; then
+            snap_guard_ok=0
+        else
+            _doctor_snapshot_file "$GITSETU_PROFILES_CONF" || snap_guard_ok=0
+            _doctor_snapshot_file "$GITSETU_HOOKS_DIR/enabled" || snap_guard_ok=0
+            _doctor_snapshot_file "$GITSETU_HOOKS_DIR/entrypoint" || snap_guard_ok=0
+            for snap_item in "${GITSETU_GUARD_HOOK_NAMES[@]}"; do
+                [[ "$snap_guard_ok" -eq 1 ]] || break
+                _doctor_snapshot_file "$GITSETU_HOOKS_DIR/$snap_item" || snap_guard_ok=0
+            done
+            for snap_item in "$GITSETU_PROFILES_DIR"/*.gitconfig; do
+                [[ -f "$snap_item" ]] || continue
+                [[ "$snap_guard_ok" -eq 1 ]] || break
+                _doctor_snapshot_file "$snap_item" || snap_guard_ok=0
+            done
+        fi
+        if [[ "$snap_guard_ok" -ne 1 ]]; then
+            print_error "Unable to create guard rollback snapshots; repair was not started."
+            _doctor_discard_rollbacks
+            _doctor_restore_traps
+            release_lock || true
+            lock_held=0
+            return 1
+        fi
+    fi
 
     if [[ "$v1_registry_needs_repair" -eq 1 ]]; then
         print_step "Migrating legacy v1.0.0 profile registry to v2..."

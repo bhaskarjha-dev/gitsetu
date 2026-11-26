@@ -1527,7 +1527,35 @@ _gitsetu_version_ge() {
     if [[ -z "$pre1" && -n "$pre2" ]]; then return 0; fi
     if [[ -n "$pre1" && -z "$pre2" ]]; then return 1; fi
     if [[ -n "$pre1" && -n "$pre2" ]]; then
-        [[ "$pre1" < "$pre2" ]] && return 1
+        local -a p1=() p2=()
+        IFS=. read -r -a p1 <<< "$pre1"
+        IFS=. read -r -a p2 <<< "$pre2"
+        local plen=${#p1[@]}
+        [[ ${#p2[@]} -gt $plen ]] && plen=${#p2[@]}
+        local id1 id2 is_num1 is_num2
+        for (( i=0; i<plen; i++ )); do
+            if [[ $i -ge ${#p1[@]} ]]; then return 1; fi
+            if [[ $i -ge ${#p2[@]} ]]; then return 0; fi
+            id1="${p1[i]}"
+            id2="${p2[i]}"
+            [[ "$id1" == "$id2" ]] && continue
+            is_num1=0; is_num2=0
+            [[ "$id1" =~ ^[0-9]+$ ]] && is_num1=1
+            [[ "$id2" =~ ^[0-9]+$ ]] && is_num2=1
+            if [[ "$is_num1" -eq 1 && "$is_num2" -eq 1 ]]; then
+                [[ $((10#$id1)) -lt $((10#$id2)) ]] && return 1
+                return 0
+            elif [[ "$is_num1" -eq 1 ]]; then
+                # Numeric prerelease identifiers sort below alphanumeric ones (SemVer 2.0.0).
+                return 1
+            elif [[ "$is_num2" -eq 1 ]]; then
+                return 0
+            elif [[ "$id1" < "$id2" ]]; then
+                return 1
+            else
+                return 0
+            fi
+        done
     fi
     return 0
 }

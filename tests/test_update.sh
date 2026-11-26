@@ -104,6 +104,11 @@ test_update_handles_rc_only_tags_and_prerelease_semver() {
         printf '    FAIL: prerelease 1.1.0-rc.1 must be less than final 1.1.0\n'
         return 1
     fi
+    _gitsetu_version_ge "1.1.0-rc.10" "1.1.0-rc.2" || return 1
+    if _gitsetu_version_ge "1.1.0-rc.2" "1.1.0-rc.10"; then
+        printf '    FAIL: prerelease 1.1.0-rc.2 must be less than 1.1.0-rc.10\n'
+        return 1
+    fi
     _gitsetu_version_ge "1.10.0" "1.2.0" || return 1
 
     local remote_repo="$HOME/remote-rc-only"

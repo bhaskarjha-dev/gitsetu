@@ -39,8 +39,8 @@ HOME="$SANDBOX/home" GITSETU_TEST_MODE=1 GITSETU_INSTALL_DIR="$INSTALL_ROOT" \
 RC_OUT="$SANDBOX/rel-rc"
 bash "$ROOT/scripts/render_release.sh" v1.1.0-rc.1 "https://example.invalid/v1.1.0-rc.1" "$RC_OUT" >/dev/null
 grep -Fq "# Release state: released" "$RC_OUT/gitsetu"
-if grep -Fq "Development candidate; not a published release" "$RC_OUT/gitsetu"; then
-    echo "Found unexpected development candidate banner in release bundle" >&2
+if grep -Fq "# Development builds are not public release artifacts." "$RC_OUT/gitsetu"; then
+    echo "Found unexpected development banner in release bundle" >&2
     exit 1
 fi
 if command -v sha256sum >/dev/null 2>&1; then

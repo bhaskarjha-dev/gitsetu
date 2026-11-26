@@ -408,7 +408,28 @@ _guard_generate_stub_content() {
 #!/usr/bin/env bash
 # [gitsetu:managed] gitsetu-hook v3
 HOOK_NAME="$(basename "$0")"
-HOOKS_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+_gitsetu_stub_canon_dir() {
+    local dir="$1" resolved=""
+    [[ -n "$dir" ]] || return 1
+    if [[ "$dir" == "~" ]]; then
+        dir="$HOME"
+    elif [[ "$dir" == "~/"* ]]; then
+        dir="$HOME/${dir:2}"
+    fi
+    resolved="$(cd "$dir" 2>/dev/null && (pwd -W 2>/dev/null || pwd -P))" || return 1
+    resolved="${resolved%$'\r'}"
+    resolved="${resolved%/}"
+    if [[ "$resolved" =~ ^[A-Za-z]: ]]; then
+        local drv="${resolved:0:1}"
+        case "$drv" in
+            [a-z]) drv=$(printf '%s' "$drv" | tr '[:lower:]' '[:upper:]') ;;
+        esac
+        resolved="${drv}${resolved:1}"
+    fi
+    printf '%s' "$resolved"
+}
+HOOKS_DIR="$(_gitsetu_stub_canon_dir "$(dirname "$0")" || (cd "$(dirname "$0")" 2>/dev/null && pwd))"
+CONFIG_ROOT="$(_gitsetu_stub_canon_dir "$HOOKS_DIR/.." || dirname "$HOOKS_DIR")"
 ENTRYPOINT=""
 if [[ -f "$HOOKS_DIR/entrypoint" ]]; then
     ENTRYPOINT="$(cat "$HOOKS_DIR/entrypoint" 2>/dev/null || true)"
@@ -436,7 +457,7 @@ fi
 
 DISPLACED=""
 if command -v git >/dev/null 2>&1; then
-    CONFIG_ROOT="$(dirname "$HOOKS_DIR")"
+    TOP_DIR=""
     raw_hooks=$(git config --show-origin --get-all core.hooksPath 2>/dev/null || true)
     if [[ -n "$raw_hooks" ]]; then
         while IFS= read -r line; do
@@ -444,15 +465,26 @@ if command -v git >/dev/null 2>&1; then
             origin="${line%%	*}"
             path="${line#*	}"
             origin="${origin#file:}"
+            origin_dir=""
             case "$origin" in
-                "$CONFIG_ROOT"/profiles/*) continue ;;
+                */*|*\\*)
+                    origin_dir=$(_gitsetu_stub_canon_dir "$(dirname "$origin")" 2>/dev/null || true)
+                    ;;
             esac
+            if [[ -n "$CONFIG_ROOT" && "$origin_dir" == "$CONFIG_ROOT/profiles" ]]; then
+                continue
+            fi
             if [[ "$path" == "~" ]]; then
                 path="$HOME"
             elif [[ "$path" == "~/"* ]]; then
                 path="$HOME/${path:2}"
             fi
-            if [[ "${path%/}" == "${HOOKS_DIR%/}" ]]; then
+            if [[ -n "$path" && "$path" != /* && ! "$path" =~ ^[a-zA-Z]:[/\\] ]]; then
+                [[ -n "$TOP_DIR" ]] || TOP_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+                path="$TOP_DIR/$path"
+            fi
+            path_canon="$(_gitsetu_stub_canon_dir "$path" 2>/dev/null || printf '%s' "${path%/}")"
+            if [[ -n "$HOOKS_DIR" && "$path_canon" == "$HOOKS_DIR" ]]; then
                 continue
             fi
             DISPLACED="$path"
@@ -461,16 +493,11 @@ $raw_hooks
 RAW_EOF
     fi
 
-    if [[ -n "$DISPLACED" && "$DISPLACED" != /* && ! "$DISPLACED" =~ ^[a-zA-Z]:[/\\] ]]; then
-        TOP_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-        DISPLACED="$TOP_DIR/$DISPLACED"
-    fi
-
     if [[ -z "$DISPLACED" ]]; then
         COMMON_DIR="$(git rev-parse --git-common-dir 2>/dev/null || true)"
         if [[ -n "$COMMON_DIR" ]]; then
             if [[ "$COMMON_DIR" != /* && ! "$COMMON_DIR" =~ ^[a-zA-Z]:[/\\] ]]; then
-                TOP_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+                [[ -n "$TOP_DIR" ]] || TOP_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
                 COMMON_DIR="$TOP_DIR/$COMMON_DIR"
             fi
             DISPLACED="$COMMON_DIR/hooks"
@@ -479,7 +506,7 @@ RAW_EOF
 fi
 
 if [[ -n "$DISPLACED" && -f "$DISPLACED/$HOOK_NAME" && -x "$DISPLACED/$HOOK_NAME" ]]; then
-    DISPLACED_CANONICAL="$(cd "$(dirname "$DISPLACED/$HOOK_NAME")" 2>/dev/null && pwd)"
+    DISPLACED_CANONICAL="$(_gitsetu_stub_canon_dir "$(dirname "$DISPLACED/$HOOK_NAME")" 2>/dev/null || true)"
     if [[ "$DISPLACED_CANONICAL" != "$HOOKS_DIR" ]]; then
         exec "$DISPLACED/$HOOK_NAME" "$@"
     fi
