@@ -603,15 +603,35 @@ case_crit15_render_install() {
 # recover the lock and succeed. Passes at dad9ff2.
 case_crit17_stale_lock() {
   new_home crit17-stale-lock || return
-  local lock="$XDG_STATE_HOME/gitsetu/profiles.lock" i=0 holder live rc bg
-  mkdir -p "$T/slow"; printf '#!/bin/sh\nsleep 5\nexec "%s" "$@"\n' "$(command -v ssh-keygen)" > "$T/slow/ssh-keygen"; chmod +x "$T/slow/ssh-keygen"
+  local lock="$XDG_STATE_HOME/gitsetu/profiles.lock" i=0 holder lock_ts wpid="" live rc bg
+  mkdir -p "$T/slow"
+  cat > "$T/slow/ssh-keygen" <<EOF
+#!/bin/sh
+printf '%s\n' "\$\$" > "$T/slow/wrapper.pid"
+spid=""
+trap 'kill "\$spid" 2>/dev/null; exit 1' TERM INT
+sleep 30 &
+spid=\$!
+wait "\$spid"
+exit 1
+EOF
+  chmod +x "$T/slow/ssh-keygen"
   PATH="$T/slow:$PATH" perl -e 'exec @ARGV or die "exec: $!"' -- "$GS" add slow "Pat Example" pat.slow@example.com "$HOME/slow" < /dev/null >> "$T/out" 2>&1 &
   bg=$!
   while [[ ! -s "$lock/pid" && $i -lt 200 ]]; do sleep 0.05; i=$((i+1)); done
   sleep 1; holder=$(cat "$lock/pid" 2>/dev/null)
   [[ -n "$holder" ]] || { kill "$bg" 2>/dev/null; bad "add never took the lock at $lock"; return; }
+  lock_ts=$(cat "$lock/timestamp" 2>/dev/null || true)
   kill -9 "$holder" 2>/dev/null; wait "$bg" 2>/dev/null
+  if [[ -s "$T/slow/wrapper.pid" ]]; then
+    wpid=$(cat "$T/slow/wrapper.pid" 2>/dev/null || true)
+    [[ -n "$wpid" ]] && kill -TERM "$wpid" 2>/dev/null || true
+    sleep 0.1
+    [[ -n "$wpid" ]] && kill -KILL "$wpid" 2>/dev/null || true
+  fi
   [[ -d "$lock" ]] || { bad "the crashed add left no lock behind, so there is nothing to recover"; return; }
+  # Ensure live process starts in a strictly newer wall-clock second than the lock holder (macOS ps lstart= has 1s granularity).
+  while [[ -n "$lock_ts" && "$(date +%s)" == "$lock_ts" ]]; do sleep 0.2; done
   sleep 300 & live=$!
   printf '%s\n' "$live" > "$lock/pid"; printf '%s\n' "$(( $(date +%s) - 7200 ))" > "$lock/timestamp"
   GITSETU_LOCK_TIMEOUT=20 notty "$GS" add next "Pat Example" pat.next@example.com "$HOME/next" >> "$T/out" 2>&1; rc=$?
