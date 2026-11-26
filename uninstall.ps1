@@ -108,7 +108,7 @@ if (Test-Path -LiteralPath (Join-Path $v1Share ".git")) {
         $marker[$key] = $value
     }
     if ($marker.Count -ne 4 -or $marker["format"] -ne "1" -or
-        $marker["version"] -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$' -or
+        $marker["version"] -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' -or
         $marker["artifact_sha256"] -notmatch '^[0-9a-f]{64}$') {
         Stop-Uninstall "Installation marker is incomplete or invalid"
     }

@@ -221,11 +221,13 @@ namespace GitSetuLauncher {
                 if (!allowedReparseUsed) throw new InvalidOperationException("Expected package-manager reparse point was not present.");
                 string appRoot = Path.GetDirectoryName(allowedReparseComponent.TrimEnd('\\')).TrimEnd('\\');
                 string finalPath = GetFinalPath(fullPath);
-                string versionDirectory = Path.GetDirectoryName(finalPath);
-                string versionName = Path.GetFileName(versionDirectory);
-                if (!finalPath.StartsWith(appRoot + "\\", StringComparison.OrdinalIgnoreCase) ||
-                    !String.Equals(Path.GetDirectoryName(versionDirectory).TrimEnd('\\'), appRoot.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase) ||
-                    versionName.Length == 0 || !Char.IsDigit(versionName[0]) || versionName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) {
+                if (!finalPath.StartsWith(appRoot + "\\", StringComparison.OrdinalIgnoreCase)) {
+                    throw new InvalidOperationException("Scoop current junction escapes the versioned package directory.");
+                }
+                string relativeToAppRoot = finalPath.Substring(appRoot.Length + 1);
+                int firstSep = relativeToAppRoot.IndexOf('\\');
+                string versionName = firstSep >= 0 ? relativeToAppRoot.Substring(0, firstSep) : "";
+                if (versionName.Length == 0 || !Char.IsDigit(versionName[0]) || versionName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) {
                     throw new InvalidOperationException("Scoop current junction escapes the versioned package directory.");
                 }
             }

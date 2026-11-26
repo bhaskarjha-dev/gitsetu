@@ -35,4 +35,44 @@ HOME="$SANDBOX/home" GITSETU_TEST_MODE=1 GITSETU_INSTALL_DIR="$INSTALL_ROOT" \
     GITSETU_TEST_BIN_DIR="$INSTALL_ROOT/bin" bash "$ROOT/uninstall.sh" --force >/dev/null
 [[ ! -e "$INSTALL_ROOT" ]]
 
+# Verify render_release.sh prerelease tag, manifest sync, RC uninstall, and old-gh fallback
+RC_OUT="$SANDBOX/rel-rc"
+bash "$ROOT/scripts/render_release.sh" v1.1.0-rc.1 "https://example.invalid/v1.1.0-rc.1" "$RC_OUT" >/dev/null
+grep -Fq "# Release state: released" "$RC_OUT/gitsetu"
+if grep -Fq "Development candidate; not a published release" "$RC_OUT/gitsetu"; then
+    echo "Found unexpected development candidate banner in release bundle" >&2
+    exit 1
+fi
+if command -v sha256sum >/dev/null 2>&1; then
+    RC_HASH="$(sha256sum "$RC_OUT/gitsetu" | cut -d' ' -f1)"
+else
+    RC_HASH="$(shasum -a 256 "$RC_OUT/gitsetu" | cut -d' ' -f1)"
+fi
+grep -Fq "\"version\": \"1.1.0-rc.1\"" "$RC_OUT/gitsetu.manifest.json"
+grep -Fq "\"releaseState\": \"released\"" "$RC_OUT/gitsetu.manifest.json"
+grep -Fq "\"bundleSha256\": \"$RC_HASH\"" "$RC_OUT/gitsetu.manifest.json"
+
+OLD_GH_BIN="$SANDBOX/old-gh-bin"
+mkdir -p "$OLD_GH_BIN"
+cat > "$OLD_GH_BIN/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$*" == *"attestation verify --help"* ]]; then
+    echo 'unknown command "attestation" for "gh"' >&2
+    exit 1
+fi
+exit 1
+EOF
+chmod +x "$OLD_GH_BIN/gh"
+
+RC_INSTALL_ROOT="$SANDBOX/rc-install"
+HOME="$SANDBOX/home" PATH="$OLD_GH_BIN:$PATH" GITSETU_TEST_MODE=1 \
+    GITSETU_TEST_ARTIFACT="$RC_OUT/gitsetu" GITSETU_TEST_ARTIFACT_SHA256="$RC_HASH" \
+    GITSETU_INSTALL_DIR="$RC_INSTALL_ROOT" GITSETU_TEST_BIN_DIR="$RC_INSTALL_ROOT/bin" \
+    bash "$RC_OUT/install.sh" >/dev/null 2>&1
+grep -Fq "version=1.1.0-rc.1" "$RC_INSTALL_ROOT/install.marker"
+"$RC_INSTALL_ROOT/bin/gitsetu" --version | grep -Fq '1.1.0-rc.1'
+HOME="$SANDBOX/home" GITSETU_TEST_MODE=1 GITSETU_INSTALL_DIR="$RC_INSTALL_ROOT" \
+    GITSETU_TEST_BIN_DIR="$RC_INSTALL_ROOT/bin" bash "$RC_OUT/uninstall.sh" --force >/dev/null
+[[ ! -e "$RC_INSTALL_ROOT" ]]
+
 printf 'POSIX installer E2E: PASS\n'

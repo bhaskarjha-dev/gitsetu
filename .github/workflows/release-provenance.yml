@@ -40,7 +40,8 @@ jobs:
           node-version: '20.19.4'
           cache: npm
           package-manager-cache: false
-      - name: Require a clean, exact, non-public candidate tag
+      - id: gate
+        name: Require a clean, exact, non-public candidate tag
         shell: bash
         run: |
           set -euo pipefail
@@ -131,7 +132,13 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/windows/build_release_zip.ps1
+          $stage = Join-Path $env:RUNNER_TEMP "gitsetu-win-stage"
+          New-Item -ItemType Directory $stage -Force | Out-Null
+          Copy-Item dist\gitsetu.exe (Join-Path $stage "gitsetu.exe")
+          Copy-Item gitsetu (Join-Path $stage "gitsetu")
+          Copy-Item lib (Join-Path $stage "lib") -Recurse
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/windows/build_release_zip.ps1 -SourceDir $stage
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           New-Item -ItemType Directory release-assets -Force | Out-Null
           Copy-Item dist\gitsetu-windows-x64.zip release-assets\gitsetu-windows-x64.zip
           Copy-Item dist\gitsetu.exe release-assets\gitsetu.exe
@@ -204,10 +211,8 @@ jobs:
         run: |
           set -euo pipefail
           for artifact in release-assets/*; do
-            case "$artifact" in *.sig|*.sigstore.json|*.pem) continue ;; esac
+            case "$artifact" in *.sig|*.sigstore.json|*.pem|*/CHECKSUMS.sha256) continue ;; esac
             "$RUNNER_TEMP/cosign" sign-blob --yes \
-              --output-signature "$artifact.sig" \
-              --output-certificate "$artifact.pem" \
               --bundle "$artifact.sigstore.json" \
               "$artifact"
           done
@@ -218,11 +223,9 @@ jobs:
           set -euo pipefail
           identity="${{ github.server_url }}/${{ github.repository }}/.github/workflows/release-provenance.yml@${{ github.ref }}"
           for artifact in release-assets/*; do
-            case "$artifact" in *.sig|*.sigstore.json|*.pem|CHECKSUMS.sha256) continue ;; esac
+            case "$artifact" in *.sig|*.sigstore.json|*.pem|*/CHECKSUMS.sha256) continue ;; esac
             "$RUNNER_TEMP/cosign" verify-blob \
               --bundle "$artifact.sigstore.json" \
-              --certificate "$artifact.pem" \
-              --signature "$artifact.sig" \
               --certificate-identity "$identity" \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
               "$artifact"

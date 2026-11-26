@@ -119,7 +119,7 @@ load_release_config() {
         esac
     done < "$config"
 
-    [[ "$GITSETU_RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || error "Invalid GitSetu release version metadata"
+    [[ "$GITSETU_RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || error "Invalid GitSetu release version metadata"
     [[ -n "$GITSETU_CERTIFICATE_OIDC_ISSUER" ]] || error "GitSetu signature issuer metadata is missing"
 }
 
@@ -354,6 +354,7 @@ verify_file "$DOWNLOAD_DIR/gitsetu" "$EXPECTED_SHA256" || error "GitSetu artifac
 ACTUAL_SIZE="$(wc -c < "$DOWNLOAD_DIR/gitsetu" | tr -d '[:space:]')"
 [[ "$ACTUAL_SIZE" == "$EXPECTED_SIZE" ]] || error "GitSetu artifact size does not match release metadata"
 
+PROVENANCE_SKIPPED=0
 if [[ "$LOCAL_DEVELOPMENT" -eq 0 ]] && ! is_test_mode; then
     if [[ -n "$COSIGN_TOOL" && "${GITSETU_EMBEDDED_RELEASE:-0}" -ne 1 ]]; then
         "$COSIGN_TOOL" verify-blob \
@@ -362,11 +363,12 @@ if [[ "$LOCAL_DEVELOPMENT" -eq 0 ]] && ! is_test_mode; then
             --signature "$DOWNLOAD_DIR/gitsetu.sig" \
             --bundle "$DOWNLOAD_DIR/gitsetu.sigstore.json" \
             "$DOWNLOAD_DIR/gitsetu" >/dev/null 2>&1 || error "GitSetu artifact signature verification failed"
-    elif command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-        gh attestation verify "$DOWNLOAD_DIR/gitsetu" -R bhaskarjha-dev/gitsetu >/dev/null 2>&1 || error "GitSetu artifact attestation verification failed"
+    elif command -v gh >/dev/null 2>&1 &&
+         gh attestation verify --help >/dev/null 2>&1 &&
+         gh auth status --hostname github.com >/dev/null 2>&1; then
+        gh attestation verify "$DOWNLOAD_DIR/gitsetu" -R bhaskarjha-dev/gitsetu >/dev/null || error "GitSetu artifact attestation verification failed"
     else
-        printf 'Note: Provenance verification skipped (gh/cosign not installed). Verify manually with:\n'
-        printf '  gh attestation verify %s -R bhaskarjha-dev/gitsetu\n' "$DOWNLOAD_DIR/gitsetu"
+        PROVENANCE_SKIPPED=1
     fi
 fi
 
@@ -459,6 +461,10 @@ if [[ "$LOCAL_DEVELOPMENT" -eq 1 ]]; then
     info "This build is not a public release and was not downloaded from a remote."
 else
     info "GitSetu v${GITSETU_RELEASE_VERSION} installed at $INSTALL_ROOT"
+fi
+if [[ "$PROVENANCE_SKIPPED" -eq 1 ]]; then
+    printf 'Note: Provenance verification skipped (requires cosign or gh >= 2.47 authenticated to github.com). Verify manually with:\n'
+    printf '  gh attestation verify %s -R bhaskarjha-dev/gitsetu\n' "$RELEASE_DIR/gitsetu"
 fi
 info "Active aliases: gitsetu, git-setu"
 case ":$PATH:" in

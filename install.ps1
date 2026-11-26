@@ -92,7 +92,7 @@ function Read-ReleaseConfig([string]$ScriptDirectory) {
     )) {
         if (-not $values.ContainsKey($key)) { Stop-Install "Missing release metadata key: $key" }
     }
-    if ($values["GITSETU_RELEASE_VERSION"] -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+    if ($values["GITSETU_RELEASE_VERSION"] -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$') {
         Stop-Install "Invalid release version metadata"
     }
     return $values
@@ -102,16 +102,21 @@ function Assert-SafeText([string]$Value, [string]$Label) {
     if ($Value -match '[\x00-\x1f\x7f]') { Stop-Install "$Label contains control characters" }
 }
 
-function Assert-NoReparsePath([string]$Path) {
+function Assert-NoReparsePath([string]$Path, [string]$AllowedReparse = $null) {
     if (-not [IO.Path]::IsPathRooted($Path)) { Stop-Install "Path must be absolute: $Path" }
     $full = [IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
     $root = [IO.Path]::GetPathRoot($full)
+    $allowedNorm = if ($AllowedReparse) { [IO.Path]::GetFullPath($AllowedReparse).TrimEnd('\', '/') } else { $null }
     $current = $full
     while ($current.Length -gt $root.Length -and $current.Length -gt 0) {
         if (Test-Path -LiteralPath $current) {
             $item = Get-Item -LiteralPath $current -Force
             if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-                Stop-Install "Reparse-point path component is not allowed: $current"
+                if ($allowedNorm -and $current.Equals($allowedNorm, [StringComparison]::OrdinalIgnoreCase)) {
+                    # Permitted package-manager current junction (e.g. Scoop git\current)
+                } else {
+                    Stop-Install "Reparse-point path component is not allowed: $current"
+                }
             }
         }
         $parent = [IO.Directory]::GetParent($current)
@@ -120,9 +125,21 @@ function Assert-NoReparsePath([string]$Path) {
     }
 }
 
+function Test-TrustedSid([string]$SidValue, [string]$CurrentUserSid) {
+    if ($SidValue -eq $CurrentUserSid -or
+        $SidValue -eq "S-1-5-32-544" -or
+        $SidValue -eq "S-1-5-18" -or
+        $SidValue -eq "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464" -or
+        $SidValue -match '^S-1-5-21-[0-9-]+-(512|519)$') {
+        return $true
+    }
+    return $false
+}
+
 function Test-TrustedOwner([string]$Path) {
     try {
         $acl = Get-Acl -LiteralPath $Path
+        $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
         foreach ($rule in $acl.Access) {
             if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) { continue }
             $dangerous = [Security.AccessControl.FileSystemRights]::WriteData -bor
@@ -134,11 +151,7 @@ function Test-TrustedOwner([string]$Path) {
                 [Security.AccessControl.FileSystemRights]::TakeOwnership
             if (($rule.FileSystemRights -band $dangerous) -ne 0) {
                 $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier])
-                $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
-                $adminSid = New-Object Security.Principal.SecurityIdentifier("S-1-5-32-544")
-                $systemSid = New-Object Security.Principal.SecurityIdentifier("S-1-5-18")
-                $trusted = @($currentSid.Value, $adminSid.Value, $systemSid.Value)
-                if ($sid.Value -notin $trusted) {
+                if (-not (Test-TrustedSid $sid.Value $currentSid)) {
                     throw "Untrusted owner/ACL on Git for Windows component: $Path (rule $($sid.Value))"
                 }
             }
@@ -153,6 +166,7 @@ function Resolve-TrustedGitBash {
     $programFiles = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
     $programFilesX86 = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFilesX86)
     $localAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+    $userProfile = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
     $roots = [System.Collections.Generic.List[string]]@(
         (Join-Path $programFiles "Git"),
         (Join-Path $programFilesX86 "Git"),
@@ -160,6 +174,9 @@ function Resolve-TrustedGitBash {
     )
     if ($env:ProgramW6432) {
         $roots.Add((Join-Path $env:ProgramW6432 "Git"))
+    }
+    if ($userProfile) {
+        $roots.Add((Join-Path $userProfile "scoop\apps\git\current"))
     }
     foreach ($regKey in @('SOFTWARE\GitForWindows', 'SOFTWARE\WOW6432Node\GitForWindows')) {
         try {
@@ -190,12 +207,14 @@ function Resolve-TrustedGitBash {
 
     foreach ($root in $roots) {
         if ([string]::IsNullOrWhiteSpace($root)) { continue }
+        $fullRoot = [IO.Path]::GetFullPath($root).TrimEnd('\')
+        $allowedReparse = if ($fullRoot -match '(?i)\\scoop\\apps\\git\\current$') { $fullRoot } else { $null }
         foreach ($relative in $relativeCandidates) {
-            $candidate = [IO.Path]::GetFullPath((Join-Path $root $relative))
-            if (-not $candidate.StartsWith(([IO.Path]::GetFullPath($root).TrimEnd('\') + '\'), [StringComparison]::OrdinalIgnoreCase)) { continue }
+            $candidate = [IO.Path]::GetFullPath((Join-Path $fullRoot $relative))
+            if (-not $candidate.StartsWith(($fullRoot + '\'), [StringComparison]::OrdinalIgnoreCase)) { continue }
             if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
             if (((Get-Item -LiteralPath $candidate -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
-            Assert-NoReparsePath $candidate
+            Assert-NoReparsePath $candidate $allowedReparse
             Test-TrustedOwner $candidate
             return $candidate
         }
@@ -207,13 +226,18 @@ function Resolve-TrustedGitExe([string]$BashPath) {
     if (-not $BashPath) { return $null }
     $gitBinDir = Split-Path -Path $BashPath -Parent
     $gitRoot = Split-Path -Path $gitBinDir -Parent
+    if ((Split-Path -Path $gitRoot -Leaf).Equals("usr", [StringComparison]::OrdinalIgnoreCase)) {
+        $gitRoot = Split-Path -Path $gitRoot -Parent
+    }
+    $fullRoot = [IO.Path]::GetFullPath($gitRoot).TrimEnd('\')
+    $allowedReparse = if ($fullRoot -match '(?i)\\scoop\\apps\\git\\current$') { $fullRoot } else { $null }
     foreach ($relative in @("cmd\git.exe", "bin\git.exe", "mingw64\bin\git.exe")) {
-        $candidate = [IO.Path]::GetFullPath((Join-Path $gitRoot $relative))
-        $prefix = [IO.Path]::GetFullPath($gitRoot).TrimEnd('\') + '\'
+        $candidate = [IO.Path]::GetFullPath((Join-Path $fullRoot $relative))
+        $prefix = $fullRoot + '\'
         if (-not $candidate.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { continue }
         if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
         if (((Get-Item -LiteralPath $candidate -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
-        Assert-NoReparsePath $candidate
+        Assert-NoReparsePath $candidate $allowedReparse
         Test-TrustedOwner $candidate
         return $candidate
     }
@@ -450,8 +474,10 @@ try {
                 --bundle (Join-Path $tempRoot "gitsetu.zip.sigstore.json") `
                 $artifactFile
             if ($LASTEXITCODE -ne 0) { Stop-Install "Windows artifact signature verification failed" }
-        } elseif (Get-Command gh -ErrorAction SilentlyContinue) {
-            gh attestation verify $artifactFile -R bhaskarjha-dev/gitsetu 2>&1 | Out-Null
+        } elseif ((Get-Command gh -ErrorAction SilentlyContinue) -and
+            (& { gh attestation verify --help 2>&1 | Out-Null; $LASTEXITCODE -eq 0 }) -and
+            (& { gh auth status --hostname github.com 2>&1 | Out-Null; $LASTEXITCODE -eq 0 })) {
+            gh attestation verify $artifactFile -R bhaskarjha-dev/gitsetu
             if ($LASTEXITCODE -ne 0) { Stop-Install "Windows artifact attestation verification failed" }
         } else {
             Write-Host "Note: Provenance verification skipped (gh/cosign not installed)."

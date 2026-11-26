@@ -95,7 +95,7 @@ else
     done < "$MARKER"
     [[ "$marker_lines" -eq 4 ]] || error "Installation marker is incomplete"
     [[ "$MARKER_FORMAT" == "1" ]] || error "Unsupported installation marker format"
-    [[ "$MARKER_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || error "Installation marker version is invalid"
+    [[ "$MARKER_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || error "Installation marker version is invalid"
     [[ "$MARKER_SHA256" =~ ^[0-9a-f]{64}$ ]] || error "Installation marker digest is invalid"
     [[ "$MARKER_RELEASE_ID" == "${MARKER_VERSION}-${MARKER_SHA256:0:16}" ]] || error "Installation marker release ID is inconsistent"
 
