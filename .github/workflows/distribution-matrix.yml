@@ -90,9 +90,17 @@ jobs:
           /bin/bash tests/e2e_installed.sh
 
   windows:
-    name: Windows native launcher, PowerShell installers, and shims
+    name: Windows (${{ matrix.label }})
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: launcher, bundle, and source E2E
+            e2e_mode: source
+          - label: installed E2E and PowerShell suites
+            e2e_mode: installed
     defaults:
       run:
         shell: powershell
@@ -109,6 +117,7 @@ jobs:
       - name: Install locked metadata
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Build and self-test trusted native launcher
+        if: matrix.e2e_mode == 'source'
         run: |
           & powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/windows/build_launcher.ps1
           $env:GITSETU_TEST_MODE = '1'
@@ -118,13 +127,19 @@ jobs:
         shell: bash
         run: |
           make dist-check
-          make test-bundle
-      - name: Run cleanroom installed-copy E2E suite on Windows (Git Bash)
+          if [[ "${{ matrix.e2e_mode }}" == "source" ]]; then
+            make test-bundle
+          fi
+      - name: Run cleanroom source E2E suite on Windows (Git Bash)
+        if: matrix.e2e_mode == 'source'
         shell: bash
-        run: |
-          bash tests/e2e_installed.sh --source
-          bash tests/e2e_installed.sh
+        run: bash tests/e2e_installed.sh --source
+      - name: Run cleanroom installed E2E suite on Windows (Git Bash)
+        if: matrix.e2e_mode == 'installed'
+        shell: bash
+        run: bash tests/e2e_installed.sh
       - name: Run Windows-specific security tests
+        if: matrix.e2e_mode == 'installed'
         run: |
           $errors = $null
           foreach ($file in @('sandbox/launch_sandbox.ps1','sandbox/bootstrap.ps1','tests/test_windows_cli_dispatch.ps1')) {

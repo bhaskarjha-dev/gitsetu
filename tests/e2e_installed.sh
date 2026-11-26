@@ -39,17 +39,28 @@ snap() { local f; for f in "$HOME/.gitconfig" "$HOME/.ssh/config" "$HOME/.ssh/kn
   find "$HOME/.ssh" "$XDG_CONFIG_HOME/gitsetu" -type f 2>/dev/null | LC_ALL=C sort; }
 
 # Committed copy of the checkout (install.sh refuses a dirty one).
+SRC_TEMPLATE=""
 copy_repo() {
+  if [[ -z "$SRC_TEMPLATE" ]]; then
+    SRC_TEMPLATE="$ROOT/.src-template"
+    rm -rf "$SRC_TEMPLATE"
+    cp -a "$REPO" "$SRC_TEMPLATE" 2>/dev/null || true
+    rm -rf "$SRC_TEMPLATE/.git" "$SRC_TEMPLATE/temp" "$SRC_TEMPLATE/node_modules" 2>/dev/null || true
+    # Under Git Bash on Windows, dist/gitsetu and untracked dist/gitsetu.exe collide during cp -a:
+    if [[ -f "$REPO/dist/gitsetu" && ! -f "$SRC_TEMPLATE/dist/gitsetu" ]]; then
+      rm -f "$SRC_TEMPLATE/dist/gitsetu.exe"* 2>/dev/null || true
+      cp -f "$REPO/dist/gitsetu" "$SRC_TEMPLATE/dist/gitsetu" 2>/dev/null || true
+    fi
+    rm -f "$SRC_TEMPLATE/dist/"*.exe* "$SRC_TEMPLATE/dist/"*.zip* 2>/dev/null || true
+    git -C "$SRC_TEMPLATE" init -q >/dev/null 2>&1
+    git -C "$SRC_TEMPLATE" -c core.autocrlf=false add -A >/dev/null 2>&1
+    git -C "$SRC_TEMPLATE" -c user.name=e2e -c user.email=e2e@example.com commit -qm e2e --allow-empty >/dev/null 2>&1
+  fi
   rm -rf "$1"
-  cp -a "$REPO" "$1" 2>/dev/null || true
-  # Under Git Bash on Windows, dist/gitsetu and untracked dist/gitsetu.exe collide during cp -a:
+  cp -a "$SRC_TEMPLATE" "$1" 2>/dev/null || true
   if [[ -f "$REPO/dist/gitsetu" && ! -f "$1/dist/gitsetu" ]]; then
-    rm -f "$1/dist/gitsetu.exe"* 2>/dev/null || true
     cp -f "$REPO/dist/gitsetu" "$1/dist/gitsetu" 2>/dev/null || true
   fi
-  rm -f "$1/dist/"*.exe* "$1/dist/"*.zip* 2>/dev/null || true
-  git -C "$1" add -A >/dev/null 2>&1
-  git -C "$1" -c user.name=e2e -c user.email=e2e@example.com commit -qm e2e --allow-empty >/dev/null 2>&1
 }
 
 # Isolated environment for case $1: throwaway HOME, no system config, no agent, a fake `ssh` that logs
