@@ -415,6 +415,18 @@ _teardown_repo_already_processed() {
     return 1
 }
 
+_teardown_can_unset_exact_git_value() {
+    local repo_conf="$1" key="$2" expected="$3"
+    local values value
+    values=$(git config -f "$repo_conf" --get-all "$key" 2>/dev/null || true)
+    [[ -n "$values" ]] || return 0
+    while IFS= read -r value; do
+        [[ -n "$value" ]] || continue
+        [[ "$value" == "$expected" ]] || return 1
+    done <<< "$values"
+    return 0
+}
+
 _teardown_unset_exact_git_value() {
     local repo_conf="$1" key="$2" expected="$3"
     local values value found=0
@@ -452,11 +464,17 @@ _teardown_process_repo_config() {
         return 0
     fi
 
-    # Refuse partial removal when a key has multiple values and any value differs
-    # from the exact generated value.
+    # Pre-validate every target key before mutating any of them so a multi-valued
+    # conflict on user.name or core.sshCommand never leaves user.email stripped.
+    actual_key=$(git config -f "$repo_conf" --get core.sshCommand 2>/dev/null || true)
+    _teardown_can_unset_exact_git_value "$repo_conf" user.email "$actual_email" || return 1
+    _teardown_can_unset_exact_git_value "$repo_conf" user.name "$actual_name" || return 1
+    if [[ -n "$actual_key" && "$actual_key" == "${_TEARDOWN_SSH_COMMANDS[$i]}" ]]; then
+        _teardown_can_unset_exact_git_value "$repo_conf" core.sshCommand "$actual_key" || return 1
+    fi
+
     _teardown_unset_exact_git_value "$repo_conf" user.email "$actual_email" || return 1
     _teardown_unset_exact_git_value "$repo_conf" user.name "$actual_name" || return 1
-    actual_key=$(git config -f "$repo_conf" --get core.sshCommand 2>/dev/null || true)
     if [[ -n "$actual_key" && "$actual_key" == "${_TEARDOWN_SSH_COMMANDS[$i]}" ]]; then
         _teardown_unset_exact_git_value "$repo_conf" core.sshCommand "$actual_key" || return 1
     fi

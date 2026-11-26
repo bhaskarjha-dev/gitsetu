@@ -369,6 +369,66 @@ test_write_ssh_config_rejects_gitsetu_prefix_collision() {
     return 0
 }
 
+test_ssh_windows_drive_root_component_walk() {
+    local old_os="${GITSETU_OS:-}"
+    local seen_log="$TEST_HOME/win-drive-walk.log"
+    rm -f "$seen_log"
+    # shellcheck disable=SC2329  # invoked indirectly by _ssh_assert_no_symlink_components
+    _ssh_reparse_probe_cached() {
+        printf '%s\n' "$1" >> "$seen_log"
+        return 1
+    }
+    GITSETU_OS=gitbash
+    local status=0
+    _ssh_assert_no_symlink_components "C:/Users/alice/.ssh" >/dev/null 2>&1 || status=$?
+    unset -f _ssh_reparse_probe_cached
+    GITSETU_OS="$old_os"
+
+    # Restore original helper from lib/ssh.sh
+    # shellcheck disable=SC1091
+    source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/ssh.sh"
+    _ssh_reparse_cache_reset
+
+    assert_equals "0" "$status" "C:/ path passes component walk on gitbash" || return 1
+    assert_file_contains "$seen_log" "C:/Users" "component walk preserves drive root C:/Users" || return 1
+    assert_file_not_contains "$seen_log" "/C:/" "component walk never prefixes leading slash before drive letter" || return 1
+    rm -f "$seen_log"
+}
+
+test_write_ssh_config_host_wildcard_does_not_glob() {
+    GITSETU_DRY_RUN=0
+    PROFILE_LABELS=("work")
+    PROFILE_PROVIDERS=("github.com")
+    PROFILE_KEYS=("$HOME/.ssh/id_ed25519_work")
+    PROFILE_COUNT=1
+
+    local glob_dir="$TEST_HOME/ssh-glob-cwd"
+    mkdir -p "$HOME/.ssh" "$glob_dir"
+    : > "$glob_dir/gitsetu-work"
+    printf 'Host *\n    ServerAliveInterval 60\nHOST example.com # gitsetu-work\n' > "$HOME/.ssh/config"
+
+    local status=0
+    (cd "$glob_dir" && write_ssh_config >/dev/null 2>&1) || status=$?
+    assert_equals "0" "$status" "Host * and comments do not falsely trigger collision via globbing" || return 1
+
+    printf 'host gitsetu-work\n    HostName github.com\n' > "$HOME/.ssh/config"
+    status=0
+    (cd "$glob_dir" && write_ssh_config >/dev/null 2>&1) || status=$?
+    assert_equals "1" "$status" "case-insensitive host gitsetu-work collision is still rejected" || return 1
+    rm -rf "$glob_dir" "$HOME/.ssh/config"
+}
+
+test_generate_key_dry_run_does_not_create_ssh_dir() {
+    rm -rf "$HOME/.ssh"
+    GITSETU_DRY_RUN=1
+    generate_ssh_key "drydir" "drydir@example.com" "$HOME/.ssh/id_ed25519_drydir" 2>/dev/null
+    if [[ -d "$HOME/.ssh" ]]; then
+        printf '    FAIL: ~/.ssh directory was created during --dry-run\n'
+        return 1
+    fi
+    return 0
+}
+
 # --- Run ---
 
 printf '\n%btest_ssh.sh%b\n' "$T_BOLD" "$T_RESET"
@@ -390,4 +450,7 @@ run_test "write SSH config rejects symlinked profiles directory" test_write_ssh_
 run_test "write SSH config rejects gitsetu prefix collision" test_write_ssh_config_rejects_gitsetu_prefix_collision
 run_test "Git Bash reparse cache is bounded and fast" test_ssh_reparse_cache_is_bounded_and_fast_on_gitbash
 run_test "FIDO2 failure never downgrades to software" test_generate_key_fido2_no_software_fallback
+run_test "Windows drive root walk avoids leading slash corruption" test_ssh_windows_drive_root_component_walk
+run_test "write SSH config Host * does not glob and enforces case-insensitive Host" test_write_ssh_config_host_wildcard_does_not_glob
+run_test "dry-run generate_ssh_key does not create ~/.ssh directory" test_generate_key_dry_run_does_not_create_ssh_dir
 print_results "SSH tests"

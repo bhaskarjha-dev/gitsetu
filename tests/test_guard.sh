@@ -156,7 +156,7 @@ test_guard_reads_v2_profile_identity() {
 test_guard_prompt_bypassed_in_non_interactive_mode() {
     rm -f "$GITSETU_HOOKS_DIR/pre-commit"
     local should_prompt=0
-    if [[ ! -f "$GITSETU_HOOKS_DIR/pre-commit" ]] && _ui_tty_available && [[ -z "${CI:-}" ]]; then
+    if [[ ! -f "$GITSETU_HOOKS_DIR/pre-commit" ]] && _ui_tty_available </dev/null && [[ -z "${CI:-}" ]]; then
         should_prompt=1
     fi
     assert_equals "0" "$should_prompt" "guard prompt bypassed in non-interactive mode" || return 1
@@ -342,6 +342,65 @@ test_guard_blocks_ambiguous_remote_url() {
     rm -rf "$external_repo" "$remotes_dir"
 }
 
+test_guard_remote_url_overrides_directory_profile() {
+    GITSETU_DRY_RUN=0
+    setup_test_home
+    _TEST_GITSETU_LIBS_READY=0
+    source_gitsetu_libs || return 1
+
+    mkdir -p "$HOME/.ssh"
+    local global_key work_key personal_key
+    global_key=$(normalize_path "$HOME/.ssh/id_global")
+    work_key=$(normalize_path "$HOME/.ssh/id_work")
+    personal_key=$(normalize_path "$HOME/.ssh/id_personal")
+    touch "$global_key" "$global_key.pub" "$work_key" "$work_key.pub" "$personal_key" "$personal_key.pub"
+
+    PROFILE_COUNT=3
+    PROFILE_LABELS=(global work personal)
+    PROFILE_NAMES=("Global" "Work" "Personal")
+    PROFILE_EMAILS=(global@example.com work@example.com personal@example.com)
+    PROFILE_DIRS=("" "$HOME/work" "$HOME/personal")
+    PROFILE_PROVIDERS=(github.com github.com github.com)
+    PROFILE_SIGNS=(0 0 0)
+    PROFILE_KEYS=("$global_key" "$work_key" "$personal_key")
+    PROFILE_USERS=("" "" "")
+    PROFILE_PATS=("" "" "")
+    local remotes_dir="${GITSETU_CONFIG_DIR:-$HOME/.config/gitsetu}/remotes"
+    mkdir -p "$remotes_dir"
+    printf 'git@github.com:personal-org/*\n' > "$remotes_dir/personal.remotes"
+    write_profiles_conf >/dev/null
+    write_profile_gitconfig "work" "Work" "work@example.com" >/dev/null
+    write_profile_gitconfig "personal" "Personal" "personal@example.com" >/dev/null
+    write_global_gitconfig >/dev/null
+
+    local repo="$HOME/work/override-repo"
+    setup_repo "$repo"
+    git -C "$repo" remote add origin git@github.com:personal-org/tool.git
+
+    _guard_managed_profile_for_path "$repo" || return 1
+    assert_equals "personal" "$GUARD_PROFILE_LABEL" "remote route takes precedence over directory route" || return 1
+
+    # Without any local override, Git's hasconfig:remote.*.url: resolves personal identity and guard allows it
+    local status=0
+    (cd "$repo" && _guard_execute) >/dev/null 2>&1 || status=$?
+    assert_equals "0" "$status" "guard allows remote-profile identity resolved by Git inside another profile directory" || return 1
+
+    git -C "$repo" config user.email "work@example.com"
+    status=0
+    (cd "$repo" && _guard_execute) >/dev/null 2>&1 || status=$?
+    assert_equals "65" "$status" "guard blocks directory-profile email when remote overrides to personal" || return 1
+    rm -rf "$repo" "$remotes_dir"
+}
+
+test_guard_stub_quotes_entrypoint_and_preserves_profiles_named_hooks() {
+    local stub
+    # shellcheck disable=SC2016
+    stub=$(_guard_generate_stub_content '/tmp/bad "path" $(touch /tmp/pwn)/gitsetu' "pre-commit")
+    # shellcheck disable=SC2016
+    assert_contains "$stub" "ENTRYPOINT='/tmp/bad \"path\" \$(touch /tmp/pwn)/gitsetu'" "entrypoint is safely single-quoted in stub" || return 1
+    assert_not_contains "$stub" '*gitsetu*|*profiles*' "stub does not drop user hooks paths containing profiles" || return 1
+}
+
 printf '\n%btest_guard.sh%b\n' "$T_BOLD" "$T_RESET"
 run_test "install_guard links hook" test_install_guard
 run_test "guard blocks mismatched email" test_guard_blocks_mismatch
@@ -358,5 +417,7 @@ run_test "corrupt managed registry fails closed" test_guard_fails_closed_for_cor
 run_test "guard blocks mismatched email on remote-routed repo" test_guard_blocks_mismatch_remote_url
 run_test "guard hook stub checks pre-merge-commit" test_guard_blocks_mismatch_pre_merge_commit
 run_test "guard blocks ambiguous remote URL matching multiple profiles" test_guard_blocks_ambiguous_remote_url
+run_test "guard gives remote URL precedence over directory route" test_guard_remote_url_overrides_directory_profile
+run_test "guard stub safely quotes entrypoint and avoids broad profiles filter" test_guard_stub_quotes_entrypoint_and_preserves_profiles_named_hooks
 print_results "Guard tests"
 

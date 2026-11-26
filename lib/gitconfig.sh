@@ -425,6 +425,14 @@ EOF
         for rem_file in "$remotes_dir"/*.remotes; do
             [[ -f "$rem_file" ]] || continue
             rem_label=$(basename "$rem_file" .remotes)
+            local rem_known=0 rem_idx
+            for (( rem_idx=0; rem_idx<${PROFILE_COUNT:-0}; rem_idx++ )); do
+                if [[ "${PROFILE_LABELS[$rem_idx]:-}" == "$rem_label" ]]; then
+                    rem_known=1
+                    break
+                fi
+            done
+            [[ "$rem_known" -eq 1 ]] || continue
             path=$(_gitconfig_normalize_path "$GITSETU_PROFILES_DIR/${rem_label}.gitconfig")
             while IFS= read -r rem_pat || [[ -n "$rem_pat" ]]; do
                 rem_pat=$(printf '%s' "$rem_pat" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')

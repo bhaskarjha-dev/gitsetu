@@ -245,6 +245,21 @@ test_teardown_rejects_unbalanced_managed_markers() {
     assert_equals "$before" "$(sha256sum "$HOME/.gitconfig" | awk '{print $1}')" "unbalanced marker file is unchanged"
 }
 
+test_teardown_deep_no_partial_strip_on_multivalued_name() {
+    setup
+    local repo="$HOME/pro/multi-val-repo"
+    mkdir -p "$repo"
+    git init "$repo" >/dev/null 2>&1
+    git config -f "$repo/.git/config" user.email "pro@example.com"
+    git config -f "$repo/.git/config" --add user.name "Pro Name"
+    git config -f "$repo/.git/config" --add user.name "Extra Custom Name"
+
+    teardown_deep >/dev/null 2>&1 || true
+    local remaining_email
+    remaining_email=$(git config -f "$repo/.git/config" user.email 2>/dev/null || true)
+    assert_equals "pro@example.com" "$remaining_email" "user.email is not stripped when user.name is multi-valued" || return 1
+}
+
 # ------------------------------------------------------------------------------
 # Test Runner
 # ------------------------------------------------------------------------------
@@ -259,5 +274,6 @@ run_test "teardown_deep selectively strips matched local repo identities" test_t
 run_test "teardown_deep prevents root/home filesystem DoS" test_teardown_dos_prevention
 run_test "teardown dry-run preserves state and lock" test_teardown_dry_run_preserves_state_and_lock
 run_test "teardown rejects unbalanced markers" test_teardown_rejects_unbalanced_managed_markers
+run_test "teardown_deep pre-validates multi-valued user.name before stripping user.email" test_teardown_deep_no_partial_strip_on_multivalued_name
 
 print_results "Teardown tests"

@@ -139,20 +139,13 @@ _guard_managed_profile_for_path() {
         fi
     done
 
-    if [[ "$best_len" -ge 0 ]]; then
-        GUARD_PROFILE_LABEL="$best_label"
-        GUARD_PROFILE_DIR="$best_dir"
-        GUARD_MATCH_LENGTH="$best_len"
-        GUARD_PROFILE_CONFIG="${GITSETU_PROFILES_DIR:-${GITSETU_CONFIG_DIR:-${HOME}/.config/gitsetu}/profiles}/${best_label}.gitconfig"
-        return 0
-    fi
-
-    # Check remote URL routing if not matched by directory
+    # FUT-01: Check remote URL routing first (Git evaluates hasconfig:remote.*.url:
+    # after gitdir: in ~/.gitconfig, so matching remotes override directory routing).
     local remotes_dir="${GITSETU_CONFIG_DIR:-$HOME/.config/gitsetu}/remotes"
-    if [[ -d "$remotes_dir" ]] && command -v git >/dev/null 2>&1; then
-        if git rev-parse --git-dir >/dev/null 2>&1; then
+    if [[ -d "$remotes_dir" && -d "$current_path" ]] && command -v git >/dev/null 2>&1; then
+        if git -C "$current_path" rev-parse --git-dir >/dev/null 2>&1; then
             local rem_urls
-            rem_urls=$(git config --get-regexp '^remote\..*\.url$' 2>/dev/null | awk '{print $2}' || true)
+            rem_urls=$(git -C "$current_path" config --get-regexp '^remote\..*\.url$' 2>/dev/null | awk '{print $2}' || true)
             if [[ -n "$rem_urls" ]]; then
                 local rf r_label r_pat rem_match_label=""
                 for rf in "$remotes_dir"/*.remotes; do
@@ -195,6 +188,14 @@ _guard_managed_profile_for_path() {
                 fi
             fi
         fi
+    fi
+
+    if [[ "$best_len" -ge 0 ]]; then
+        GUARD_PROFILE_LABEL="$best_label"
+        GUARD_PROFILE_DIR="$best_dir"
+        GUARD_MATCH_LENGTH="$best_len"
+        GUARD_PROFILE_CONFIG="${GITSETU_PROFILES_DIR:-${GITSETU_CONFIG_DIR:-${HOME}/.config/gitsetu}/profiles}/${best_label}.gitconfig"
+        return 0
     fi
 
     return 1
@@ -415,7 +416,7 @@ if [[ -f "$HOOKS_DIR/entrypoint" ]]; then
 fi
 if [[ -z "$ENTRYPOINT" ]]; then
 STUB_EOF
-    printf '    ENTRYPOINT="%s"\n' "$entrypoint"
+    printf "    ENTRYPOINT='%s'\n" "${entrypoint//\'/\'\\\'\'}"
     cat <<'STUB_EOF'
 fi
 
@@ -435,6 +436,7 @@ fi
 
 DISPLACED=""
 if command -v git >/dev/null 2>&1; then
+    CONFIG_ROOT="$(dirname "$HOOKS_DIR")"
     raw_hooks=$(git config --show-origin --get-all core.hooksPath 2>/dev/null || true)
     if [[ -n "$raw_hooks" ]]; then
         while IFS= read -r line; do
@@ -443,12 +445,15 @@ if command -v git >/dev/null 2>&1; then
             path="${line#*	}"
             origin="${origin#file:}"
             case "$origin" in
-                *gitsetu*|*profiles*) continue ;;
+                "$CONFIG_ROOT"/profiles/*) continue ;;
             esac
             if [[ "$path" == "~" ]]; then
                 path="$HOME"
             elif [[ "$path" == "~/"* ]]; then
                 path="$HOME/${path:2}"
+            fi
+            if [[ "${path%/}" == "${HOOKS_DIR%/}" ]]; then
+                continue
             fi
             DISPLACED="$path"
         done <<RAW_EOF

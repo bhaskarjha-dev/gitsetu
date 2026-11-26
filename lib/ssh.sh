@@ -120,8 +120,8 @@ _ssh_assert_no_symlink_components() {
     [[ -n "$path" ]] || return 1
     case "$path" in
         [A-Za-z]:/*)
-            current="${path%%:*}/"
-            rest="${path#?:}"
+            current="${path%%:*}:/"
+            rest="${path#?:/}"
             ;;
         /*)
             current="/"
@@ -249,45 +249,60 @@ generate_ssh_key() {
         print_info "Consider storing keys on the native filesystem instead."
     fi
 
-    # Create ~/.ssh if it doesn't exist
-    if [[ ! -d "$HOME/.ssh" ]]; then
-        (umask 077 && mkdir -p "$HOME/.ssh") || {
-            print_error "Failed to create ~/.ssh."
-            return 1
-        }
-        print_step "Created ~/.ssh directory"
-    fi
-    chmod 700 "$HOME/.ssh" 2>/dev/null || {
-        print_error "Failed to enforce mode 0700 on ~/.ssh."
-        return 1
-    }
-    _ssh_assert_private_directory "$HOME/.ssh" || {
-        print_error "Refusing SSH setup: ~/.ssh is not a private directory owned by this user."
-        return 1
-    }
-
+    # Create ~/.ssh if it doesn't exist (skip disk mutations in dry-run)
     local key_parent
     key_parent=$(dirname "$key_path")
     _ssh_assert_no_symlink_components "$key_parent" || {
         print_error "Refusing SSH key directory with a symlink/reparse component: $key_parent"
         return 1
     }
-    if [[ ! -d "$key_parent" ]]; then
-        (umask 077 && mkdir -p "$key_parent") || {
-            print_error "Failed to create SSH key directory: $key_parent"
+    if [[ "${GITSETU_DRY_RUN:-0}" -ne 1 ]]; then
+        if [[ ! -d "$HOME/.ssh" ]]; then
+            (umask 077 && mkdir -p "$HOME/.ssh") || {
+                print_error "Failed to create ~/.ssh."
+                return 1
+            }
+            print_step "Created ~/.ssh directory"
+        fi
+        chmod 700 "$HOME/.ssh" 2>/dev/null || {
+            print_error "Failed to enforce mode 0700 on ~/.ssh."
             return 1
         }
-    fi
-    if [[ "$key_parent" == "$HOME/.ssh" || "$key_parent" == "$HOME/.ssh/"* ]]; then
-        chmod 700 "$key_parent" 2>/dev/null || {
-            print_error "Failed to enforce mode 0700 on SSH key directory: $key_parent"
+        _ssh_assert_private_directory "$HOME/.ssh" || {
+            print_error "Refusing SSH setup: ~/.ssh is not a private directory owned by this user."
             return 1
         }
+
+        if [[ ! -d "$key_parent" ]]; then
+            (umask 077 && mkdir -p "$key_parent") || {
+                print_error "Failed to create SSH key directory: $key_parent"
+                return 1
+            }
+        fi
+        if [[ "$key_parent" == "$HOME/.ssh" || "$key_parent" == "$HOME/.ssh/"* ]]; then
+            chmod 700 "$key_parent" 2>/dev/null || {
+                print_error "Failed to enforce mode 0700 on SSH key directory: $key_parent"
+                return 1
+            }
+        fi
+        _ssh_assert_private_directory "$key_parent" || {
+            print_error "Refusing SSH key directory without private ownership/mode: $key_parent"
+            return 1
+        }
+    else
+        if [[ -d "$HOME/.ssh" ]]; then
+            _ssh_assert_private_directory "$HOME/.ssh" || {
+                print_error "Refusing SSH setup: ~/.ssh is not a private directory owned by this user."
+                return 1
+            }
+        fi
+        if [[ -d "$key_parent" ]]; then
+            _ssh_assert_private_directory "$key_parent" || {
+                print_error "Refusing SSH key directory without private ownership/mode: $key_parent"
+                return 1
+            }
+        fi
     fi
-    _ssh_assert_private_directory "$key_parent" || {
-        print_error "Refusing SSH key directory without private ownership/mode: $key_parent"
-        return 1
-    }
 
     # Check if key already exists
     if [[ -f "$key_path" ]]; then
@@ -493,11 +508,15 @@ write_ssh_config() {
 
     # CRIT-08: Check for Host alias collision in existing user config
     if [[ -f "$target_ssh_config" ]]; then
-        local check_line=0 check_text="" host_entry=""
+        local check_line=0 check_text="" host_spec="" host_entry=""
+        local -a host_entries=()
         while IFS= read -r check_text || [[ -n "$check_text" ]]; do
             check_line=$((check_line + 1))
-            if [[ "$check_text" =~ ^[[:space:]]*Host[[:space:]]+(.*) ]]; then
-                for host_entry in ${BASH_REMATCH[1]}; do
+            if [[ "$check_text" =~ ^[[:space:]]*[Hh][Oo][Ss][Tt][[:space:]]+(.*) ]]; then
+                host_spec="${BASH_REMATCH[1]%%#*}"
+                host_entries=()
+                IFS=$' \t' read -r -a host_entries <<< "$host_spec"
+                for host_entry in "${host_entries[@]+"${host_entries[@]}"}"; do
                     local j
                     for (( j=0; j<${PROFILE_COUNT:-0}; j++ )); do
                         local expected_alias="gitsetu-${PROFILE_LABELS[j]}"

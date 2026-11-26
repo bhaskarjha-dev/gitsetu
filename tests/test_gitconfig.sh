@@ -318,6 +318,24 @@ test_generated_gitconfig_is_deterministic_across_locales() {
     return 0
 }
 
+test_gitconfig_ignores_orphaned_remote_rules() {
+    local remotes_dir="${GITSETU_CONFIG_DIR}/remotes"
+    mkdir -p "$remotes_dir" "$GITSETU_PROFILES_DIR"
+    printf 'git@github.com:acme/*\n' > "$remotes_dir/work.remotes"
+    printf 'git@github.com:ghost/*\n' > "$remotes_dir/ghost.remotes"
+    PROFILE_LABELS=("global" "work")
+    PROFILE_NAMES=("Global" "Work")
+    PROFILE_EMAILS=("g@t.com" "w@t.com")
+    PROFILE_DIRS=("" "$HOME/work")
+    PROFILE_COUNT=2
+
+    local block
+    block=$(build_global_gitconfig_block)
+    rm -rf "$remotes_dir"
+    assert_contains "$block" "hasconfig:remote.*.url:git@github.com:acme/*" "active profile remote rule emitted" || return 1
+    assert_not_contains "$block" "hasconfig:remote.*.url:git@github.com:ghost/*" "orphaned remote rule ignored" || return 1
+}
+
 # --- Run ---
 
 printf '\n%btest_gitconfig.sh%b\n' "$T_BOLD" "$T_RESET"
@@ -337,4 +355,5 @@ run_test "write creates profile gitconfig file" test_write_profile_gitconfig
 run_test "write creates profiles.conf registry" test_write_profiles_conf
 run_test "UTF-8 routes canonicalize and resolve under C locale" test_unicode_route_canonicalization_and_git_resolution
 run_test "generated config is locale-deterministic" test_generated_gitconfig_is_deterministic_across_locales
+run_test "orphaned remote rules for removed profiles are ignored" test_gitconfig_ignores_orphaned_remote_rules
 print_results "Git config tests"
