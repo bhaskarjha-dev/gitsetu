@@ -2101,7 +2101,35 @@ _gitsetu_version_ge() {
     if [[ -z "$pre1" && -n "$pre2" ]]; then return 0; fi
     if [[ -n "$pre1" && -z "$pre2" ]]; then return 1; fi
     if [[ -n "$pre1" && -n "$pre2" ]]; then
-        [[ "$pre1" < "$pre2" ]] && return 1
+        local -a p1=() p2=()
+        IFS=. read -r -a p1 <<< "$pre1"
+        IFS=. read -r -a p2 <<< "$pre2"
+        local plen=${#p1[@]}
+        [[ ${#p2[@]} -gt $plen ]] && plen=${#p2[@]}
+        local id1 id2 is_num1 is_num2
+        for (( i=0; i<plen; i++ )); do
+            if [[ $i -ge ${#p1[@]} ]]; then return 1; fi
+            if [[ $i -ge ${#p2[@]} ]]; then return 0; fi
+            id1="${p1[i]}"
+            id2="${p2[i]}"
+            [[ "$id1" == "$id2" ]] && continue
+            is_num1=0; is_num2=0
+            [[ "$id1" =~ ^[0-9]+$ ]] && is_num1=1
+            [[ "$id2" =~ ^[0-9]+$ ]] && is_num2=1
+            if [[ "$is_num1" -eq 1 && "$is_num2" -eq 1 ]]; then
+                [[ $((10#$id1)) -lt $((10#$id2)) ]] && return 1
+                return 0
+            elif [[ "$is_num1" -eq 1 ]]; then
+                # Numeric prerelease identifiers sort below alphanumeric ones (SemVer 2.0.0).
+                return 1
+            elif [[ "$is_num2" -eq 1 ]]; then
+                return 0
+            elif [[ "$id1" < "$id2" ]]; then
+                return 1
+            else
+                return 0
+            fi
+        done
     fi
     return 0
 }
@@ -8671,7 +8699,28 @@ _guard_generate_stub_content() {
 #!/usr/bin/env bash
 # [gitsetu:managed] gitsetu-hook v3
 HOOK_NAME="$(basename "$0")"
-HOOKS_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+_gitsetu_stub_canon_dir() {
+    local dir="$1" resolved=""
+    [[ -n "$dir" ]] || return 1
+    if [[ "$dir" == "~" ]]; then
+        dir="$HOME"
+    elif [[ "$dir" == "~/"* ]]; then
+        dir="$HOME/${dir:2}"
+    fi
+    resolved="$(cd "$dir" 2>/dev/null && (pwd -W 2>/dev/null || pwd -P))" || return 1
+    resolved="${resolved%$'\r'}"
+    resolved="${resolved%/}"
+    if [[ "$resolved" =~ ^[A-Za-z]: ]]; then
+        local drv="${resolved:0:1}"
+        case "$drv" in
+            [a-z]) drv=$(printf '%s' "$drv" | tr '[:lower:]' '[:upper:]') ;;
+        esac
+        resolved="${drv}${resolved:1}"
+    fi
+    printf '%s' "$resolved"
+}
+HOOKS_DIR="$(_gitsetu_stub_canon_dir "$(dirname "$0")" || (cd "$(dirname "$0")" 2>/dev/null && pwd))"
+CONFIG_ROOT="$(_gitsetu_stub_canon_dir "$HOOKS_DIR/.." || dirname "$HOOKS_DIR")"
 ENTRYPOINT=""
 if [[ -f "$HOOKS_DIR/entrypoint" ]]; then
     ENTRYPOINT="$(cat "$HOOKS_DIR/entrypoint" 2>/dev/null || true)"
@@ -8699,7 +8748,7 @@ fi
 
 DISPLACED=""
 if command -v git >/dev/null 2>&1; then
-    CONFIG_ROOT="$(dirname "$HOOKS_DIR")"
+    TOP_DIR=""
     raw_hooks=$(git config --show-origin --get-all core.hooksPath 2>/dev/null || true)
     if [[ -n "$raw_hooks" ]]; then
         while IFS= read -r line; do
@@ -8707,15 +8756,26 @@ if command -v git >/dev/null 2>&1; then
             origin="${line%%	*}"
             path="${line#*	}"
             origin="${origin#file:}"
+            origin_dir=""
             case "$origin" in
-                "$CONFIG_ROOT"/profiles/*) continue ;;
+                */*|*\\*)
+                    origin_dir=$(_gitsetu_stub_canon_dir "$(dirname "$origin")" 2>/dev/null || true)
+                    ;;
             esac
+            if [[ -n "$CONFIG_ROOT" && "$origin_dir" == "$CONFIG_ROOT/profiles" ]]; then
+                continue
+            fi
             if [[ "$path" == "~" ]]; then
                 path="$HOME"
             elif [[ "$path" == "~/"* ]]; then
                 path="$HOME/${path:2}"
             fi
-            if [[ "${path%/}" == "${HOOKS_DIR%/}" ]]; then
+            if [[ -n "$path" && "$path" != /* && ! "$path" =~ ^[a-zA-Z]:[/\\] ]]; then
+                [[ -n "$TOP_DIR" ]] || TOP_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+                path="$TOP_DIR/$path"
+            fi
+            path_canon="$(_gitsetu_stub_canon_dir "$path" 2>/dev/null || printf '%s' "${path%/}")"
+            if [[ -n "$HOOKS_DIR" && "$path_canon" == "$HOOKS_DIR" ]]; then
                 continue
             fi
             DISPLACED="$path"
@@ -8724,16 +8784,11 @@ $raw_hooks
 RAW_EOF
     fi
 
-    if [[ -n "$DISPLACED" && "$DISPLACED" != /* && ! "$DISPLACED" =~ ^[a-zA-Z]:[/\\] ]]; then
-        TOP_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-        DISPLACED="$TOP_DIR/$DISPLACED"
-    fi
-
     if [[ -z "$DISPLACED" ]]; then
         COMMON_DIR="$(git rev-parse --git-common-dir 2>/dev/null || true)"
         if [[ -n "$COMMON_DIR" ]]; then
             if [[ "$COMMON_DIR" != /* && ! "$COMMON_DIR" =~ ^[a-zA-Z]:[/\\] ]]; then
-                TOP_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+                [[ -n "$TOP_DIR" ]] || TOP_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
                 COMMON_DIR="$TOP_DIR/$COMMON_DIR"
             fi
             DISPLACED="$COMMON_DIR/hooks"
@@ -8742,7 +8797,7 @@ RAW_EOF
 fi
 
 if [[ -n "$DISPLACED" && -f "$DISPLACED/$HOOK_NAME" && -x "$DISPLACED/$HOOK_NAME" ]]; then
-    DISPLACED_CANONICAL="$(cd "$(dirname "$DISPLACED/$HOOK_NAME")" 2>/dev/null && pwd)"
+    DISPLACED_CANONICAL="$(_gitsetu_stub_canon_dir "$(dirname "$DISPLACED/$HOOK_NAME")" 2>/dev/null || true)"
     if [[ "$DISPLACED_CANONICAL" != "$HOOKS_DIR" ]]; then
         exec "$DISPLACED/$HOOK_NAME" "$@"
     fi
@@ -9885,6 +9940,33 @@ run_doctor_repair() {
     if [[ "$ssh_needs_repair" -eq 1 ]]; then
         if ! _doctor_snapshot_file "$snap_sc_target" || ! _doctor_snapshot_file "$GITSETU_PROFILES_DIR/ssh_config"; then
             print_error "Unable to create SSH rollback snapshots; repair was not started."
+            _doctor_discard_rollbacks
+            _doctor_restore_traps
+            release_lock || true
+            lock_held=0
+            return 1
+        fi
+    fi
+    if [[ "$guard_stubs_need_repair" -eq 1 ]]; then
+        local snap_guard_ok=1 snap_item
+        if [[ -L "$GITSETU_HOOKS_DIR" || -L "$GITSETU_PROFILES_DIR" ]]; then
+            snap_guard_ok=0
+        else
+            _doctor_snapshot_file "$GITSETU_PROFILES_CONF" || snap_guard_ok=0
+            _doctor_snapshot_file "$GITSETU_HOOKS_DIR/enabled" || snap_guard_ok=0
+            _doctor_snapshot_file "$GITSETU_HOOKS_DIR/entrypoint" || snap_guard_ok=0
+            for snap_item in "${GITSETU_GUARD_HOOK_NAMES[@]}"; do
+                [[ "$snap_guard_ok" -eq 1 ]] || break
+                _doctor_snapshot_file "$GITSETU_HOOKS_DIR/$snap_item" || snap_guard_ok=0
+            done
+            for snap_item in "$GITSETU_PROFILES_DIR"/*.gitconfig; do
+                [[ -f "$snap_item" ]] || continue
+                [[ "$snap_guard_ok" -eq 1 ]] || break
+                _doctor_snapshot_file "$snap_item" || snap_guard_ok=0
+            done
+        fi
+        if [[ "$snap_guard_ok" -ne 1 ]]; then
+            print_error "Unable to create guard rollback snapshots; repair was not started."
             _doctor_discard_rollbacks
             _doctor_restore_traps
             release_lock || true

@@ -3,13 +3,13 @@
   "name": "gitsetu",
   "version": "1.1.0",
   "releaseState": "development",
-  "sourceCommit": "d270aa9d88ce7da5eabcfeabcb4f5f5114ea0a93",
+  "sourceCommit": "3857416952c5672c01d1402f155355edc18010de",
   "sourceDirty": "clean",
-  "bundleSha256": "5de8e6cee64974de23b728f6a34816aaf4d1f4618317c13edbb5d070271e4762",
+  "bundleSha256": "b7e40d2ca389da1b9b16f823ea0f6929f0ea13a8d2252e3daf4a184360e46773",
   "modules": [
     {
       "path": "lib/core.sh",
-      "sha256": "dd9e3e8f86d20285c87c19fe14dba4b80fa4f2d34da91cda107d634a14647d59"
+      "sha256": "471a73b0a98ae15dcf681d942905a25882d1de592b1585ef6b722cff8a931bcd"
     },
     {
       "path": "lib/platform.sh",
@@ -37,11 +37,11 @@
     },
     {
       "path": "lib/guard.sh",
-      "sha256": "c50d26d927988a788358733eeebff934545848f51050000600c2a14a9366ad52"
+      "sha256": "9e4cccb41535d541e7d4020f28dcc80c79be05686786ec6c1cfd867de08070cf"
     },
     {
       "path": "lib/doctor.sh",
-      "sha256": "f397006afbcbd01a3c3baf12b5892159a2fd69b4375d103a5ade24fa49f1b811"
+      "sha256": "fd706bbc03e81fd096da296c4f2b403d51f199190cd65cec8b52defce935f360"
     },
     {
       "path": "lib/verify.sh",
