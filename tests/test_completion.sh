@@ -117,10 +117,31 @@ test_completion_offers_guard_and_remote_flags() {
     assert_contains "$add_flags" "--sign=" "profile add completion offers --sign=" || return 1
 }
 
+test_completion_standalone_noop_and_portable_decode() {
+    # In standalone bundle mode, sourcing completion.sh must be a no-op
+    local defined_in_standalone="no"
+    defined_in_standalone=$(bash -c 'GITSETU_STANDALONE=1; source "$1"; if declare -F _gitsetu >/dev/null 2>&1; then printf yes; else printf no; fi' _ "$COMPLETION_SCRIPT")
+    assert_equals "no" "$defined_in_standalone" "GITSETU_STANDALONE=1 skips completion setup" || return 1
+
+    # Portable hex-to-octal decoding must handle spaces, %, and backslashes
+    # shellcheck disable=SC1090
+    source "$COMPLETION_SCRIPT"
+    local decoded
+    decoded=$(_gitsetu_completion_decode_field "%77%6F%72%6B%20%25%5C")
+    assert_equals "work %\\" "$decoded" "bash decode handles spaces, percent, and backslash" || return 1
+
+    if command -v zsh >/dev/null 2>&1; then
+        local zsh_decoded
+        zsh_decoded=$(zsh -c 'set -e; source "$1"; _gitsetu_completion_decode_field "%77%6F%72%6B%20%25%5C"' _ "$COMPLETION_SCRIPT")
+        assert_equals "work %\\" "$zsh_decoded" "zsh decode matches bash decode identically" || return 1
+    fi
+}
+
 printf '\n%btest_completion.sh%b\n' "$T_BOLD" "$T_RESET"
 run_test "completion sources repeatedly without resetting shell state" test_completion_sources_idempotently
 run_test "completion offers supported top-level commands" test_completion_top_level_commands
 run_test "profile completion separates actions and v2 labels" test_completion_profile_actions_and_labels
 run_test "completion rejects legacy registry labels" test_completion_legacy_registry_not_offered
 run_test "completion offers --guard, --no-guard, and --remote= flags" test_completion_offers_guard_and_remote_flags
+run_test "completion is a no-op in standalone bundle and decodes portably in Bash/Zsh" test_completion_standalone_noop_and_portable_decode
 print_results "Completion tests"

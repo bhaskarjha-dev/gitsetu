@@ -1503,9 +1503,13 @@ array_contains() {
 _gitsetu_version_ge() {
     local v1="${1#v}" v2="${2#v}"
     [[ "$v1" == "$v2" ]] && return 0
-    local IFS=.
-    # shellcheck disable=SC2206
-    local -a a1=($v1) a2=($v2)
+    local core1="${v1%%-*}" core2="${v2%%-*}"
+    local pre1="" pre2=""
+    [[ "$v1" == *-* ]] && pre1="${v1#*-}"
+    [[ "$v2" == *-* ]] && pre2="${v2#*-}"
+    local -a a1=() a2=()
+    IFS=. read -r -a a1 <<< "$core1"
+    IFS=. read -r -a a2 <<< "$core2"
     local i n1 n2 len
     len=${#a1[@]}
     [[ ${#a2[@]} -gt $len ]] && len=${#a2[@]}
@@ -1519,6 +1523,12 @@ _gitsetu_version_ge() {
         if [[ "$n1" -gt "$n2" ]]; then return 0; fi
         if [[ "$n1" -lt "$n2" ]]; then return 1; fi
     done
+    # Core versions are equal: final release > prerelease.
+    if [[ -z "$pre1" && -n "$pre2" ]]; then return 0; fi
+    if [[ -n "$pre1" && -z "$pre2" ]]; then return 1; fi
+    if [[ -n "$pre1" && -n "$pre2" ]]; then
+        [[ "$pre1" < "$pre2" ]] && return 1
+    fi
     return 0
 }
 

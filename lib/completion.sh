@@ -4,6 +4,11 @@
 # Add one of the following to ~/.bashrc or ~/.zshrc:
 #   source /path/to/gitsetu/lib/completion.sh
 
+# Do not execute shell completion setup when inlined in the standalone bundle.
+if [[ "${GITSETU_STANDALONE:-0}" == "1" ]]; then
+    return 0
+fi
+
 # Zsh initializes its completion system lazily. A guard keeps repeated sourcing
 # from resetting an already configured completion database.
 if [[ -n "${ZSH_VERSION-}" ]]; then
@@ -22,9 +27,9 @@ _gitsetu_completion_decode_field() {
     [[ "$encoded" != *%00* ]] || return 1
     local decoded="" hex octal char i
     for (( i=1; i<${#encoded}; i+=3 )); do
-        hex="${encoded:i:2}"
+        hex="${encoded:$i:2}"
         printf -v octal '%03o' "$((16#$hex))"
-        printf -v char '\\%s' "$octal"
+        printf -v char '\\0%s' "$octal"
         decoded="${decoded}${char}"
     done
     printf '%b' "$decoded"

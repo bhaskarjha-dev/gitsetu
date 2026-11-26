@@ -21,7 +21,7 @@ _gitsetu_configure_lock_path() {
     elif [[ -n "${XDG_STATE_HOME:-}" ]]; then
         state_base="$XDG_STATE_HOME"
         candidate="${state_base%/}/gitsetu/profiles.lock"
-    elif [[ "${GITSETU_OS:-}" == "gitbash" && -n "${LOCALAPPDATA:-}" ]]; then
+    elif [[ "${GITSETU_OS:-}" == "gitbash" || "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == mingw* || "${OSTYPE:-}" == cygwin* ]] && [[ -n "${LOCALAPPDATA:-}" ]]; then
         state_base="$LOCALAPPDATA"
         candidate="${state_base%/}/gitsetu/profiles.lock"
     else
@@ -150,7 +150,10 @@ preset_guided_onboarding() {
 
                 local email=""
                 if [[ -n "$def_email" ]]; then
-                    read -r -p "  Email [$def_email]: " email || true
+                    if ! read -r -p "  Email [$def_email]: " email; then
+                        print_info "Setup cancelled."
+                        return 0
+                    fi
                     email="${email:-$def_email}"
                 fi
 
@@ -158,7 +161,10 @@ preset_guided_onboarding() {
                     if [[ -n "$email" ]] && ! validate_email "$email"; then
                         print_error "Invalid email address: '$email'."
                     fi
-                    read -r -p "  Email: " email || true
+                    if ! read -r -p "  Email: " email; then
+                        print_info "Setup cancelled."
+                        return 0
+                    fi
                 done
 
                 local global_key
@@ -213,7 +219,10 @@ preset_guided_onboarding() {
 
                 local personal_email=""
                 if [[ -n "$def_personal_email" ]]; then
-                    read -r -p "  Personal Email [$def_personal_email]: " personal_email || true
+                    if ! read -r -p "  Personal Email [$def_personal_email]: " personal_email; then
+                        print_info "Setup cancelled."
+                        return 0
+                    fi
                     personal_email="${personal_email:-$def_personal_email}"
                 fi
 
@@ -221,16 +230,25 @@ preset_guided_onboarding() {
                     if [[ -n "$personal_email" ]] && ! validate_email "$personal_email"; then
                         print_error "Invalid email address: '$personal_email'."
                     fi
-                    read -r -p "  Personal Email: " personal_email || true
+                    if ! read -r -p "  Personal Email: " personal_email; then
+                        print_info "Setup cancelled."
+                        return 0
+                    fi
                 done
 
                 local work_email=""
-                read -r -p "  Work Email: " work_email || true
+                if ! read -r -p "  Work Email: " work_email; then
+                    print_info "Setup cancelled."
+                    return 0
+                fi
                 while [[ -z "$work_email" ]] || ! validate_email "$work_email"; do
                     if [[ -n "$work_email" ]] && ! validate_email "$work_email"; then
                         print_error "Invalid email address: '$work_email'."
                     fi
-                    read -r -p "  Work Email: " work_email || true
+                    if ! read -r -p "  Work Email: " work_email; then
+                        print_info "Setup cancelled."
+                        return 0
+                    fi
                 done
 
                 local disp_work_dir="$def_work_dir"
@@ -368,12 +386,20 @@ prompt_edit_profile() {
     
     # Key
     local def_key="${PROFILE_KEYS[i]}"
-    if confirm "Use a FIDO2 / YubiKey hardware key for this profile?" "n"; then
+    local fido_default="n"
+    if [[ "$def_key" == *"_sk_"* || "$def_key" == *"_sk" ]]; then
+        fido_default="y"
+    fi
+    if confirm "Use a FIDO2 / YubiKey hardware key for this profile?" "$fido_default"; then
         if [[ "$def_key" != *"_sk_"* ]]; then
-            def_key="${def_key/id_ed25519/id_ed25519_sk}"
+            if [[ "$def_key" == *"/id_ed25519" ]]; then
+                def_key="${def_key}_sk_${PROFILE_LABELS[i]}"
+            else
+                def_key="${def_key/id_ed25519/id_ed25519_sk}"
+            fi
         fi
     else
-        def_key="${def_key/_sk_/}"
+        def_key="${def_key/_sk_/_}"
     fi
     ask "SSH Key Path" "$def_key"
     if [[ -n "$REPLY" ]]; then PROFILE_KEYS[i]=$(normalize_path "$REPLY"); fi
@@ -1170,6 +1196,8 @@ _SETUP_CREATED_KEYS=()
 _SETUP_STORED_CREDENTIAL_LABELS=()
 _SETUP_STORED_CREDENTIAL_PROVIDERS=()
 _SETUP_STORED_CREDENTIAL_PATHS=()
+_SETUP_PENDING_REMOTES_LABEL=""
+_SETUP_PENDING_REMOTES=()
 
 _setup_snapshot_regular_or_tree() {
     local source_path="$1" snapshot_path="$2"
@@ -1252,6 +1280,7 @@ _setup_begin_transaction() {
     if ! _setup_snapshot_target "$txn" profiles-conf "$GITSETU_PROFILES_CONF" ||
        ! _setup_snapshot_target "$txn" profiles-dir "$GITSETU_PROFILES_DIR" ||
        ! _setup_snapshot_target "$txn" hooks-dir "$GITSETU_HOOKS_DIR" ||
+       ! _setup_snapshot_target "$txn" remotes-dir "${GITSETU_CONFIG_DIR%/}/remotes" ||
        ! _setup_snapshot_target "$txn" gitconfig "$HOME/.gitconfig" ||
        ! _setup_snapshot_target "$txn" sshconfig "$HOME/.ssh/config"; then
         rm -rf "$txn" 2>/dev/null || true
@@ -1270,7 +1299,7 @@ delete_managed_key_after_confirmation() {
     fi
     # Recheck immediately after the prompt: a replacement/reparse point invalidates
     # the user's confirmation and must never be removed.
-    _setup_validate_managed_key_destination || return 1
+    _setup_validate_managed_key_destination "$key_path" || return 1
     rm -f "$key_path" "${key_path}.pub" || return 1
 }
 
@@ -1329,6 +1358,7 @@ _setup_rollback_transaction() {
         _setup_restore_target "$txn" profiles-conf "$GITSETU_PROFILES_CONF" || failed=1
         _setup_restore_target "$txn" profiles-dir "$GITSETU_PROFILES_DIR" || failed=1
         _setup_restore_target "$txn" hooks-dir "$GITSETU_HOOKS_DIR" || failed=1
+        _setup_restore_target "$txn" remotes-dir "${GITSETU_CONFIG_DIR%/}/remotes" || failed=1
         _setup_restore_target "$txn" gitconfig "$HOME/.gitconfig" || failed=1
         _setup_restore_target "$txn" sshconfig "$HOME/.ssh/config" || failed=1
         if [[ "$failed" -eq 0 ]]; then
@@ -1402,12 +1432,14 @@ remove_profile_transaction() {
 # execute_blueprint
 # ------------------------------------------------------------------------------
 execute_blueprint() {
-    acquire_lock || return 1
+    local locked=0
+    if [[ "${GITSETU_DRY_RUN:-0}" -ne 1 ]]; then
+        acquire_lock || return 1
+        locked=1
+    fi
 
-    if [[ -t 2 ]]; then
-        clear || printf '\033c'
-    else
-        printf '\033c'
+    if [[ -t 1 && -t 2 && "${GITSETU_AUTO_MODE:-0}" -ne 1 ]]; then
+        clear >&2 || printf >&2 '\033c'
     fi
     print_section "Executing Setup Blueprint"
 
@@ -1423,6 +1455,25 @@ execute_blueprint() {
         _setup_blueprint_abort "Could not prepare profile workspace directories."
         return 1
     fi
+    if [[ "${GITSETU_DRY_RUN:-0}" -ne 1 && -n "${_SETUP_PENDING_REMOTES_LABEL:-}" && -n "${_SETUP_PENDING_REMOTES[0]:-}" ]]; then
+        local remotes_dir="${GITSETU_CONFIG_DIR:-$HOME/.config/gitsetu}/remotes"
+        (umask 077 && mkdir -p "$remotes_dir") 2>/dev/null || {
+            _setup_blueprint_abort "Could not create GitSetu remotes directory."
+            return 1
+        }
+        local rem_target="$remotes_dir/${_SETUP_PENDING_REMOTES_LABEL}.remotes"
+        local r_entry
+        for r_entry in "${_SETUP_PENDING_REMOTES[@]}"; do
+            if [[ ! -f "$rem_target" ]] || ! grep -Fqx -- "$r_entry" "$rem_target" 2>/dev/null; then
+                printf '%s\n' "$r_entry" >> "$rem_target" || {
+                    _setup_blueprint_abort "Could not write remote routing rules."
+                    return 1
+                }
+            fi
+        done
+    fi
+    _SETUP_PENDING_REMOTES_LABEL=""
+    _SETUP_PENDING_REMOTES=()
 
     # 1. Generate SSH keys
     print_section "Generating SSH Keys"
@@ -1526,9 +1577,11 @@ execute_blueprint() {
             _SETUP_TRANSACTION_DIR=""
         fi
     fi
-    if ! release_lock; then
-        print_error "Setup state was written, but the runtime lock could not be released cleanly."
-        return 1
+    if [[ "$locked" -eq 1 ]]; then
+        if ! release_lock; then
+            print_error "Setup state was written, but the runtime lock could not be released cleanly."
+            return 1
+        fi
     fi
 
     # Display public keys only after all state is committed and cannot abort
@@ -1741,6 +1794,7 @@ cmd_add() {
 # Usage: gitsetu profile add <label> --email="..."
 # ------------------------------------------------------------------------------
 cmd_profile() {
+    detect_os
     local action="$1"
     shift
     local label="$1"
@@ -1833,16 +1887,19 @@ cmd_profile() {
                         fi
                         ;;
                     --remote)
-                        shift
-                        if [[ $# -gt 0 && -n "$1" ]]; then
-                            local r_val="$1"
-                            if [[ "$r_val" == *$'\n'* || "$r_val" == *$'\r'* || "$r_val" == *'"'* || "$r_val" == *'['* || "$r_val" == *']'* ]]; then
-                                print_error "Invalid remote pattern: contains control characters, quotes, or brackets."
-                                release_lock
-                                exit 1
-                            fi
-                            profile_remotes+=("$r_val")
+                        if [[ $# -lt 2 || -z "$2" ]]; then
+                            print_error "--remote requires a non-empty pattern argument."
+                            release_lock
+                            exit 1
                         fi
+                        shift
+                        local r_val="$1"
+                        if [[ "$r_val" == *$'\n'* || "$r_val" == *$'\r'* || "$r_val" == *'"'* || "$r_val" == *'['* || "$r_val" == *']'* ]]; then
+                            print_error "Invalid remote pattern: contains control characters, quotes, or brackets."
+                            release_lock
+                            exit 1
+                        fi
+                        profile_remotes+=("$r_val")
                         ;;
                     *)
                         print_error "Unknown flag: $1"
@@ -1866,6 +1923,14 @@ cmd_profile() {
                 fi
             fi
 
+            # Backfill empty names on any auto-discovered profiles seeded on fresh machines
+            local _bf_i _bf_name="${PROFILE_NAMES[0]:-${PROFILE_NAMES[idx]:-GitSetu User}}"
+            for (( _bf_i=0; _bf_i<PROFILE_COUNT; _bf_i++ )); do
+                if [[ -z "${PROFILE_NAMES[$_bf_i]:-}" ]]; then
+                    PROFILE_NAMES[_bf_i]="$_bf_name"
+                fi
+            done
+
             # Validation
             if [[ -z "${PROFILE_EMAILS[idx]}" ]]; then
                 if [[ -t 1 ]]; then
@@ -1884,14 +1949,11 @@ cmd_profile() {
                 exit 1
             fi
 
+            _SETUP_PENDING_REMOTES_LABEL=""
+            _SETUP_PENDING_REMOTES=()
             if [[ ${#profile_remotes[@]} -gt 0 ]]; then
-                local remotes_dir="${GITSETU_CONFIG_DIR:-$HOME/.config/gitsetu}/remotes"
-                (umask 077 && mkdir -p "$remotes_dir") 2>/dev/null || true
-                local rem_target="$remotes_dir/${label}.remotes"
-                local r_entry
-                for r_entry in "${profile_remotes[@]}"; do
-                    printf '%s\n' "$r_entry" >> "$rem_target"
-                done
+                _SETUP_PENDING_REMOTES_LABEL="$label"
+                _SETUP_PENDING_REMOTES=("${profile_remotes[@]}")
                 local git_ver
                 git_ver=$(git --version 2>/dev/null | awk '{print $3}' || true)
                 if [[ -n "$git_ver" ]]; then

@@ -195,6 +195,19 @@ test_validate_profile_blueprint_complete_mode() {
     assert_equals "1" "$complete_status" "pre-mutation validation rejects an incomplete identity" || return 1
 }
 
+test_discover_fido2_sk_key_and_no_comment_globbing() {
+    rm -rf "$HOME/.gitconfig" "$HOME/.config/gitsetu" "$HOME/.ssh" "$TEST_HOME/glob-cwd"
+    mkdir -p "$HOME/.ssh" "$TEST_HOME/glob-cwd"
+    : > "$TEST_HOME/glob-cwd/decoy@evil.com"
+    printf 'sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29t * fido@example.com\n' > "$HOME/.ssh/id_ed25519_sk_global.pub"
+
+    (cd "$TEST_HOME/glob-cwd" && discover_global_git_identity && printf '%s' "$DISCOVERED_GLOBAL_EMAIL") > "$TEST_HOME/discovered_email.txt"
+    local got
+    got=$(cat "$TEST_HOME/discovered_email.txt")
+    rm -rf "$TEST_HOME/glob-cwd" "$TEST_HOME/discovered_email.txt"
+    assert_equals "fido@example.com" "$got" "discovers email from FIDO2 sk-ssh key without globbing * in comment" || return 1
+}
+
 printf '\n%btest_discovery.sh%b\n' "$T_BOLD" "$T_RESET"
 run_test "extracts email from ssh public key" test_discover_global_git_identity_from_ssh
 run_test "extracts identity from gitconfig" test_discover_global_git_identity_from_gitconfig
@@ -210,4 +223,5 @@ run_test "rejects malformed discovered identity values" test_discovery_rejects_m
 run_test "discovers global identity from configured v2 profile path" test_discovery_uses_configured_v2_profile_location
 run_test "does not apply global identity to an incomplete candidate" test_discovery_does_not_fallback_candidate_to_global_identity
 run_test "blueprint validation separates shape from complete identity" test_validate_profile_blueprint_complete_mode
+run_test "discovers FIDO2 sk-ssh pub keys without globbing comments" test_discover_fido2_sk_key_and_no_comment_globbing
 print_results "Discovery tests"

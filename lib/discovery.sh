@@ -80,8 +80,10 @@ _discovery_email_from_public_key() {
 
     [[ -f "$key_file" && ! -L "$key_file" ]] || return 1
     while read -r key_type key_data comment; do
-        [[ "$key_type" == ssh-* || "$key_type" == ecdsa-* ]] || continue
-        for token in $comment; do
+        [[ "$key_type" == ssh-* || "$key_type" == ecdsa-* || "$key_type" == sk-ssh-* || "$key_type" == sk-ecdsa-* ]] || continue
+        local -a comment_tokens=()
+        IFS=$' \t' read -r -a comment_tokens <<< "$comment"
+        for token in "${comment_tokens[@]+"${comment_tokens[@]}"}"; do
             candidate="${token//[<>()]/}"
             candidate="${candidate%,}"
             candidate="${candidate%;}"
@@ -179,8 +181,10 @@ discover_global_git_identity() {
     if [[ -z "$DISCOVERED_GLOBAL_EMAIL" ]]; then
         local pub_key extracted
         for pub_key in \
+            "$HOME/.ssh/id_ed25519_sk_global.pub" \
             "$HOME/.ssh/id_ed25519_global.pub" \
             "$HOME/.ssh/id_rsa_global.pub" \
+            "$HOME/.ssh/id_ed25519_sk.pub" \
             "$HOME/.ssh/id_ed25519.pub" \
             "$HOME/.ssh/id_rsa.pub"
         do
@@ -244,8 +248,8 @@ discover_global_ssh_key() {
         return 0
     }
 
-    # 1. Reuse existing id_ed25519_global or id_rsa_global
-    for pattern in "id_ed25519_global" "id_rsa_global"; do
+    # 1. Reuse existing global-named keys (including FIDO2)
+    for pattern in "id_ed25519_sk_global" "id_ed25519_global" "id_rsa_global"; do
         path="$ssh_dir/$pattern"
         if [[ -f "$path" && ! -L "$path" ]]; then
             printf '%s\n' "$path"
@@ -254,7 +258,7 @@ discover_global_ssh_key() {
     done
 
     # 2. Otherwise reuse the first existing pair (private and .pub) among default keys
-    for pattern in "id_ed25519" "id_ecdsa" "id_rsa"; do
+    for pattern in "id_ed25519_sk" "id_ed25519" "id_ecdsa" "id_rsa"; do
         path="$ssh_dir/$pattern"
         if [[ -f "$path" && ! -L "$path" && -f "${path}.pub" && ! -L "${path}.pub" ]]; then
             printf '%s\n' "$path"

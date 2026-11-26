@@ -94,6 +94,25 @@ test_auto_runner_adopts_existing_blueprint() {
     assert_file_contains "$GITSETU_PROFILES_DIR/ssh_config" "Host gitsetu-personal" "generates personal ssh host" || return 1
 }
 
+test_cli_setup_auto_dry_run_is_side_effect_free() {
+    rm -rf "$GITSETU_CONFIG_DIR" "$HOME/.gitconfig" "$HOME/.ssh" "$GITSETU_LOCK_DIR"
+    git config --global user.name "Dry Bot"
+    git config --global user.email "drybot@build.io"
+
+    local stdout_out rc=0
+    stdout_out=$(bash "$GITSETU_EXE" setup --auto --dry-run 2>/dev/null) || rc=$?
+    assert_equals "0" "$rc" "setup --auto --dry-run exits 0" || return 1
+    assert_equals "" "$stdout_out" "setup --auto --dry-run emits zero stdout/escape sequences" || return 1
+    if [[ -d "$HOME/.ssh" ]]; then
+        printf '    FAIL: setup --auto --dry-run created ~/.ssh\n'
+        return 1
+    fi
+    if [[ -d "$GITSETU_LOCK_DIR" ]]; then
+        printf '    FAIL: setup --auto --dry-run created runtime lock\n'
+        return 1
+    fi
+}
+
 # ------------------------------------------------------------------------------
 # Run all tests
 # ------------------------------------------------------------------------------
@@ -102,4 +121,5 @@ run_test "auto_setup_runner fails without discoverable email" test_auto_runner_f
 run_test "auto_setup_runner succeeds with discovered Git email" test_auto_runner_succeeds_with_env_email
 run_test "CLI gitsetu setup --auto executes zero-prompt pipeline" test_cli_setup_auto_execution
 run_test "auto_setup_runner adopts existing blueprint profiles" test_auto_runner_adopts_existing_blueprint
+run_test "CLI gitsetu setup --auto --dry-run is side-effect free with clean stdout" test_cli_setup_auto_dry_run_is_side_effect_free
 print_results "Ephemeral Runner tests"
