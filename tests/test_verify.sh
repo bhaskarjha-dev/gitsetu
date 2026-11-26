@@ -262,6 +262,50 @@ test_connectivity_explicit_consent_and_dry_run() {
     assert_file_not_exists "$TEST_HOME/ssh-ran" "dry-run never invokes SSH" || return 1
 }
 
+test_verify_nested_profile_repo_isolation_and_error_diagnostics() {
+    setup_verify_state
+    rm -rf "$HOME/work/repo"
+    mkdir -p "$HOME/work/client/child-repo"
+    ssh-keygen -q -t ed25519 -N '' -f "$HOME/.ssh/id_ed25519_client"
+    local global_key work_key client_key work_dir client_dir
+    global_key=$(normalize_path "$HOME/.ssh/id_ed25519_global")
+    work_key=$(normalize_path "$HOME/.ssh/id_ed25519_work")
+    client_key=$(normalize_path "$HOME/.ssh/id_ed25519_client")
+    work_dir=$(normalize_path "$HOME/work")
+    client_dir=$(normalize_path "$HOME/work/client")
+
+    PROFILE_COUNT=3
+    PROFILE_LABELS=(global work client)
+    PROFILE_NAMES=("Global User" "Work User" "Client User")
+    PROFILE_EMAILS=(global@example.com work@example.com client@example.com)
+    PROFILE_DIRS=("" "$work_dir" "$client_dir")
+    PROFILE_PROVIDERS=(github.com github.com github.com)
+    PROFILE_SIGNS=(0 0 0)
+    PROFILE_KEYS=("$global_key" "$work_key" "$client_key")
+    PROFILE_USERS=(globaluser workuser clientuser)
+    PROFILE_PATS=("" "" "")
+    test_v2_profile_config client "Client User" "client@example.com"
+    {
+        test_v2_registry_header
+        test_v2_registry_line global "" "github.com" "0" "$global_key" ""
+        test_v2_registry_line work "$work_dir" "github.com" "0" "$work_key" ""
+        test_v2_registry_line client "$client_dir" "github.com" "0" "$client_key" ""
+    } > "$GITSETU_PROFILES_CONF"
+    write_global_gitconfig
+    git -C "$HOME/work/client/child-repo" init --quiet
+
+    local status=0 out=""
+    out=$(verify_git_config 2>&1) || status=$?
+    assert_equals "0" "$status" "nested child-profile repo does not cause false mismatch for parent profile" || return 1
+
+    # Also verify non-subshell GUARD_* diagnostic emails appear on actual mismatch
+    status=0
+    out=$(GIT_AUTHOR_EMAIL=wrong@example.com GIT_COMMITTER_EMAIL=client@example.com verify_git_config 2>&1) || status=$?
+    assert_equals "1" "$status" "author override still fails nested child verification" || return 1
+    assert_contains "$out" "Expected: Client User <client@example.com>" "diagnostic includes expected email from non-subshell guard check" || return 1
+    assert_contains "$out" "Actual:   Client User <wrong@example.com>" "diagnostic includes actual email from non-subshell guard check" || return 1
+}
+
 printf '\n%btest_verify.sh%b\n' "$T_BOLD" "$T_RESET"
 run_test "verify_ssh_keys: matching key pairs pass" test_verify_ssh_keys_all_ok
 run_test "verify_ssh_keys: missing public key fails" test_verify_ssh_keys_missing_pair
@@ -276,4 +320,5 @@ run_test "verify_git_config: complete v2 config passes" test_verify_git_config_a
 run_test "verify_all: required validators run and network stays separate" test_verify_all_stderr_only_and_offline
 run_test "connectivity: unknown host key is refused by default" test_connectivity_refuses_untrusted_first_use
 run_test "connectivity: explicit first-use consent and dry-run behavior" test_connectivity_explicit_consent_and_dry_run
+run_test "verify_git_config: nested child profile repo isolation and GUARD_* diagnostics" test_verify_nested_profile_repo_isolation_and_error_diagnostics
 print_results "Verify tests"

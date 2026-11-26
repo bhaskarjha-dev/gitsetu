@@ -93,21 +93,51 @@ _verify_extract_email_from_ident() {
     printf '%s\n' "$email"
 }
 
+_verify_repo_belongs_to_profile() {
+    local repo="$1" expected_label="$2"
+    local repo_norm best_label="" best_len=-1 j d d_norm
+    repo_norm=$(normalize_path "$repo" 2>/dev/null || printf '%s' "$repo")
+    for (( j=0; j<PROFILE_COUNT; j++ )); do
+        d="${PROFILE_DIRS[$j]:-}"
+        [[ -n "$d" ]] || continue
+        d_norm=$(normalize_path "$d" 2>/dev/null || printf '%s' "$d")
+        if declare -f _guard_path_contains >/dev/null 2>&1; then
+            if _guard_path_contains "$repo_norm" "$d_norm"; then
+                if [[ ${#d_norm} -gt $best_len ]]; then
+                    best_len=${#d_norm}
+                    best_label="${PROFILE_LABELS[$j]:-}"
+                fi
+            fi
+        elif [[ "$repo_norm" == "$d_norm" || "$repo_norm" == "$d_norm/"* ]]; then
+            if [[ ${#d_norm} -gt $best_len ]]; then
+                best_len=${#d_norm}
+                best_label="${PROFILE_LABELS[$j]:-}"
+            fi
+        fi
+    done
+    [[ -z "$best_label" || "$best_label" == "$expected_label" ]]
+}
+
 _verify_first_repo_under() {
-    local root="${1:-}"
+    local root="${1:-}" expected_label="${2:-}"
     local marker repo
 
     [[ -d "$root" ]] || return 1
     if git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         repo=$(git -C "$root" rev-parse --show-toplevel 2>/dev/null || true)
         [[ -n "$repo" ]] || return 1
-        printf '%s\n' "$repo"
-        return 0
+        if [[ -z "$expected_label" ]] || _verify_repo_belongs_to_profile "$repo" "$expected_label"; then
+            printf '%s\n' "$repo"
+            return 0
+        fi
     fi
 
     while IFS= read -r -d '' marker; do
         repo="${marker%/.git}"
         [[ -n "$repo" ]] || continue
+        if [[ -n "$expected_label" ]] && ! _verify_repo_belongs_to_profile "$repo" "$expected_label"; then
+            continue
+        fi
         printf '%s\n' "$repo"
         return 0
     done < <(find "$root" -maxdepth 3 -name .git -print0 2>/dev/null)
@@ -210,10 +240,14 @@ verify_git_config() {
     fi
 
     local head_start head_end tail_start tail_end
-    head_start=$(grep -F -c "${GITSETU_MANAGED_HEAD_START:-# [gitsetu:managed:head:start]}" "$target_gitconfig" 2>/dev/null || printf '0')
-    head_end=$(grep -F -c "${GITSETU_MANAGED_HEAD_END:-# [gitsetu:managed:head:end]}" "$target_gitconfig" 2>/dev/null || printf '0')
-    tail_start=$(grep -F -c "${GITSETU_MANAGED_START:-# [gitsetu:managed:start]}" "$target_gitconfig" 2>/dev/null || printf '0')
-    tail_end=$(grep -F -c "${GITSETU_MANAGED_END:-# [gitsetu:managed:end]}" "$target_gitconfig" 2>/dev/null || printf '0')
+    head_start=$(grep -F -c "${GITSETU_MANAGED_HEAD_START:-# [gitsetu:managed:head:start]}" "$target_gitconfig" 2>/dev/null || true)
+    head_end=$(grep -F -c "${GITSETU_MANAGED_HEAD_END:-# [gitsetu:managed:head:end]}" "$target_gitconfig" 2>/dev/null || true)
+    tail_start=$(grep -F -c "${GITSETU_MANAGED_START:-# [gitsetu:managed:start]}" "$target_gitconfig" 2>/dev/null || true)
+    tail_end=$(grep -F -c "${GITSETU_MANAGED_END:-# [gitsetu:managed:end]}" "$target_gitconfig" 2>/dev/null || true)
+    [[ "$head_start" =~ ^[0-9]+$ ]] || head_start=0
+    [[ "$head_end" =~ ^[0-9]+$ ]] || head_end=0
+    [[ "$tail_start" =~ ^[0-9]+$ ]] || tail_start=0
+    [[ "$tail_end" =~ ^[0-9]+$ ]] || tail_end=0
     if [[ "$tail_start" != "1" || "$tail_end" != "1" || "$head_start" != "$head_end" || "$head_start" -gt 1 ]]; then
         print_error "Global gitconfig must contain valid GitSetu managed blocks."
         issues=$((issues + 1))
@@ -263,15 +297,24 @@ verify_git_config() {
     done
 
     # Validate effective identity in real repositories using the unified guard validator
+    local prev_pwd
+    prev_pwd=$(pwd -P 2>/dev/null || printf '%s' "$PWD")
     for (( i=0; i<PROFILE_COUNT; i++ )); do
         label="${PROFILE_LABELS[$i]:-}"
         dir="${PROFILE_DIRS[$i]:-}"
         [[ -n "$dir" ]] || continue
-        repo=$(_verify_first_repo_under "$dir" 2>/dev/null || true)
+        repo=$(_verify_first_repo_under "$dir" "$label" 2>/dev/null || true)
         [[ -n "$repo" ]] || continue
         profile_path="$GITSETU_PROFILES_DIR/${label}.gitconfig"
 
-        if ! (cd "$repo" && _guard_validate_effective_identity "$label" "$profile_path"); then
+        local ident_rc=0
+        if cd "$repo" 2>/dev/null; then
+            _guard_validate_effective_identity "$label" "$profile_path" || ident_rc=$?
+            cd "$prev_pwd" 2>/dev/null || true
+        else
+            ident_rc=1
+        fi
+        if [[ "$ident_rc" -ne 0 ]]; then
             print_error "Profile '$label': effective identity mismatch in $repo"
             print_error "  Expected: ${GUARD_EXPECTED_NAME:-<unset>} <${GUARD_EXPECTED_EMAIL:-<unset>}>${GUARD_EXPECTED_ORIGIN:+ (from $GUARD_EXPECTED_ORIGIN)}"
             print_error "  Actual:   ${GUARD_ACTUAL_NAME:-<unset>} <${GUARD_ACTUAL_EMAIL:-<unset>}>${GUARD_ACTUAL_NAME_ORIGIN:+ (from $GUARD_ACTUAL_NAME_ORIGIN)}"

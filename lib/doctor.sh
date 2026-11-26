@@ -45,9 +45,27 @@ _doctor_profile_email() {
 _doctor_ssh_include_present() {
     local ssh_config="$HOME/.ssh/config"
     [[ -f "$ssh_config" ]] || return 1
-    grep -qF 'Include ~/.config/gitsetu/profiles/ssh_config' "$ssh_config" 2>/dev/null || \
-        grep -qF "Include $GITSETU_PROFILES_DIR/ssh_config" "$ssh_config" 2>/dev/null || \
-        grep -qF "Include \"$GITSETU_PROFILES_DIR/ssh_config\"" "$ssh_config" 2>/dev/null
+    local expected_path="$GITSETU_PROFILES_DIR/ssh_config"
+    if declare -f normalize_path >/dev/null 2>&1; then
+        expected_path=$(normalize_path "$expected_path" 2>/dev/null || printf '%s' "$expected_path")
+    fi
+    local portable_path="$expected_path"
+    if declare -f _ssh_portable_path >/dev/null 2>&1; then
+        portable_path=$(_ssh_portable_path "$expected_path")
+    elif [[ "$expected_path" == "$HOME/"* ]]; then
+        portable_path="~/${expected_path#"$HOME"/}"
+    fi
+    local quoted_portable="$portable_path" quoted_abs="$expected_path"
+    if declare -f _ssh_quote_token >/dev/null 2>&1; then
+        quoted_portable=$(_ssh_quote_token "$portable_path")
+        quoted_abs=$(_ssh_quote_token "$expected_path")
+    fi
+    grep -qF "Include $quoted_portable" "$ssh_config" 2>/dev/null || \
+        grep -qF "Include $portable_path" "$ssh_config" 2>/dev/null || \
+        grep -qF "Include $quoted_abs" "$ssh_config" 2>/dev/null || \
+        grep -qF "Include $expected_path" "$ssh_config" 2>/dev/null || \
+        grep -qF "Include \"$expected_path\"" "$ssh_config" 2>/dev/null || \
+        grep -qF 'Include ~/.config/gitsetu/profiles/ssh_config' "$ssh_config" 2>/dev/null
 }
 
 # Parse the effective OpenSSH configuration without opening a network
@@ -505,12 +523,41 @@ run_doctor() {
     return 0
 }
 
+_doctor_json_escape() {
+    if declare -f _gitsetu_json_escape >/dev/null 2>&1; then
+        _gitsetu_json_escape "${1:-}"
+        return 0
+    fi
+    local input="${1:-}" out="" i ch code
+    local LC_ALL=C
+    for (( i=0; i<${#input}; i++ )); do
+        ch="${input:i:1}"
+        case "$ch" in
+            \\) out="${out}\\\\" ;;
+            \") out="${out}\\\"" ;;
+            $'\b') out="${out}\\b" ;;
+            $'\f') out="${out}\\f" ;;
+            $'\n') out="${out}\\n" ;;
+            $'\r') out="${out}\\r" ;;
+            $'\t') out="${out}\\t" ;;
+            [$'\001'-$'\037'])
+                code=$(printf '%s' "$ch" | od -An -tu1 | tr -d ' \t\r\n')
+                printf -v ch '\\u%04x' "$code"
+                out="${out}${ch}"
+                ;;
+            *) out="${out}${ch}" ;;
+        esac
+    done
+    printf '%s' "$out"
+}
+
 # ------------------------------------------------------------------------------
 # run_doctor_json — Machine-readable diagnostics in JSON format
 # ------------------------------------------------------------------------------
 run_doctor_json() {
     local issues=0
     local checks=()
+    [[ -z "${GITSETU_OS:-}" ]] && declare -f detect_os >/dev/null 2>&1 && detect_os
 
     # 1. git_version
     local git_ver git_status="pass" git_ver_rc=0
@@ -521,7 +568,7 @@ run_doctor_json() {
     elif [[ "$git_ver_rc" -eq 2 ]]; then
         git_status="warn"
     fi
-    checks+=("{\"name\": \"git_version\", \"status\": \"$git_status\", \"details\": \"$git_ver\"}")
+    checks+=("{\"name\": \"git_version\", \"status\": \"$git_status\", \"details\": \"$(_doctor_json_escape "$git_ver")\"}")
 
     # 2. openssl
     local openssl_ver openssl_status="pass" openssl_rc=0
@@ -529,7 +576,7 @@ run_doctor_json() {
     if [[ "$openssl_rc" -ne 0 ]]; then
         openssl_status="warn"
     fi
-    checks+=("{\"name\": \"openssl\", \"status\": \"$openssl_status\", \"details\": \"$openssl_ver\"}")
+    checks+=("{\"name\": \"openssl\", \"status\": \"$openssl_status\", \"details\": \"$(_doctor_json_escape "$openssl_ver")\"}")
 
     # 3. clipboard
     local clip_tool clip_status="pass"
@@ -537,7 +584,7 @@ run_doctor_json() {
     if [[ "$clip_tool" == "None" ]]; then
         clip_status="warn"
     fi
-    checks+=("{\"name\": \"clipboard\", \"status\": \"$clip_status\", \"details\": \"$clip_tool\"}")
+    checks+=("{\"name\": \"clipboard\", \"status\": \"$clip_status\", \"details\": \"$(_doctor_json_escape "$clip_tool")\"}")
 
     # 4. known_hosts
     local kh_info kh_status="pass" kh_rc=0
@@ -545,7 +592,7 @@ run_doctor_json() {
     if [[ "$kh_rc" -ne 0 ]]; then
         kh_status="warn"
     fi
-    checks+=("{\"name\": \"known_hosts\", \"status\": \"$kh_status\", \"details\": \"$kh_info\"}")
+    checks+=("{\"name\": \"known_hosts\", \"status\": \"$kh_status\", \"details\": \"$(_doctor_json_escape "$kh_info")\"}")
 
     # 5. profiles_registry
     local reg_status="pass" reg_details="v2 registry valid (${PROFILE_COUNT:-0} profiles)"
@@ -553,6 +600,9 @@ run_doctor_json() {
         reg_status="fail"
         reg_details="registry missing or unsafe"
         issues=$((issues + 1))
+    elif [[ "${GITSETU_REGISTRY_WAS_V1:-0}" -eq 1 ]]; then
+        reg_status="warn"
+        reg_details="legacy v1.0 registry migrated in memory; run doctor --repair"
     elif [[ "$(head -n 1 "$GITSETU_PROFILES_CONF" 2>/dev/null || true)" != "# gitsetu-registry-v2" ]]; then
         reg_status="fail"
         reg_details="registry header missing or unsupported"
@@ -562,7 +612,7 @@ run_doctor_json() {
         reg_details="registry contains no complete profiles"
         issues=$((issues + 1))
     fi
-    checks+=("{\"name\": \"profiles_registry\", \"status\": \"$reg_status\", \"details\": \"$reg_details\"}")
+    checks+=("{\"name\": \"profiles_registry\", \"status\": \"$reg_status\", \"details\": \"$(_doctor_json_escape "$reg_details")\"}")
 
     # 6. gitconfig
     local gc_status="pass" gc_details="managed blocks valid"
@@ -590,10 +640,10 @@ run_doctor_json() {
             issues=$((issues + 1))
         fi
     fi
-    checks+=("{\"name\": \"gitconfig\", \"status\": \"$gc_status\", \"details\": \"$gc_details\"}")
+    checks+=("{\"name\": \"gitconfig\", \"status\": \"$gc_status\", \"details\": \"$(_doctor_json_escape "$gc_details")\"}")
 
-    # 7. ssh_config
-    local sc_status="pass" sc_details="gitsetu include present"
+    # 7. ssh_config (includes isolated managed ssh_config file check)
+    local sc_status="pass" sc_details="gitsetu include and isolated ssh_config valid"
     local sc_target="$HOME/.ssh/config"
     if [[ -L "$sc_target" ]]; then
         if declare -f _gitconfig_resolve_symlink_target >/dev/null 2>&1; then
@@ -602,12 +652,53 @@ run_doctor_json() {
             sc_target=""
         fi
     fi
-    if [[ -L "$HOME/.ssh" || -z "$sc_target" || ! -f "$sc_target" ]] || ! _doctor_ssh_include_present || ! _doctor_ssh_config_valid; then
+    if [[ -L "$HOME/.ssh" || -z "$sc_target" || ! -f "$sc_target" ]] || \
+       [[ -L "$GITSETU_PROFILES_DIR" || -L "$GITSETU_PROFILES_DIR/ssh_config" || ! -f "$GITSETU_PROFILES_DIR/ssh_config" ]] || \
+       ! _doctor_ssh_include_present || ! _doctor_ssh_config_valid; then
         sc_status="fail"
-        sc_details="gitsetu include missing or invalid"
+        sc_details="gitsetu include or isolated ssh_config missing or invalid"
         issues=$((issues + 1))
     fi
-    checks+=("{\"name\": \"ssh_config\", \"status\": \"$sc_status\", \"details\": \"$sc_details\"}")
+    checks+=("{\"name\": \"ssh_config\", \"status\": \"$sc_status\", \"details\": \"$(_doctor_json_escape "$sc_details")\"}")
+
+    # 8. ssh_keys
+    local sk_status="pass" sk_details="all profile SSH keys valid"
+    if [[ "${PROFILE_COUNT:-0}" -gt 0 ]] && declare -f verify_ssh_keys >/dev/null 2>&1; then
+        if ! verify_ssh_keys >/dev/null 2>&1; then
+            sk_status="fail"
+            sk_details="one or more SSH keys failed ownership, permission, or fingerprint verification"
+            issues=$((issues + 1))
+        fi
+    elif [[ "${PROFILE_COUNT:-0}" -eq 0 ]]; then
+        sk_status="warn"
+        sk_details="skipped (no complete profiles)"
+    fi
+    checks+=("{\"name\": \"ssh_keys\", \"status\": \"$sk_status\", \"details\": \"$(_doctor_json_escape "$sk_details")\"}")
+
+    # 9. guard
+    local gd_status="pass" gd_details="guard not enabled"
+    if [[ -f "$GITSETU_HOOKS_DIR/enabled" ]]; then
+        gd_details="guard hooks intact"
+        local gd_ep=""
+        [[ -f "$GITSETU_HOOKS_DIR/entrypoint" ]] && gd_ep=$(cat "$GITSETU_HOOKS_DIR/entrypoint" 2>/dev/null || true)
+        gd_ep="${gd_ep%$'\r'}"
+        if [[ -z "$gd_ep" || ! -x "$gd_ep" ]]; then
+            gd_status="fail"
+            gd_details="guard entrypoint missing or not executable"
+            issues=$((issues + 1))
+        else
+            local gd_hook
+            for gd_hook in "${GITSETU_GUARD_HOOK_NAMES[@]}"; do
+                if [[ ! -x "$GITSETU_HOOKS_DIR/$gd_hook" ]] || ! grep -qF "# [gitsetu:managed] gitsetu-hook v3" "$GITSETU_HOOKS_DIR/$gd_hook" 2>/dev/null; then
+                    gd_status="fail"
+                    gd_details="guard hook stub '$gd_hook' missing, stale, or not executable"
+                    issues=$((issues + 1))
+                    break
+                fi
+            done
+        fi
+    fi
+    checks+=("{\"name\": \"guard\", \"status\": \"$gd_status\", \"details\": \"$(_doctor_json_escape "$gd_details")\"}")
 
     local overall_status="healthy"
     if [[ "$issues" -gt 0 ]]; then
@@ -802,16 +893,15 @@ run_doctor_repair() {
             agent_keys=$(ssh-add -l 2>/dev/null || true)
         fi
         if [[ "$agent_status" -ne 2 ]]; then
+            # CRIT-07: auto_register_ssh_keys intentionally loads only PROFILE_KEYS[0] (global).
             local kp fp
-            for (( i=0; i<PROFILE_COUNT; i++ )); do
-                kp="${PROFILE_KEYS[$i]-}"
-                [[ -n "$kp" && -f "$kp" && ! -L "$kp" ]] || continue
+            kp="${PROFILE_KEYS[0]-}"
+            if [[ -n "$kp" && -f "$kp" && ! -L "$kp" ]]; then
                 fp=$(_verify_key_fingerprint "$kp" 2>/dev/null || true)
                 if [[ -n "$fp" ]] && { [[ -z "$agent_keys" ]] || ! printf '%s\n' "$agent_keys" | grep -qF "$fp"; }; then
                     ssh_agent_needs_repair=1
-                    break
                 fi
-            done
+            fi
         fi
     fi
 
@@ -834,6 +924,24 @@ run_doctor_repair() {
         hooks_needs_repair=1
     fi
 
+    local guard_stubs_need_repair=0
+    if [[ -f "$GITSETU_HOOKS_DIR/enabled" ]]; then
+        local rep_ep=""
+        [[ -f "$GITSETU_HOOKS_DIR/entrypoint" ]] && rep_ep=$(cat "$GITSETU_HOOKS_DIR/entrypoint" 2>/dev/null || true)
+        rep_ep="${rep_ep%$'\r'}"
+        if [[ -z "$rep_ep" || ! -x "$rep_ep" ]]; then
+            guard_stubs_need_repair=1
+        else
+            local rep_hook
+            for rep_hook in "${GITSETU_GUARD_HOOK_NAMES[@]}"; do
+                if [[ ! -x "$GITSETU_HOOKS_DIR/$rep_hook" ]] || ! grep -qF "# [gitsetu:managed] gitsetu-hook v3" "$GITSETU_HOOKS_DIR/$rep_hook" 2>/dev/null; then
+                    guard_stubs_need_repair=1
+                    break
+                fi
+            done
+        fi
+    fi
+
     if [[ "${GITSETU_DRY_RUN:-0}" -eq 1 ]]; then
         [[ "$v1_registry_needs_repair" -eq 1 ]] && print_step "[DRY RUN] Would migrate legacy v1.0.0 profile registry to v2."
         [[ "$gitconfig_needs_repair" -eq 1 ]] && print_step "[DRY RUN] Would restore managed blocks in ~/.gitconfig."
@@ -841,7 +949,8 @@ run_doctor_repair() {
         [[ "$ssh_agent_needs_repair" -eq 1 ]] && print_step "[DRY RUN] Would register missing profile keys with ssh-agent."
         [[ "$cred_needs_repair" -eq 1 ]] && print_step "[DRY RUN] Would remove stale GitSetu credential helper from gitconfig."
         [[ "$hooks_needs_repair" -eq 1 ]] && print_step "[DRY RUN] Would remove legacy global core.hooksPath from gitconfig."
-        planned=$((gitconfig_needs_repair + ssh_needs_repair + ssh_agent_needs_repair + cred_needs_repair + v1_registry_needs_repair + hooks_needs_repair))
+        [[ "$guard_stubs_need_repair" -eq 1 ]] && print_step "[DRY RUN] Would regenerate guard hook stubs and entrypoint."
+        planned=$((gitconfig_needs_repair + ssh_needs_repair + ssh_agent_needs_repair + cred_needs_repair + v1_registry_needs_repair + hooks_needs_repair + guard_stubs_need_repair))
         if [[ "$planned" -eq 0 ]]; then
             print_info "Nothing to repair. All required configuration is intact."
         else
@@ -850,7 +959,7 @@ run_doctor_repair() {
         return 0
     fi
 
-    if [[ "$gitconfig_needs_repair" -eq 0 && "$ssh_needs_repair" -eq 0 && "$ssh_agent_needs_repair" -eq 0 && "$cred_needs_repair" -eq 0 && "$v1_registry_needs_repair" -eq 0 && "$hooks_needs_repair" -eq 0 ]]; then
+    if [[ "$gitconfig_needs_repair" -eq 0 && "$ssh_needs_repair" -eq 0 && "$ssh_agent_needs_repair" -eq 0 && "$cred_needs_repair" -eq 0 && "$v1_registry_needs_repair" -eq 0 && "$hooks_needs_repair" -eq 0 && "$guard_stubs_need_repair" -eq 0 ]]; then
         print_info "Nothing to repair. All required configuration and managed blocks are intact."
         return 0
     fi
@@ -865,6 +974,15 @@ run_doctor_repair() {
     local doctor_rollback_exists=()
     local doctor_rollback_modes=()
 
+    _doctor_restore_traps() {
+        trap - INT TERM HUP
+        if declare -f gitsetu_global_cleanup >/dev/null 2>&1; then
+            trap gitsetu_global_cleanup EXIT
+        else
+            trap gitsetu_early_cleanup EXIT
+        fi
+    }
+
     # shellcheck disable=SC2317,SC2329
     _doctor_emergency_rollback() {
         _doctor_rollback_files 2>/dev/null || true
@@ -876,16 +994,23 @@ run_doctor_repair() {
     }
     trap '_doctor_emergency_rollback; gitsetu_early_cleanup' INT TERM HUP EXIT
 
-    if [[ "$gitconfig_needs_repair" -eq 1 || "$cred_needs_repair" -eq 1 || "$v1_registry_needs_repair" -eq 1 || "$hooks_needs_repair" -eq 1 ]] && ! _doctor_snapshot_file "$HOME/.gitconfig"; then
+    local snap_gc_target="${repair_gc_target:-$HOME/.gitconfig}"
+    local snap_sc_target="${repair_sc_target:-$HOME/.ssh/config}"
+
+    if [[ "$gitconfig_needs_repair" -eq 1 || "$cred_needs_repair" -eq 1 || "$v1_registry_needs_repair" -eq 1 || "$hooks_needs_repair" -eq 1 ]] && ! _doctor_snapshot_file "$snap_gc_target"; then
         print_error "Unable to create a rollback snapshot for ~/.gitconfig; repair was not started."
+        _doctor_restore_traps
         release_lock || true
+        lock_held=0
         return 1
     fi
     if [[ "$ssh_needs_repair" -eq 1 ]]; then
-        if ! _doctor_snapshot_file "$HOME/.ssh/config" || ! _doctor_snapshot_file "$GITSETU_PROFILES_DIR/ssh_config"; then
+        if ! _doctor_snapshot_file "$snap_sc_target" || ! _doctor_snapshot_file "$GITSETU_PROFILES_DIR/ssh_config"; then
             print_error "Unable to create SSH rollback snapshots; repair was not started."
             _doctor_discard_rollbacks
+            _doctor_restore_traps
             release_lock || true
+            lock_held=0
             return 1
         fi
     fi
@@ -937,6 +1062,16 @@ run_doctor_repair() {
         fi
     fi
 
+    if [[ "$failed" -eq 0 && "$guard_stubs_need_repair" -eq 1 ]]; then
+        print_step "Regenerating guard hook stubs and entrypoint..."
+        if declare -f install_guard >/dev/null 2>&1 && install_guard; then
+            print_success "Regenerated guard hook stubs in $GITSETU_HOOKS_DIR"
+        else
+            print_error "Failed to regenerate guard hook stubs"
+            failed=1
+        fi
+    fi
+
     if [[ "$failed" -eq 0 && "$ssh_agent_needs_repair" -eq 1 ]]; then
         print_step "Registering profile SSH keys with ssh-agent..."
         if auto_register_ssh_keys; then
@@ -962,13 +1097,12 @@ run_doctor_repair() {
         lock_held=0
     fi
 
+    _doctor_restore_traps
     if [[ "$failed" -ne 0 ]]; then
         print_error "Repair completed with errors; no success is being reported."
         return 1
     fi
 
-    trap - INT TERM HUP
-    trap gitsetu_early_cleanup EXIT
     print_success "Repair complete. Required configuration was regenerated successfully."
     return 0
 }
@@ -978,6 +1112,7 @@ run_doctor_repair() {
 # Usage: gitsetu explain [path]
 # ------------------------------------------------------------------------------
 cmd_explain() {
+    [[ -z "${GITSETU_OS:-}" ]] && declare -f detect_os >/dev/null 2>&1 && detect_os
     local target="${1:-.}"
     if [[ ! -d "$target" ]]; then
         print_error "Directory does not exist: $target"
@@ -991,42 +1126,57 @@ cmd_explain() {
     local matched_profile="none"
     load_profiles 2>/dev/null || true
 
-    # 1. Check directory matching
+    # 1. Check directory matching (case-insensitive on macOS/Windows)
     local i best_len=-1 prof_dir prof_norm
     for (( i=0; i<PROFILE_COUNT; i++ )); do
         prof_dir="${PROFILE_DIRS[$i]:-}"
         [[ -n "$prof_dir" ]] || continue
         prof_norm=$(normalize_path "$prof_dir" 2>/dev/null || true)
         [[ -n "$prof_norm" ]] || continue
-        if [[ "$target_norm" == "$prof_norm" || "$target_norm" == "$prof_norm"/* ]]; then
-            if [[ ${#prof_norm} -gt $best_len ]]; then
-                best_len=${#prof_norm}
-                matched_profile="${PROFILE_LABELS[$i]}"
-            fi
+        local dir_matched=0
+        if declare -f _guard_path_contains >/dev/null 2>&1; then
+            _guard_path_contains "$target_norm" "$prof_norm" && dir_matched=1
+        elif [[ "$target_norm" == "$prof_norm" || "$target_norm" == "$prof_norm"/* ]]; then
+            dir_matched=1
+        fi
+        if [[ "$dir_matched" -eq 1 && ${#prof_norm} -gt $best_len ]]; then
+            best_len=${#prof_norm}
+            matched_profile="${PROFILE_LABELS[$i]}"
         fi
     done
 
-    # 2. Check remote matching if not matched and target is in a git repo
-    if [[ "$matched_profile" == "none" ]] && git -C "$target" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        local remote_url
-        remote_url=$(git -C "$target" config --get remote.origin.url 2>/dev/null || true)
-        if [[ -n "$remote_url" ]]; then
+    # 2. FUT-01: Check all remote URLs (matching remote overrides directory routing)
+    if git -C "$target" rev-parse --git-dir >/dev/null 2>&1; then
+        local remote_urls
+        remote_urls=$(git -C "$target" config --get-regexp '^remote\..*\.url$' 2>/dev/null | awk '{print $2}' || true)
+        if [[ -n "$remote_urls" ]]; then
             local remotes_dir="${GITSETU_CONFIG_DIR:-$HOME/.config/gitsetu}/remotes"
-            local rf pat
+            local rf pat r_label u is_known pi
             if [[ -d "$remotes_dir" ]]; then
                 for rf in "$remotes_dir"/*.remotes; do
                     [[ -f "$rf" ]] || continue
-                    local r_label
                     r_label=$(basename "$rf" .remotes)
+                    is_known=0
+                    for (( pi=0; pi<PROFILE_COUNT; pi++ )); do
+                        if [[ "${PROFILE_LABELS[$pi]:-}" == "$r_label" ]]; then
+                            is_known=1
+                            break
+                        fi
+                    done
+                    [[ "$is_known" -eq 1 ]] || continue
                     while IFS= read -r pat || [[ -n "$pat" ]]; do
+                        pat=$(printf '%s' "$pat" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
                         [[ -n "$pat" && "$pat" != \#* ]] || continue
-                        # shellcheck disable=SC2254 # pat is intentionally a glob pattern
-                        case "$remote_url" in
-                            $pat)
-                                matched_profile="$r_label"
-                                break 2
-                                ;;
-                        esac
+                        while IFS= read -r u || [[ -n "$u" ]]; do
+                            [[ -n "$u" ]] || continue
+                            # shellcheck disable=SC2254 # pat is intentionally a glob pattern
+                            case "$u" in
+                                $pat)
+                                    matched_profile="$r_label"
+                                    break 3
+                                    ;;
+                            esac
+                        done <<< "$remote_urls"
                     done < "$rf"
                 done
             fi
@@ -1044,12 +1194,14 @@ cmd_explain() {
     printf '  %-20s %-25s %s\n' "KEY" "VALUE" "ORIGIN (SCOPE & FILE)"
     printf '  %-20s %-25s %s\n' "---" "-----" "---------------------"
 
-    local key origin_out val origin
+    local key origin_out origin_line val origin _scope _src _rest
     for key in user.name user.email core.sshCommand core.hooksPath; do
         val=$(git -C "$target" config "$key" 2>/dev/null || true)
         origin_out=$(git -C "$target" config --show-origin --show-scope "$key" 2>/dev/null || true)
         if [[ -n "$origin_out" ]]; then
-            origin=$(printf '%s' "$origin_out" | head -n1 | sed -e 's/'"$key"'.*//')
+            origin_line=$(printf '%s\n' "$origin_out" | tail -n1)
+            IFS=$'\t' read -r _scope _src _rest <<< "$origin_line"
+            origin="${_scope} (${_src})"
         else
             origin="(unset)"
         fi
@@ -1065,6 +1217,7 @@ cmd_explain() {
 # Usage: gitsetu import [--yes|-y]
 # ------------------------------------------------------------------------------
 cmd_import() {
+    [[ -z "${GITSETU_OS:-}" ]] && declare -f detect_os >/dev/null 2>&1 && detect_os
     local yes_flag=0
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -1079,32 +1232,44 @@ cmd_import() {
     done
 
     local global_gitconfig="$HOME/.gitconfig"
-    if [[ ! -f "$global_gitconfig" ]]; then
+    local target_gitconfig="$global_gitconfig"
+    if [[ -L "$global_gitconfig" ]]; then
+        if declare -f _gitconfig_resolve_symlink_target >/dev/null 2>&1; then
+            target_gitconfig=$(_gitconfig_resolve_symlink_target "$global_gitconfig" 2>/dev/null) || target_gitconfig=""
+        else
+            target_gitconfig=""
+        fi
+    fi
+    if [[ -z "$target_gitconfig" || ! -f "$target_gitconfig" ]]; then
         print_info "No ~/.gitconfig found to import from."
         return 0
     fi
+    local target_dir
+    target_dir=$(dirname "$target_gitconfig")
 
     local in_managed=0 line current_gitdir="" inc_path
     local imported_count=0
     local raw_gitdir raw_path
+    local cand_labels=() cand_dirs=() cand_names=() cand_emails=() cand_keys=()
     local adopted_dirs=()
 
     while IFS= read -r line || [[ -n "$line" ]]; do
-        if [[ "$line" == *"${GITSETU_MANAGED_START:-# [gitsetu:managed:start]}"* || \
-              "$line" == *"${GITSETU_MANAGED_HEAD_START:-# [gitsetu:managed:head:start]}"* || \
-              "$line" == *"# [gitsetu:managed"* || \
-              "$line" == *"[gitsetu:managed:start]"* || \
-              "$line" == *"[gitsetu:managed:head:start]"* || \
-              "$line" == *"# --- GitSetu Identity Routing (Managed) ---"* || \
-              "$line" == *"# --- GitSetu Global Setup (Managed) ---"* ]]; then
-            in_managed=1
-            continue
-        elif [[ "$line" == *"${GITSETU_MANAGED_END:-# [gitsetu:managed:end]}"* || \
+        if [[ "$line" == *"${GITSETU_MANAGED_END:-# [gitsetu:managed:end]}"* || \
               "$line" == *"${GITSETU_MANAGED_HEAD_END:-# [gitsetu:managed:head:end]}"* || \
               "$line" == *"[gitsetu:managed:end]"* || \
               "$line" == *"[gitsetu:managed:head:end]"* || \
               "$line" == *"# --- End GitSetu"* ]]; then
             in_managed=0
+            current_gitdir=""
+            continue
+        elif [[ "$line" == *"${GITSETU_MANAGED_START:-# [gitsetu:managed:start]}"* || \
+                "$line" == *"${GITSETU_MANAGED_HEAD_START:-# [gitsetu:managed:head:start]}"* || \
+                "$line" == *"[gitsetu:managed:start]"* || \
+                "$line" == *"[gitsetu:managed:head:start]"* || \
+                "$line" == *"# --- GitSetu Identity Routing (Managed) ---"* || \
+                "$line" == *"# --- GitSetu Global Setup (Managed) ---"* ]]; then
+            in_managed=1
+            current_gitdir=""
             continue
         fi
         [[ "$in_managed" -eq 0 ]] || continue
@@ -1115,22 +1280,26 @@ cmd_import() {
             raw_gitdir="${raw_gitdir%/\*}"
             raw_gitdir="${raw_gitdir%/}"
             current_gitdir="$raw_gitdir"
+        elif [[ "$line" =~ ^\[ ]]; then
+            current_gitdir=""
         elif [[ -n "$current_gitdir" && "$line" =~ ^[[:space:]]*path[[:space:]]*=[[:space:]]*(.+) ]]; then
             raw_path="${BASH_REMATCH[1]}"
             raw_path="${raw_path#\"}"
             raw_path="${raw_path%\"}"
             inc_path="$raw_path"
-            
+
             local full_inc_path="$inc_path"
             if [[ "$full_inc_path" == "~/"* ]]; then
                 full_inc_path="$HOME/${full_inc_path#\~/}"
+            elif [[ "$full_inc_path" != /* && ! "$full_inc_path" =~ ^[A-Za-z]:/ ]]; then
+                full_inc_path="${target_dir%/}/${full_inc_path}"
             fi
 
             if [[ -f "$full_inc_path" ]]; then
                 local imp_name imp_email imp_label
                 imp_name=$(git config -f "$full_inc_path" user.name 2>/dev/null || true)
                 imp_email=$(git config -f "$full_inc_path" user.email 2>/dev/null || true)
-                
+
                 local fname
                 fname=$(basename "$full_inc_path")
                 if [[ "$fname" =~ ^\.?gitconfig-(.+)$ ]]; then
@@ -1148,21 +1317,21 @@ cmd_import() {
                 done
 
                 if [[ -n "$imp_email" ]]; then
-                    print_info "Discovered unmanaged identity route:"
-                    printf '  Profile:   %s\n' "$imp_label"
-                    printf '  Directory: %s\n' "$current_gitdir"
-                    printf '  Name:      %s\n' "${imp_name:-[Inherited]}"
-                    printf '  Email:     %s\n' "$imp_email"
-
-                    local imp_key=""
-                    local imp_ssh_cmd
+                    local imp_key="" imp_ssh_cmd raw_k=""
                     imp_ssh_cmd=$(git config -f "$full_inc_path" core.sshCommand 2>/dev/null || true)
-                    if [[ "$imp_ssh_cmd" =~ -i[[:space:]]+([^[:space:]]+) ]]; then
-                        local raw_k="${BASH_REMATCH[1]}"
-                        raw_k="${raw_k#\"}"
-                        raw_k="${raw_k%\"}"
-                        raw_k="${raw_k#\'}"
-                        raw_k="${raw_k%\'}"
+                    local _imp_sq_re="-i[[:space:]]+'(([^']|'\\\\'')*)'"
+                    local _imp_dq_re='-i[[:space:]]+"([^"]+)"'
+                    local _imp_uq_re='-i[[:space:]]+([^[:space:]]+)'
+                    local _imp_sq="'" _imp_sq_esc="'\\''"
+                    if [[ "$imp_ssh_cmd" =~ $_imp_sq_re ]]; then
+                        raw_k="${BASH_REMATCH[1]}"
+                        raw_k="${raw_k//"$_imp_sq_esc"/$_imp_sq}"
+                    elif [[ "$imp_ssh_cmd" =~ $_imp_dq_re ]]; then
+                        raw_k="${BASH_REMATCH[1]}"
+                    elif [[ "$imp_ssh_cmd" =~ $_imp_uq_re ]]; then
+                        raw_k="${BASH_REMATCH[1]}"
+                    fi
+                    if [[ -n "$raw_k" ]]; then
                         if [[ "$raw_k" == "~/"* ]]; then
                             raw_k="$HOME/${raw_k#\~/}"
                         fi
@@ -1184,55 +1353,101 @@ cmd_import() {
                             imp_key="$cand_gk"
                         fi
                     fi
-                    if [[ -n "$imp_key" ]]; then
-                        printf '  SSH Key:   %s\n' "$imp_key"
-                    fi
 
-                    local proceed=0
-                    if [[ "$yes_flag" -eq 1 ]]; then
-                        proceed=1
-                    elif ! _ui_tty_available; then
-                        print_warning "Confirmation required to adopt profile '$imp_label'; pass --yes in non-interactive environments."
-                        return 3
-                    elif confirm "Adopt this profile into GitSetu?" "n"; then
-                        proceed=1
-                    fi
-
-                    if [[ "$proceed" -eq 1 ]]; then
-                        local cmd_args=("$imp_label" "--email=$imp_email" "--dir=$current_gitdir")
-                        [[ -n "$imp_name" ]] && cmd_args+=("--name=$imp_name")
-                        [[ -n "$imp_key" ]] && cmd_args+=("--key=$imp_key")
-                        if cmd_profile add "${cmd_args[@]}"; then
-                            print_success "Imported profile '$imp_label'."
-                            imported_count=$((imported_count + 1))
-                            adopted_dirs+=("$current_gitdir")
-                        else
-                            print_error "Failed to import profile '$imp_label'."
-                        fi
-                    fi
+                    cand_labels+=("$imp_label")
+                    cand_dirs+=("$current_gitdir")
+                    cand_names+=("$imp_name")
+                    cand_emails+=("$imp_email")
+                    cand_keys+=("$imp_key")
                 fi
             fi
             current_gitdir=""
         fi
-    done < "$global_gitconfig"
+    done < "$target_gitconfig"
+
+    local ci cand_count=0
+    if [[ -n "${cand_labels[0]:-}" ]]; then
+        cand_count=${#cand_labels[@]}
+    fi
+    for (( ci=0; ci<cand_count; ci++ )); do
+        local imp_label="${cand_labels[$ci]}"
+        local imp_dir="${cand_dirs[$ci]}"
+        local imp_name="${cand_names[$ci]}"
+        local imp_email="${cand_emails[$ci]}"
+        local imp_key="${cand_keys[$ci]}"
+
+        print_info "Discovered unmanaged identity route:"
+        printf '  Profile:   %s\n' "$imp_label"
+        printf '  Directory: %s\n' "$imp_dir"
+        printf '  Name:      %s\n' "${imp_name:-[Inherited]}"
+        printf '  Email:     %s\n' "$imp_email"
+        if [[ -n "$imp_key" ]]; then
+            printf '  SSH Key:   %s\n' "$imp_key"
+        fi
+
+        local proceed=0
+        if [[ "$yes_flag" -eq 1 ]]; then
+            proceed=1
+        elif ! _ui_tty_available; then
+            print_warning "Confirmation required to adopt profile '$imp_label'; pass --yes in non-interactive environments."
+            return 3
+        elif confirm "Adopt this profile into GitSetu?" "n"; then
+            proceed=1
+        fi
+
+        if [[ "$proceed" -eq 1 ]]; then
+            local cmd_args=("$imp_label" "--email=$imp_email" "--dir=$imp_dir")
+            [[ -n "$imp_name" ]] && cmd_args+=("--name=$imp_name")
+            [[ -n "$imp_key" ]] && cmd_args+=("--key=$imp_key")
+            if ( cmd_profile add "${cmd_args[@]}" ); then
+                print_success "Imported profile '$imp_label'."
+                imported_count=$((imported_count + 1))
+                local norm_adopted
+                norm_adopted=$(normalize_path "$imp_dir" 2>/dev/null || printf '%s' "$imp_dir")
+                adopted_dirs+=("$norm_adopted")
+            else
+                print_error "Failed to import profile '$imp_label'."
+            fi
+        fi
+    done
 
     # Deactivate unmanaged includeIf blocks for adopted profiles to prevent duplicates
-    if [[ ${#adopted_dirs[@]} -gt 0 ]]; then
+    if [[ -n "${adopted_dirs[0]:-}" ]]; then
         local tmp_cfg
-        tmp_cfg=$(mktemp "${global_gitconfig}.tmp.XXXXXX" 2>/dev/null)
+        tmp_cfg=$(umask 077 && mktemp "${target_gitconfig}.tmp.XXXXXX" 2>/dev/null)
         if [[ -n "$tmp_cfg" ]]; then
-            local in_m=0 in_tgt=0
+            local in_m=0 in_tgt=0 l ad
             while IFS= read -r l || [[ -n "$l" ]]; do
-                if [[ "$l" == *"[gitsetu:managed:start]"* || "$l" == *"# [gitsetu:managed"* ]]; then
-                    in_m=1
-                elif [[ "$l" == *"[gitsetu:managed:end]"* || "$l" == *"# --- End GitSetu"* ]]; then
+                if [[ "$l" == *"${GITSETU_MANAGED_END:-# [gitsetu:managed:end]}"* || \
+                      "$l" == *"${GITSETU_MANAGED_HEAD_END:-# [gitsetu:managed:head:end]}"* || \
+                      "$l" == *"[gitsetu:managed:end]"* || \
+                      "$l" == *"[gitsetu:managed:head:end]"* || \
+                      "$l" == *"# --- End GitSetu"* ]]; then
                     in_m=0
+                    in_tgt=0
+                    printf '%s\n' "$l"
+                    continue
+                elif [[ "$l" == *"${GITSETU_MANAGED_START:-# [gitsetu:managed:start]}"* || \
+                        "$l" == *"${GITSETU_MANAGED_HEAD_START:-# [gitsetu:managed:head:start]}"* || \
+                        "$l" == *"[gitsetu:managed:start]"* || \
+                        "$l" == *"[gitsetu:managed:head:start]"* || \
+                        "$l" == *"# --- GitSetu Identity Routing (Managed) ---"* || \
+                        "$l" == *"# --- GitSetu Global Setup (Managed) ---"* ]]; then
+                    in_m=1
+                    in_tgt=0
+                    printf '%s\n' "$l"
+                    continue
                 fi
                 local match_dir=""
                 if [[ "$in_m" -eq 0 && "$l" =~ ^\[includeIf[[:space:]]+\"gitdir(/i)?:(.*)\"\] ]]; then
                     local matched_gitdir="${BASH_REMATCH[2]}"
+                    matched_gitdir="${matched_gitdir%/\*\*}"
+                    matched_gitdir="${matched_gitdir%/\*}"
+                    matched_gitdir="${matched_gitdir%/}"
+                    local matched_norm
+                    matched_norm=$(normalize_path "$matched_gitdir" 2>/dev/null || printf '%s' "$matched_gitdir")
                     for ad in "${adopted_dirs[@]}"; do
-                        if [[ "$matched_gitdir" == *"$ad"* ]]; then
+                        if [[ "$matched_norm" == "$ad" ]]; then
                             match_dir="$ad"
                             break
                         fi
@@ -1248,8 +1463,8 @@ cmd_import() {
                     in_tgt=0
                     printf '%s\n' "$l"
                 fi
-            done < "$global_gitconfig" > "$tmp_cfg"
-            mv -f "$tmp_cfg" "$global_gitconfig" 2>/dev/null || rm -f "$tmp_cfg"
+            done < "$target_gitconfig" > "$tmp_cfg"
+            mv -f "$tmp_cfg" "$target_gitconfig" 2>/dev/null || rm -f "$tmp_cfg"
         fi
     fi
 

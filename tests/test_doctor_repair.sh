@@ -303,6 +303,45 @@ test_repair_rolls_back_partial_config_write() {
     assert_contains "$output" "rolled back" "repair reports rollback" || return 1
 }
 
+test_repair_preserves_symlink_repairs_guard_stubs_and_is_idempotent_with_agent() {
+    setup_valid_gitsetu_environment
+    mkdir -p "$HOME/dotfiles"
+    mv "$HOME/.gitconfig" "$HOME/dotfiles/.gitconfig"
+    ln -s "$HOME/dotfiles/.gitconfig" "$HOME/.gitconfig"
+    install_guard >/dev/null 2>&1 || return 1
+    rm -f "$GITSETU_HOOKS_DIR/pre-merge-commit"
+    unset SSH_AUTH_SOCK
+
+    local output rc=0
+    output=$(run_doctor_repair 2>&1) || rc=$?
+    assert_equals "0" "$rc" "repair succeeds with symlinked gitconfig and missing guard stub" || return 1
+    assert_file_exists "$GITSETU_HOOKS_DIR/pre-merge-commit" "repair restores missing guard hook stub" || return 1
+    if [[ ! -L "$HOME/.gitconfig" ]]; then
+        printf '    FAIL: repair replaced ~/.gitconfig symlink\n'
+        return 1
+    fi
+
+    # With SSH_AUTH_SOCK set and only PROFILE_KEYS[0] registered, repair should be idempotent
+    local global_fp
+    global_fp=$(ssh-keygen -lf "$HOME/.ssh/id_ed25519_global" 2>/dev/null | awk '{print $2}')
+    export SSH_AUTH_SOCK="/tmp/mock_agent_sock_idempotent"
+    rc=0
+    output=$(
+        ssh-add() {
+            if [[ "${1:-}" == "-l" ]]; then
+                printf '256 %s global@example.com (ED25519)\n' "$global_fp"
+                return 0
+            fi
+            return 0
+        }
+        run_doctor_repair 2>&1
+    ) || rc=$?
+    unset SSH_AUTH_SOCK
+    assert_equals "0" "$rc" "idempotent agent repair exits 0" || return 1
+    assert_contains "$output" "Nothing to repair" "multi-profile repair is idempotent when global key is loaded" || return 1
+    rm -rf "$HOME/dotfiles" "$HOME/.gitconfig"
+}
+
 # ------------------------------------------------------------------------------
 # Run all tests
 # ------------------------------------------------------------------------------
@@ -317,4 +356,5 @@ run_test "CLI gitsetu doctor --repair --dry-run makes 0 mutations" test_cli_doct
 run_test "doctor diagnostics footer conditionally suggests --repair" test_run_doctor_suggests_repair_on_broken
 run_test "doctor repair rolls back partial config writes" test_repair_rolls_back_partial_config_write
 run_test "repair planner invokes SSH writer for corrupt SSH state" test_repair_planner_invokes_ssh_writer_for_corrupt_ssh_state
+run_test "doctor repair preserves symlink, restores guard stubs, and is idempotent with ssh-agent" test_repair_preserves_symlink_repairs_guard_stubs_and_is_idempotent_with_agent
 print_results "Doctor Repair tests"

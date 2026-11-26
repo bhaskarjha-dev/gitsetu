@@ -253,6 +253,123 @@ EOF
     assert_equals "" "$remaining" "doctor repair removed legacy global core.hooksPath" || return 1
 }
 
+test_doctor_custom_xdg_and_json_integrity() {
+    local old_xdg="${XDG_CONFIG_HOME:-}"
+    local old_cfg="$GITSETU_CONFIG_DIR" old_prof="$GITSETU_PROFILES_DIR" old_conf="$GITSETU_PROFILES_CONF" old_hooks="$GITSETU_HOOKS_DIR" old_bak="$GITSETU_BACKUP_DIR"
+    export XDG_CONFIG_HOME="$HOME/custom xdg"
+    GITSETU_CONFIG_DIR="$XDG_CONFIG_HOME/gitsetu"
+    GITSETU_PROFILES_DIR="$GITSETU_CONFIG_DIR/profiles"
+    GITSETU_PROFILES_CONF="$GITSETU_CONFIG_DIR/profiles.conf"
+    GITSETU_HOOKS_DIR="$GITSETU_CONFIG_DIR/hooks"
+    GITSETU_BACKUP_DIR="$GITSETU_CONFIG_DIR/backups"
+    rm -rf "$XDG_CONFIG_HOME" "$HOME/.ssh" "$HOME/.gitconfig"
+    mkdir -p "$GITSETU_PROFILES_DIR" "$GITSETU_BACKUP_DIR" "$HOME/.ssh"
+    chmod 700 "$HOME/.ssh"
+    ssh-keygen -q -t ed25519 -N '' -f "$HOME/.ssh/id_ed25519_global"
+    test_v2_profile_config global "Global User" "global@example.com"
+    local global_key
+    global_key=$(normalize_path "$HOME/.ssh/id_ed25519_global")
+    {
+        test_v2_registry_header
+        test_v2_registry_line global "" "github.com" "0" "$global_key" ""
+    } > "$GITSETU_PROFILES_CONF"
+    load_profiles || return 1
+    write_global_gitconfig >/dev/null 2>&1 || return 1
+    write_ssh_config >/dev/null 2>&1 || return 1
+
+    local out rc=0
+    out=$(run_doctor 2>&1) || rc=$?
+    assert_contains "$out" "~/.ssh/config: OK" "doctor accepts quoted custom XDG_CONFIG_HOME SSH Include" || return 1
+
+    # Deleting isolated ssh_config must fail doctor --json
+    rm -f "$GITSETU_PROFILES_DIR/ssh_config"
+    rc=0
+    out=$(run_doctor_json) || rc=$?
+    assert_equals "1" "$rc" "doctor --json fails when isolated ssh_config is deleted" || return 1
+    assert_contains "$out" '"status": "unhealthy"' "doctor --json marks missing ssh_config unhealthy" || return 1
+    if command -v node >/dev/null 2>&1; then
+        printf '%s' "$out" | node -e "JSON.parse(require('fs').readFileSync(0,'utf8'))" || {
+            printf '    FAIL: doctor --json produced invalid JSON\n'
+            return 1
+        }
+    fi
+
+    # Restore ssh_config, break private key permissions -> doctor --json must fail
+    write_ssh_config >/dev/null 2>&1 || return 1
+    if can_chmod_600; then
+        chmod 644 "$HOME/.ssh/id_ed25519_global"
+        rc=0
+        out=$(run_doctor_json) || rc=$?
+        assert_equals "1" "$rc" "doctor --json fails on broad private key permissions" || return 1
+        assert_contains "$out" '"name": "ssh_keys"' "doctor --json reports ssh_keys check" || return 1
+    fi
+
+    XDG_CONFIG_HOME="$old_xdg"
+    GITSETU_CONFIG_DIR="$old_cfg"
+    GITSETU_PROFILES_DIR="$old_prof"
+    GITSETU_PROFILES_CONF="$old_conf"
+    GITSETU_HOOKS_DIR="$old_hooks"
+    GITSETU_BACKUP_DIR="$old_bak"
+}
+
+test_cmd_explain_tab_origin_and_remote_precedence() {
+    rm -rf "$GITSETU_CONFIG_DIR" "$HOME/.ssh" "$HOME/.gitconfig" "$HOME/work" "$HOME/personal"
+    mkdir -p "$GITSETU_PROFILES_DIR" "$GITSETU_CONFIG_DIR/remotes" "$HOME/.ssh" "$HOME/work/repo" "$HOME/personal"
+    ssh-keygen -q -t ed25519 -N '' -f "$HOME/.ssh/id_ed25519_global"
+    ssh-keygen -q -t ed25519 -N '' -f "$HOME/.ssh/id_ed25519_work"
+    ssh-keygen -q -t ed25519 -N '' -f "$HOME/.ssh/id_ed25519_personal"
+    test_v2_profile_config global "Global User" "global@example.com"
+    test_v2_profile_config work "Work User" "work@corp.com"
+    test_v2_profile_config personal "Personal User" "personal@me.dev"
+    {
+        test_v2_registry_header
+        test_v2_registry_line global "" "github.com" "0" "$HOME/.ssh/id_ed25519_global" ""
+        test_v2_registry_line work "$HOME/work" "github.com" "0" "$HOME/.ssh/id_ed25519_work" ""
+        test_v2_registry_line personal "$HOME/personal" "github.com" "0" "$HOME/.ssh/id_ed25519_personal" ""
+    } > "$GITSETU_PROFILES_CONF"
+    printf 'git@github.com:personal-org/*\n' > "$GITSETU_CONFIG_DIR/remotes/personal.remotes"
+    load_profiles || return 1
+    write_global_gitconfig >/dev/null 2>&1 || return 1
+    git -C "$HOME/work/repo" init -q
+    git -C "$HOME/work/repo" remote add upstream git@github.com:personal-org/demo.git
+
+    local out rc=0
+    out=$(cmd_explain "$HOME/work/repo" 2>&1) || rc=$?
+    assert_equals "0" "$rc" "cmd_explain exits 0" || return 1
+    assert_contains "$out" "Matched profile:  " "explain prints matched profile line" || return 1
+    assert_contains "$out" "personal" "explain matches non-origin remote override over work dir" || return 1
+    assert_contains "$out" "global (file:" "explain formats scope and file cleanly without tab mangling" || return 1
+}
+
+test_cmd_import_preserves_symlink_deactivates_and_sees_post_managed_blocks() {
+    rm -rf "$GITSETU_CONFIG_DIR" "$HOME/.ssh" "$HOME/.gitconfig" "$HOME/dotfiles" "$HOME/post_client"
+    mkdir -p "$HOME/dotfiles" "$HOME/post_client"
+    cat <<'EOF' > "$HOME/dotfiles/.gitconfig"
+# [gitsetu:managed:start]
+# Managed
+# [gitsetu:managed:end]
+[includeIf "gitdir:~/post_client/"]
+    path = .gitconfig-post
+EOF
+    cat <<'EOF' > "$HOME/dotfiles/.gitconfig-post"
+[user]
+    name = Post Client
+    email = post@client.example
+EOF
+    ln -s "$HOME/dotfiles/.gitconfig" "$HOME/.gitconfig"
+
+    local out rc=0
+    out=$(cmd_import --yes 2>&1) || rc=$?
+    assert_equals "0" "$rc" "cmd_import exits 0 on symlinked gitconfig with post-managed block" || return 1
+    assert_contains "$out" "Successfully imported 1 profile(s)." "imports block located after managed:end" || return 1
+    if [[ ! -L "$HOME/.gitconfig" ]]; then
+        printf '    FAIL: cmd_import clobbered ~/.gitconfig symlink\n'
+        return 1
+    fi
+    assert_file_contains "$HOME/dotfiles/.gitconfig" "# [imported-by-gitsetu] [includeIf" "adopted unmanaged block is deactivated" || return 1
+    rm -rf "$HOME/dotfiles" "$HOME/post_client" "$HOME/.gitconfig"
+}
+
 printf '\n%btest_doctor.sh%b\n' "$T_BOLD" "$T_RESET"
 run_test "doctor detects missing registry" test_doctor_detects_missing_registry
 run_test "doctor detects missing ssh agent" test_doctor_detects_missing_ssh_agent
@@ -266,4 +383,7 @@ run_test "doctor import requires confirmation without --yes" test_cmd_import_req
 run_test "doctor warns on migrated v1 registry" test_doctor_warns_on_migrated_v1_registry
 run_test "doctor repair cleans legacy global hookspath" test_doctor_repair_cleans_legacy_hookspath
 run_test "doctor --json CLI produces parseable JSON on corrupted registry" test_doctor_json_cli_corrupted_registry
+run_test "doctor handles custom XDG_CONFIG_HOME and doctor --json checks ssh_config & keys" test_doctor_custom_xdg_and_json_integrity
+run_test "explain formats tab-split origin and matches non-origin remote overrides" test_cmd_explain_tab_origin_and_remote_precedence
+run_test "import preserves ~/.gitconfig symlink, resolves relative paths, and deactivates adopted blocks" test_cmd_import_preserves_symlink_deactivates_and_sees_post_managed_blocks
 print_results "Doctor tests"

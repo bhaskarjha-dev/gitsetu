@@ -215,7 +215,7 @@ _vault_file_size() {
 _vault_private_temp_dir() {
     local template="${1:-}"
     local temp_base="${TMPDIR:-${TMP:-${TEMP:-/tmp}}}"
-    [[ -n "$temp_base" && -d "$temp_base" && ! -L "$temp_base" ]] || return 1
+    [[ -n "$temp_base" && -d "$temp_base" ]] || return 1
     [[ -n "$template" && "$template" != *[[:cntrl:]]* && "$template" != */* ]] || return 1
 
     # Resolve the staging base rather than rejecting it, and do not require it to
@@ -952,8 +952,7 @@ _vault_verbose_member_size() {
 
     [[ -n "$line" && "$type" == "-" ]] || { printf ''; return 1; }
 
-    # shellcheck disable=SC2206  # Deliberate word splitting of tar's fields.
-    fields=( $line )
+    IFS=$' \t' read -r -a fields <<< "$line"
     # fields[0] is "<type><permissions>"; the member name is always last.
     [[ "${#fields[@]}" -ge 4 ]] || { printf ''; return 1; }
     last=$((${#fields[@]} - 1))
@@ -992,8 +991,8 @@ _vault_validate_archive_listing() {
 
     archive_size=$(_vault_file_size "$archive_path") || return 1
     [[ "$archive_size" -le "$GITSETU_VAULT_MAX_ARCHIVE_BYTES" ]] || return 1
-    tar -tzf "$archive_path" > "$names_list" 2>/dev/null || return 1
-    tar -tvzf "$archive_path" > "$verbose_list" 2>/dev/null || return 1
+    LC_ALL=C tar -tzf "$archive_path" > "$names_list" 2>/dev/null || return 1
+    LC_ALL=C tar -tvzf "$archive_path" > "$verbose_list" 2>/dev/null || return 1
     name_count=$(wc -l < "$names_list" | tr -d '[:space:]') || return 1
     _vault_validate_bounded_uint "$name_count" 1 "$GITSETU_VAULT_MAX_MEMBERS" || return 1
     verbose_count=$(wc -l < "$verbose_list" | tr -d '[:space:]') || return 1
@@ -1819,21 +1818,36 @@ _vault_prepare_transaction() {
     return 0
 }
 
+_vault_resolve_global_target() {
+    local path="$1"
+    if [[ -L "$path" ]]; then
+        if declare -f _gitconfig_resolve_symlink_target >/dev/null 2>&1; then
+            _gitconfig_resolve_symlink_target "$path" 2>/dev/null
+            return $?
+        fi
+        return 1
+    fi
+    printf '%s' "$path"
+}
+
 _vault_snapshot_globals() {
     local txn="$1" gitconfig="$HOME/.gitconfig" sshconfig="$HOME/.ssh/config"
+    local gc_target sc_target
     (umask 077 && mkdir -p "$txn/old-global") 2>/dev/null || return 1
     if [[ -e "$gitconfig" || -L "$gitconfig" ]]; then
-        [[ -f "$gitconfig" && ! -L "$gitconfig" ]] || return 1
+        gc_target=$(_vault_resolve_global_target "$gitconfig") || return 1
+        [[ -f "$gc_target" && ! -L "$gc_target" ]] || return 1
         printf 'pending\n' > "$txn/old-global/gitconfig.state" || return 1
-        _vault_copy_regular "$gitconfig" "$txn/old-global/gitconfig" 600 || return 1
+        _vault_copy_regular "$gc_target" "$txn/old-global/gitconfig" 600 || return 1
         printf 'present\n' > "$txn/old-global/gitconfig.state" || return 1
     else
         printf 'absent\n' > "$txn/old-global/gitconfig.state" || return 1
     fi
     if [[ -e "$sshconfig" || -L "$sshconfig" ]]; then
-        [[ -f "$sshconfig" && ! -L "$sshconfig" ]] || return 1
+        sc_target=$(_vault_resolve_global_target "$sshconfig") || return 1
+        [[ -f "$sc_target" && ! -L "$sc_target" ]] || return 1
         printf 'pending\n' > "$txn/old-global/sshconfig.state" || return 1
-        _vault_copy_regular "$sshconfig" "$txn/old-global/sshconfig" 600 || return 1
+        _vault_copy_regular "$sc_target" "$txn/old-global/sshconfig" 600 || return 1
         printf 'present\n' > "$txn/old-global/sshconfig.state" || return 1
     else
         printf 'absent\n' > "$txn/old-global/sshconfig.state" || return 1
@@ -1911,7 +1925,7 @@ _vault_prepare_key_transaction() {
             mode=644
         fi
         key_base=$(basename "$destination")
-        old="$txn/old-keys/$key_base"
+        old="$txn/old-keys/$i"
         _VAULT_TXN_KEY_DESTINATIONS+=("$destination")
         _VAULT_TXN_KEY_SOURCES+=("$source")
         _VAULT_TXN_KEY_MODES+=("$mode")
@@ -1924,9 +1938,6 @@ _vault_prepare_key_transaction() {
         if [[ -e "$destination" || -L "$destination" ]]; then
             [[ -f "$destination" && ! -L "$destination" ]] || return 1
             _vault_copy_regular "$destination" "$old" "$mode" || return 1
-            if [[ "$old" != "$txn/old-keys/$i" ]]; then
-                _vault_copy_regular "$destination" "$txn/old-keys/$i" "$mode" 2>/dev/null || true
-            fi
             old_state="present"
         else
             old_state="absent"
@@ -1971,7 +1982,7 @@ _vault_install_key_transaction() {
 }
 
 _vault_restore_global_file() {
-    local txn="$1" which="$2" destination source state
+    local txn="$1" which="$2" destination source state target
     if [[ "$which" == "gitconfig" ]]; then
         destination="$HOME/.gitconfig"
         source="$txn/old-global/gitconfig"
@@ -1982,15 +1993,22 @@ _vault_restore_global_file() {
         state="$txn/old-global/sshconfig.state"
     fi
 
+    # If no state marker was written yet, this file was never modified.
+    if [[ ! -f "$state" && ! -f "$source" ]]; then
+        return 0
+    fi
+
+    target="$destination"
     if [[ -L "$destination" ]]; then
-        return 1
+        target=$(_vault_resolve_global_target "$destination") || return 1
     fi
 
     # If a snapshot copy exists and is a regular file, restore it.
     # Never delete $destination unless the state marker explicitly recorded 'absent'.
     if [[ -f "$source" && ! -L "$source" ]]; then
-        _vault_copy_regular "$source" "$destination" 600 || return 1
+        _vault_copy_regular "$source" "$target" 600 || return 1
     elif [[ -f "$state" ]] && grep -q '^absent$' "$state" 2>/dev/null; then
+        [[ ! -L "$destination" ]] || return 1
         rm -f "$destination" 2>/dev/null || true
     fi
     return 0
@@ -2012,15 +2030,18 @@ _vault_rollback_transaction() {
         if [[ ! -f "$key_state" && -f "$txn/old-keys/$i.state" ]]; then
             key_state="$txn/old-keys/$i.state"
         fi
+        local should_restore_old=0
         if [[ -f "$key_state" ]]; then
             if grep -q '^present$' "$key_state" 2>/dev/null; then
                 [[ -f "$old_key" && ! -L "$old_key" ]] || { failed=1; continue; }
+                should_restore_old=1
             elif ! grep -q '^absent$' "$key_state" 2>/dev/null; then
                 failed=1
                 continue
             fi
         elif [[ -e "$old_key" || -L "$old_key" ]]; then
             [[ -f "$old_key" && ! -L "$old_key" ]] || { failed=1; continue; }
+            should_restore_old=1
         else
             continue
         fi
@@ -2029,7 +2050,7 @@ _vault_rollback_transaction() {
             continue
         fi
         rm -f "$current" 2>/dev/null || failed=1
-        if [[ -f "$old_key" && ! -L "$old_key" ]]; then
+        if [[ "$should_restore_old" -eq 1 && -f "$old_key" && ! -L "$old_key" ]]; then
             _vault_copy_regular "$old_key" "$current" "${_VAULT_TXN_KEY_MODES[$i]}" || failed=1
         fi
     done
@@ -2427,6 +2448,27 @@ cmd_restore() {
                 state_differs=1
             fi
         fi
+    fi
+    if [[ "$state_differs" -eq 0 && -d "$GITSETU_PROFILES_DIR" && -d "$archive_root/state/profiles" ]]; then
+        local live_pconf vault_pconf pbase
+        for vault_pconf in "$archive_root/state/profiles"/*.gitconfig; do
+            [[ -f "$vault_pconf" ]] || continue
+            pbase=$(basename "$vault_pconf")
+            live_pconf="$GITSETU_PROFILES_DIR/$pbase"
+            if [[ -f "$live_pconf" ]]; then
+                local live_name live_email vault_name vault_email live_sign vault_sign
+                live_name=$(git config -f "$live_pconf" --get user.name 2>/dev/null || true)
+                live_email=$(git config -f "$live_pconf" --get user.email 2>/dev/null || true)
+                vault_name=$(git config -f "$vault_pconf" --get user.name 2>/dev/null || true)
+                vault_email=$(git config -f "$vault_pconf" --get user.email 2>/dev/null || true)
+                live_sign=$(git config -f "$live_pconf" --get commit.gpgsign 2>/dev/null || true)
+                vault_sign=$(git config -f "$vault_pconf" --get commit.gpgsign 2>/dev/null || true)
+                if [[ "$live_name" != "$vault_name" || "$live_email" != "$vault_email" || "${live_sign:-false}" != "${vault_sign:-false}" ]]; then
+                    state_differs=1
+                    break
+                fi
+            fi
+        done
     fi
     if [[ "$state_differs" -eq 0 && -d "$GITSETU_CONFIG_DIR/remotes" ]]; then
         local live_remotes="$GITSETU_CONFIG_DIR/remotes"

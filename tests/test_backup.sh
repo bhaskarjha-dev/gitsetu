@@ -712,6 +712,66 @@ test_backup_preserves_remotes_directory() {
     return 0
 }
 
+test_backup_restore_detects_profile_email_drift_and_preserves_symlink() {
+    export GITSETU_VAULT_PASSWORD="drift_vault_pass"
+    mkdir -p "$HOME/dotfiles" "$HOME/.ssh/sub1" "$HOME/.ssh/sub2"
+    printf '[alias]\n    co = checkout\n' > "$HOME/dotfiles/.gitconfig"
+    ln -s "$HOME/dotfiles/.gitconfig" "$HOME/.gitconfig"
+
+    test_v2_profile_config global "Global User" "global@example.com"
+    test_v2_profile_config alpha "Alpha User" "alpha@example.com"
+    test_v2_profile_config beta "Beta User" "beta@example.com"
+    printf 'alpha-priv\n' > "$HOME/.ssh/sub1/id_ed25519"
+    printf 'alpha-pub\n' > "$HOME/.ssh/sub1/id_ed25519.pub"
+    printf 'beta-priv\n' > "$HOME/.ssh/sub2/id_ed25519"
+    printf 'beta-pub\n' > "$HOME/.ssh/sub2/id_ed25519.pub"
+    chmod 600 "$HOME/.ssh/sub1/id_ed25519" "$HOME/.ssh/sub2/id_ed25519"
+    {
+        test_v2_registry_header
+        test_v2_registry_line global "" "github.com" "0" "$HOME/.ssh/id_ed25519_global" ""
+        test_v2_registry_line alpha "$HOME/alpha" "github.com" "0" "$HOME/.ssh/sub1/id_ed25519" ""
+        test_v2_registry_line beta "$HOME/beta" "github.com" "0" "$HOME/.ssh/sub2/id_ed25519" ""
+    } > "$GITSETU_PROFILES_CONF"
+
+    local vault_file="$TEST_HOME/drift_vault.enc"
+    cmd_backup "$vault_file" >/dev/null 2>&1 || return 1
+
+    # 1. Edit only alpha.gitconfig user.email: non-force restore must detect drift and refuse (rc 3)
+    git config -f "$GITSETU_PROFILES_DIR/alpha.gitconfig" user.email "edited@example.com"
+    export GITSETU_VAULT_PASSWORD="drift_vault_pass"
+    local rc=0
+    cmd_restore "$vault_file" </dev/null >/dev/null 2>&1 || rc=$?
+    assert_equals "3" "$rc" "non-force restore detects profile email drift and cancels without --force" || return 1
+
+    # 2. Same-basename key rollback: sub1/id_ed25519 present (different content), sub2/id_ed25519 absent
+    printf 'live-alpha-priv\n' > "$HOME/.ssh/sub1/id_ed25519"
+    rm -f "$HOME/.ssh/sub2/id_ed25519" "$HOME/.ssh/sub2/id_ed25519.pub"
+    export GITSETU_VAULT_PASSWORD="drift_vault_pass"
+    rc=0
+    (
+        # shellcheck disable=SC2329
+        write_profile_gitconfig() { return 1; }
+        cmd_restore "$vault_file" --force >/dev/null 2>&1
+    ) || rc=$?
+    assert_equals "1" "$rc" "forced rollback test triggers failure cleanly" || return 1
+    assert_equals "live-alpha-priv" "$(cat "$HOME/.ssh/sub1/id_ed25519")" "same-basename existing key restored on rollback" || return 1
+    assert_file_not_exists "$HOME/.ssh/sub2/id_ed25519" "same-basename absent key removed on rollback" || return 1
+    if [[ ! -L "$HOME/.gitconfig" ]]; then
+        printf '    FAIL: symlinked ~/.gitconfig was clobbered during rollback\n'
+        return 1
+    fi
+
+    # 3. Symlinked TMPDIR still works in _vault_private_temp_dir
+    local real_tmp="$TEST_HOME/real-tmp" link_tmp="$TEST_HOME/link-tmp"
+    mkdir -p "$real_tmp"
+    ln -s "$real_tmp" "$link_tmp"
+    local created_tmp=""
+    created_tmp=$(TMPDIR="$link_tmp" _vault_private_temp_dir "gitsetu-symlink-tmp") || return 1
+    assert_dir_exists "$created_tmp" "vault private temp dir works when TMPDIR is a symlink" || return 1
+    rm -rf "$created_tmp" "$real_tmp" "$link_tmp" "$vault_file" "$HOME/dotfiles" "$HOME/.gitconfig"
+    unset GITSETU_VAULT_PASSWORD
+}
+
 # --- Run ---
 
 printf '\n%btest_backup.sh%b\n' "$T_BOLD" "$T_RESET"
@@ -731,5 +791,6 @@ run_backup_test "backup does not leak env var" test_backup_does_not_leak_env_var
 run_backup_test "restore rejects path traversal" test_backup_rejects_path_traversal
 run_backup_test "backup preserves remotes directory and files" test_backup_preserves_remotes_directory
 run_backup_test "GNU and BSD tar listing sizes parse identically" test_vault_verbose_listing_size_layouts
+run_backup_test "restore detects email drift, preserves ~/.gitconfig symlink, handles same-basename rollback and symlink TMPDIR" test_backup_restore_detects_profile_email_drift_and_preserves_symlink
 
 print_results "Backup tests"
